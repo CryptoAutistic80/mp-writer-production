@@ -1,7 +1,7 @@
 import './global.css';
 import SiteHeader from '../components/SiteHeader';
 import SiteFooter from '../components/SiteFooter';
-import AnimatedBackground from './components/AnimatedBackground';
+import AnimatedBackground from '../components/AnimatedBackground';
 
 export const metadata = {
   title: 'MPWriter — Your voice, clearly heard.',

@@ -12,6 +12,10 @@ export default function SiteHeader() {
         <nav className="nav">
           <Link href="/how-it-works">How it works</Link>
           <Link href="/contact">Contact</Link>
+          <a href="/api/auth/google" className="header-login" aria-label="Sign in with Google">
+            <span className="gdot" aria-hidden />
+            <span>Sign in</span>
+          </a>
         </nav>
       </div>
     </header>
