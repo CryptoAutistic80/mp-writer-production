@@ -571,8 +571,8 @@ body {
   justify-content: center;
   flex-shrink: 0;
 }
-.step-title { font-weight: 700; color: var(--ink); }
-.step-sub { color: var(--muted); font-size: 14px; margin-top: 4px; }
+.step-title { font-weight: 700; color: #0a2540; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55); }
+.step-sub { color: #334155; font-size: 14px; margin-top: 4px; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4); }
 
 .phone-mock {
   justify-self: center;
