@@ -422,9 +422,7 @@ summary svg {
 }
 
 body {
-  background: radial-gradient(1200px 600px at 20% -10%, #dbeafe 0, transparent 60%),
-    radial-gradient(900px 500px at 110% 10%, #e9d5ff 0, transparent 50%),
-    #f8fafc;
+  background: #ffffff;
   color: var(--ink);
 }
 
@@ -432,6 +430,36 @@ body {
   min-height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr auto;
+}
+
+/* Background container injected by AnimatedBackground component */
+#bg-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Distribute soft brand tints across the entire viewport, behind the canvas */
+#bg-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(700px 300px at 15% 12%, rgba(59, 130, 246, 0.14), transparent 60%), /* blue top-left */
+    radial-gradient(520px 240px at 85% 22%, rgba(139, 92, 246, 0.14), transparent 60%), /* purple top-right */
+    radial-gradient(620px 260px at 20% 82%, rgba(59, 130, 246, 0.10), transparent 60%), /* blue bottom-left */
+    radial-gradient(500px 220px at 88% 78%, rgba(139, 92, 246, 0.12), transparent 60%); /* purple bottom-right */
+  filter: blur(18px);
+}
+
+/* Ensure the Three.js canvas sits above the gradient layer */
+#bg-container canvas {
+  position: absolute;
+  inset: 0;
 }
 
 .container {
@@ -472,15 +500,7 @@ body {
   position: relative;
 }
 
-.bg-orbs {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(600px 240px at 20% 10%, rgba(59, 130, 246, 0.18), transparent 60%),
-    radial-gradient(420px 200px at 80% 20%, rgba(139, 92, 246, 0.18), transparent 60%);
-  filter: blur(20px);
-  z-index: 0;
-}
+/* .bg-orbs removed */
 
 .hero-section .card {
   position: relative;

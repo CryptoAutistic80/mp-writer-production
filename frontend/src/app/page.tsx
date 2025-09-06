@@ -30,7 +30,6 @@ export default function Index() {
   return (
     <div>
       <main className="hero-section">
-        <div className="bg-orbs" aria-hidden />
 
         <section className="card">
           <div className="hero-top">
