@@ -33,22 +33,29 @@ export default function Index() {
         <div className="bg-orbs" aria-hidden />
 
         <section className="card">
-          <h1 className="hero-title">
-            Your voice,
-            <br />
-            <span className="hero-highlight">clearly heard.</span>
-          </h1>
-          <p className="hero-sub">Craft researched, respectful letters to your MP in minutes.</p>
-          <div className="cta">
-            <GoogleButton />
-            <p className="fineprint">
-              Secure login with Google. We’ll never post or email without your consent.
-            </p>
+          <div className="hero-top">
+            <div className="hero-copy">
+              <h1 className="hero-title">
+                Your voice,
+                <br />
+                <span className="hero-highlight">clearly heard.</span>
+              </h1>
+              <p className="hero-sub">Craft researched, respectful letters to your MP in minutes.</p>
+              <div className="cta">
+                <p className="fineprint">
+                  Secure login with Google. We’ll never post or email without your consent.
+                </p>
+                <GoogleButton />
+              </div>
+            </div>
+            <div className="hero-graphic" aria-hidden>
+              <img src="/assets/hero-graphic.png" alt="" />
+            </div>
           </div>
 
           <div className="value-callout" role="note" aria-label="Key benefits">
             <p className="value-1"><strong>Most of us never write to our MP.</strong></p>
-            <p className="value-2">MPWriter makes it effortless. With AI research, you can send perfectly articulated, evidence‑based letters in minutes.</p>
+            <p className="value-2">For years, writing to your MP meant long hours researching, drafting, and editing — often leaving important issues unspoken. MPWriter changes that. By combining AI-powered research with clear, structured drafting, it gives you the ability to share perfectly articulated, evidence-based letters in minutes. All you need to do is tell us what matters to you — we’ll handle the heavy lifting, so your voice reaches Parliament with clarity and impact.</p>
             <p className="value-3"><strong>One credit = one research & draft.</strong> Buy only what you use.</p>
           </div>
 
@@ -58,7 +65,7 @@ export default function Index() {
               <div className="step-icon" aria-hidden>1</div>
               <div>
                 <div className="step-title">Look up your MP</div>
-                <div className="step-sub">Enter your postcode and we'll handle the rest.</div>
+                <div className="step-sub">We'll find your MP for you from your address.</div>
               </div>
             </div>
             {/* Step 2 */}

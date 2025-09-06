@@ -492,6 +492,16 @@ body {
   z-index: 1;
 }
 
+/* Two-column layout for hero top area */
+.hero-top {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: center;
+  gap: 20px;
+}
+.hero-graphic { display: none; }
+.hero-graphic img { display: block; width: 100%; height: auto; }
+
 .hero-title {
   font-size: clamp(36px, 5vw, 56px);
   line-height: 1.05;
@@ -512,6 +522,10 @@ body {
 
 .cta {
   margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 .google-btn {
   display: inline-flex;
@@ -529,7 +543,7 @@ body {
 .google-btn:hover { filter: brightness(1.03); transform: translateY(-1px); box-shadow: 0 10px 18px var(--ring); }
 .google-btn:active { transform: translateY(0); box-shadow: 0 6px 14px var(--ring); }
 .google-btn .google-icon { display: grid; place-items: center; }
-.fineprint { color: var(--muted); margin-top: 10px; font-size: 13px; }
+.fineprint { color: var(--muted); margin: 0; font-size: 13px; }
 
 .stepper {
   display: grid;
@@ -555,6 +569,9 @@ body {
 }
 .stepper > * { position: relative; z-index: 1; }
 @media (min-width: 860px) {
+  .hero-top { grid-template-columns: 1.1fr 0.9fr; }
+  .hero-graphic { display: block; }
+  .hero-graphic img { width: 100%; max-width: 420px; margin-left: auto; }
   .stepper { padding: 20px; }
 }
 .step { display: flex; align-items: flex-start; gap: 16px; }
