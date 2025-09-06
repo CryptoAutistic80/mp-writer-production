@@ -42,3 +42,50 @@ Thumbs.db
 .nx/workspace-data
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
+
+# Next.js
+.next
+out
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+backend-api/.env
+backend-api/.env.local
+backend-api/.env.*.local
+backend-api/.env.*
+!backend-api/.env.example
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/.env.*
+!frontend/.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# ESLint cache
+.eslintcache
+
+# Playwright artifacts
+playwright-report/
+test-results/
+playwright/.cache/
+
+# Vercel / Turbopack
+.vercel
+.turbo
+
+# direnv
+.envrc
+.direnv/
+
+# Editor/OS noise
+*.swp
+*~
+
+# Docker local overrides
+docker-compose.override.local.yml
