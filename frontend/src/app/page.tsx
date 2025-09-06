@@ -28,20 +28,7 @@ function GoogleButton() {
 
 export default function Index() {
   return (
-    <div className="page-wrap">
-      <header className="site-header">
-        <div className="container">
-          <div className="brand">
-            <img src="/assets/header-title.png" alt="MPWriter" />
-          </div>
-          <nav className="nav">
-            <Link href="#features">Features</Link>
-            <Link href="#how">How it works</Link>
-            <Link href="#contact">Contact</Link>
-          </nav>
-        </div>
-      </header>
-
+    <div>
       <main className="hero-section">
         <div className="bg-orbs" aria-hidden />
 
@@ -105,26 +92,10 @@ export default function Index() {
           <div className="copy" />
 
           <div className="card-footer">
-            <div className="brand-sub">MPWriter</div>
-            <div className="links">
-              <Link href="#privacy">Privacy</Link>
-              <Link href="#terms">Terms</Link>
-              <Link href="#contact">Contact</Link>
-            </div>
+            <div className="brand-sub"><img src="/assets/header-title.png" alt="MPWriter" /></div>
           </div>
         </section>
       </main>
-
-      <footer className="site-footer">
-        <div className="container">
-          <span>© {new Date().getFullYear()} MPWriter</span>
-          <div className="links">
-            <Link href="#privacy">Privacy</Link>
-            <Link href="#terms">Terms</Link>
-            <Link href="#contact">Contact</Link>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
