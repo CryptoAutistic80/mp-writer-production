@@ -79,8 +79,24 @@ export default function Index() {
             <div className="step">
               <div className="step-icon" aria-hidden>3</div>
               <div>
+                <div className="step-title">Select your tone</div>
+                <div className="step-sub">Choose a tone that fits your message.</div>
+              </div>
+            </div>
+            {/* Step 4 */}
+            <div className="step">
+              <div className="step-icon" aria-hidden>4</div>
+              <div>
                 <div className="step-title">Get your letter</div>
                 <div className="step-sub">AI crafts drafts with citations, ready to send.</div>
+              </div>
+            </div>
+            {/* Step 5 */}
+            <div className="step">
+              <div className="step-icon" aria-hidden>5</div>
+              <div>
+                <div className="step-title">Email letters directly (coming soon)</div>
+                <div className="step-sub">Send to your MP without leaving MP writer.</div>
               </div>
             </div>
 
