@@ -31,7 +31,9 @@ export default function Index() {
     <div className="page-wrap">
       <header className="site-header">
         <div className="container">
-          <div className="brand">MPWriter</div>
+          <div className="brand">
+            <img src="/assets/header-title.png" alt="MPWriter" />
+          </div>
           <nav className="nav">
             <Link href="#features">Features</Link>
             <Link href="#how">How it works</Link>
@@ -47,7 +49,7 @@ export default function Index() {
           <h1 className="hero-title">
             Your voice,
             <br />
-            clearly heard.
+            <span className="hero-highlight">clearly heard.</span>
           </h1>
           <p className="hero-sub">Craft researched, respectful letters to your MP in minutes.</p>
           <div className="cta">
@@ -57,48 +59,50 @@ export default function Index() {
             </p>
           </div>
 
-          <div id="features" className="features">
-            <div className="feature">
-              <span className="icon" aria-hidden>📍</span>
+          <div className="value-callout" role="note" aria-label="Key benefits">
+            <p className="value-1"><strong>Most of us never write to our MP.</strong></p>
+            <p className="value-2">MPWriter makes it effortless. With AI research, you can send perfectly articulated, evidence‑based letters in minutes.</p>
+            <p className="value-3"><strong>One credit = one research & draft.</strong> Buy only what you use.</p>
+          </div>
+
+          <div id="features" className="stepper">
+            {/* Step 1 */}
+            <div className="step">
+              <div className="step-icon" aria-hidden>1</div>
               <div>
-                <div className="feature-title">Look up your MP</div>
-                <div className="feature-sub">Enter your postcode, we handle the rest.</div>
+                <div className="step-title">Look up your MP</div>
+                <div className="step-sub">Enter your postcode and we'll handle the rest.</div>
               </div>
             </div>
-            <div className="feature">
-              <span className="icon" aria-hidden>💬</span>
+            {/* Step 2 */}
+            <div className="step">
+              <div className="step-icon" aria-hidden>2</div>
               <div>
-                <div className="feature-title">Describe your issue</div>
-                <div className="feature-sub">Tell us what matters to you.</div>
+                <div className="step-title">Describe your issue</div>
+                <div className="step-sub">Tell us what matters to you.</div>
               </div>
             </div>
-            <div className="feature">
-              <span className="icon" aria-hidden>📝</span>
+            {/* Step 3 */}
+            <div className="step">
+              <div className="step-icon" aria-hidden>3</div>
               <div>
-                <div className="feature-title">Get your letter</div>
-                <div className="feature-sub">AI crafts drafts with citations, ready to send.</div>
+                <div className="step-title">Get your letter</div>
+                <div className="step-sub">AI crafts drafts with citations, ready to send.</div>
               </div>
             </div>
 
+            {/* Phone preview */}
             <div className="phone-mock" aria-hidden>
               <div className="phone-screen">
-                <div className="msg-line w60" />
-                <div className="msg-line w90" />
-                <div className="msg-line w85" />
-                <div className="msg-line w70" />
+                <p><strong>Dear [MP Name],</strong></p>
+                <p>I’m writing to express my concerns about an issue affecting our community.</p>
+                <p>As a resident of [constituency], I believe it’s vital that we address this together.</p>
+                <p>AI‑powered research has helped me gather relevant facts and citations.</p>
                 <div className="btn-ghost">Copy to clipboard</div>
               </div>
             </div>
           </div>
-
-          <div className="copy">
-            <p>
-              For years, people have said: “write to your MP”. Most of us never did; MPWriter makes it effortless.
-              Powered by AI research, you can send a perfectly articulated, evidence-based letter every time your
-              voice needs to be heard.
-            </p>
-            <p className="emph">One credit = one research & draft. Buy only what you use.</p>
-          </div>
+          <div className="copy" />
 
           <div className="card-footer">
             <div className="brand-sub">MPWriter</div>
