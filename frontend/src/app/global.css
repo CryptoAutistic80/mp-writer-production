@@ -660,8 +660,3 @@ body {
 #nx-console, #nx-console-jetbrains, #nx-welcome, .nx-console, .nx-welcome {
   display: none !important;
 }
-
-/* Hide any stray bottom-left floating badge (e.g., dev tool bubbles) */
-body > div[style*="position: fixed"][style*="left: 0"][style*="bottom"] {
-  display: none !important;
-}
