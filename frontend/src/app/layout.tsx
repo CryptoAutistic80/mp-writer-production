@@ -9,6 +9,9 @@ export const metadata = {
     'Craft researched, respectful letters to your MP in minutes with MPWriter.',
 };
 
+// Ensure this layout (and header) renders dynamically per request
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({
   children,
 }: {

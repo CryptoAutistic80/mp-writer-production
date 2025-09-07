@@ -488,34 +488,73 @@ body {
 @media (min-width: 860px) {
   .brand img { height: 56px; }
 }
-.nav a {
-  margin-left: 20px;
-  color: var(--muted);
-}
+.nav { display: flex; align-items: center; gap: 20px; height: 64px; }
+.nav > * { align-self: center; }
+.nav a { margin-left: 0; color: var(--muted); }
+/* Normalize text links to match button height for vertical alignment */
+.nav a:not(.google-btn) { display: inline-flex; align-items: center; height: 40px; }
 
-/* Compact sign-in button in header */
-.header-login {
+/* Brand-compliant Google button */
+.google-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  background: #1a73e8;
-  color: #ffffff;
-  padding: 8px 12px;
-  border-radius: 999px;
-  box-shadow: 0 6px 12px rgba(26, 115, 232, 0.3);
-  font-weight: 600;
+  height: 40px;
+  padding: 0 12px 0 10px;
+  gap: 10px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  background: #fff;
+  color: #3c4043;
+  font-weight: 500;
   text-decoration: none;
-  line-height: 1;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1px 1px rgba(0,0,0,0.08);
 }
-.nav a.header-login, .nav a.header-login:visited, .nav a.header-login span { color: #ffffff; }
-.header-login:hover { filter: brightness(1.05); box-shadow: 0 10px 16px rgba(26, 115, 232, 0.35); }
-.header-login:active { transform: translateY(0); box-shadow: 0 6px 12px rgba(26, 115, 232, 0.3); }
-.header-login .gdot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: conic-gradient(#ea4335 0 25%, #fbbc05 0 50%, #34a853 0 75%, #4285f4 0);
+.google-btn:hover { background: #f7f8f8; }
+.google-btn:active { background: #eee; }
+.google-btn:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+.google-btn .google-icon { width: 18px; height: 18px; display: block; }
+.google-btn .google-btn-text { white-space: nowrap; }
+
+/* Profile chip */
+.profile-chip { display: inline-flex; position: relative; height: 40px; align-items: center; }
+.profile-details { position: relative; display: inline-flex; align-items: center; height: 40px; margin: 0; }
+.profile-summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  gap: 8px;
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 0 10px 0 4px;
+  user-select: none;
+  line-height: 1;
+}
+.profile-summary::-webkit-details-marker { display: none; }
+.profile-summary:hover { background: rgba(2,8,23,0.04); }
+.profile-avatar { width: 28px; height: 28px; border-radius: 999px; display: block; }
+.profile-avatar.fallback { background: #ddd; }
+.profile-name { color: var(--ink); font-weight: 600; }
+.profile-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 140px;
+  box-shadow: 0 16px 40px rgba(2,8,23,0.08), 0 2px 8px rgba(2,8,23,0.06);
+}
+.profile-menu a { display: block; padding: 8px 10px; color: var(--ink); text-decoration: none; border-radius: 8px; }
+.profile-menu a:hover { background: rgba(2,8,23,0.05); }
+
+/* Mobile: avatar-only, hide button text if needed */
+@media (max-width: 520px) {
+  .profile-name { display: inline; max-width: 10ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Keep text visible on mobile now that nav is shorter */
+  .google-btn .google-btn-text { display: inline; }
+  .google-btn { padding: 0 10px; width: auto; }
 }
 
 .hero-section {
