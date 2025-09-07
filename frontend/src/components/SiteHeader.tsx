@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { headers } from 'next/headers';
+import { cookies } from 'next/headers';
 
 type User = {
   id: string;
@@ -9,11 +9,13 @@ type User = {
 };
 
 async function getCurrentUser(): Promise<User | null> {
-  // Forward incoming cookies to the backend via Next.js rewrite
-  const hdrs = await headers();
-  const cookie = hdrs.get('cookie') ?? '';
+  // Forward incoming cookies explicitly to the backend via rewrite
+  const store = await cookies();
+  const cookie = store.getAll().map(c => `${c.name}=${c.value}`).join('; ');
   try {
-    const res = await fetch('/api/auth/me', {
+    const base = (process.env.NEXT_BACKEND_ORIGIN as string | undefined) || 'http://localhost:4000';
+    const url = `${base.replace(/\/$/, '')}/api/auth/me`;
+    const res = await fetch(url, {
       headers: { cookie },
       cache: 'no-store',
     });

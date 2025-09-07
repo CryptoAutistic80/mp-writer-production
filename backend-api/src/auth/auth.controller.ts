@@ -29,7 +29,10 @@ export class AuthController {
   ) {
     // req.user is set by GoogleStrategy.validate
     const user = req.user;
-    const token = await this.auth.signJwt({ id: user.id, email: user.email });
+    // Use Mongo _id when present
+    const rawId = (user as any)?._id ?? (user as any)?.id;
+    const id = typeof rawId === 'string' ? rawId : rawId?.toString?.();
+    const token = await this.auth.signJwt({ id, email: user.email });
 
     // Issue HttpOnly session cookie
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
