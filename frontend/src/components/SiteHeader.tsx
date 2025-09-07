@@ -40,10 +40,10 @@ export default async function SiteHeader() {
           </Link>
         </div>
         <nav className="nav">
-          <Link href="/how-it-works">How it works</Link>
+          <Link href="/how-it-works" className="hide-mobile">How it works</Link>
 
           {!isAuthed ? (
-            <a href="/api/auth/google" className="google-btn" aria-label="Sign in with Google">
+            <a href="/api/auth/google?prompt=select_account" className="google-btn" aria-label="Sign in with Google">
               <svg className="google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden>
                 <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.8 2.3 30.3 0 24 0 14.6 0 6.4 5.4 2.6 13.2l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/>
                 <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-2.7-.4-3.9H24v8.1h12.8c-.3 2-1.7 5.1-4.9 7.2l7.6 5.9c4.5-4.1 7-10.1 7-17.3z"/>
