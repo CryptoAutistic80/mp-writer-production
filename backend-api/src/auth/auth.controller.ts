@@ -1,11 +1,16 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { ConfigService } from '@nestjs/config';
+import type { Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly config: ConfigService,
+  ) {}
 
   // Initiates Google OAuth (redirect flow)
   @Get('google')
@@ -17,12 +22,34 @@ export class AuthController {
   // Google OAuth callback
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
-  async googleCallback(@Req() req: any) {
+  async googleCallback(
+    @Req() req: any,
+    @Res() res: Response,
+    @Query('returnTo') returnTo?: string,
+  ) {
     // req.user is set by GoogleStrategy.validate
     const user = req.user;
     const token = await this.auth.signJwt({ id: user.id, email: user.email });
-    // For now, return JSON with token and user info.
-    return { user, ...token };
+
+    // Issue HttpOnly session cookie
+    const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
+    const isSecure = appOrigin.startsWith('https://');
+    const threeHoursMs = 3 * 60 * 60 * 1000;
+    res.cookie('mpw_session', token.access_token, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'lax',
+      maxAge: threeHoursMs,
+      path: '/',
+    });
+
+    // Best-practice: redirect back to app
+    let target = appOrigin;
+    // Defensive: only allow relative paths for returnTo
+    if (returnTo && returnTo.startsWith('/')) {
+      target = appOrigin.replace(/\/$/, '') + returnTo;
+    }
+    return res.redirect(target);
   }
 
   // Return current user
@@ -31,5 +58,13 @@ export class AuthController {
   async me(@Req() req: any) {
     return req.user;
   }
-}
 
+  // Logout clears cookie and redirects to app
+  @Get('logout')
+  async logout(@Res() res: Response) {
+    const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
+    const isSecure = appOrigin.startsWith('https://');
+    res.clearCookie('mpw_session', { httpOnly: true, secure: isSecure, sameSite: 'lax', path: '/' });
+    return res.redirect(appOrigin);
+  }
+}

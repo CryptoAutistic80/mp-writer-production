@@ -17,7 +17,8 @@ import { UsersModule } from '../users/users.module';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET', 'changeme'),
-        signOptions: { expiresIn: '1h' },
+        // Session length: 3 hours
+        signOptions: { expiresIn: '3h' },
       }),
     }),
   ],
@@ -26,4 +27,3 @@ import { UsersModule } from '../users/users.module';
   exports: [AuthService],
 })
 export class AuthModule {}
-
