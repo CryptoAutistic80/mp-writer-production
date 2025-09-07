@@ -29,6 +29,7 @@ async function getCurrentUser(): Promise<User | null> {
 export default async function SiteHeader() {
   const user = await getCurrentUser();
   const isAuthed = !!user?.id;
+  const firstName = (user?.name || '')?.split(' ')[0] || user?.email || 'Account';
 
   return (
     <header className="site-header">
@@ -40,27 +41,32 @@ export default async function SiteHeader() {
         </div>
         <nav className="nav">
           <Link href="/how-it-works">How it works</Link>
-          <Link href="/contact">Contact</Link>
 
           {!isAuthed ? (
-            <a href="/api/auth/google" className="header-login" aria-label="Sign in with Google">
-              <span className="gdot" aria-hidden />
-              <span>Sign in</span>
+            <a href="/api/auth/google" className="google-btn" aria-label="Sign in with Google">
+              <svg className="google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden>
+                <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.8 2.3 30.3 0 24 0 14.6 0 6.4 5.4 2.6 13.2l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-2.7-.4-3.9H24v8.1h12.8c-.3 2-1.7 5.1-4.9 7.2l7.6 5.9c4.5-4.1 7-10.1 7-17.3z"/>
+                <path fill="#FBBC05" d="M10.5 28.3A14.4 14.4 0 0 1 9.7 24c0-1.5.3-3 .7-4.3l-7.9-6.1A24 24 0 0 0 0 24c0 3.8.9 7.4 2.6 10.4l7.9-6.1z"/>
+                <path fill="#34A853" d="M24 48c6.5 0 12-2.1 16-5.7l-7.6-5.9c-2.1 1.5-5 2.5-8.4 2.5-6.2 0-11.5-4.1-13.4-9.7l-7.9 6.1C6.4 42.6 14.6 48 24 48z"/>
+                <path fill="none" d="M0 0h48v48H0z"/>
+              </svg>
+              <span className="google-btn-text">Sign in with Google</span>
             </a>
           ) : (
-            <div className="profile" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <details>
-                <summary style={{ listStyle: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <div className="profile-chip">
+              <details className="profile-details">
+                <summary className="profile-summary">
                   {user?.image ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={user.image} alt={user.name || user.email || 'Profile'} width={28} height={28} style={{ borderRadius: '999px' }} />
+                    <img className="profile-avatar" src={user.image} alt={firstName} width={28} height={28} />
                   ) : (
-                    <div style={{ width: 28, height: 28, borderRadius: '999px', background: '#ddd' }} aria-hidden />
+                    <div className="profile-avatar fallback" aria-hidden />
                   )}
-                  <span>{user?.name || user?.email || 'Account'}</span>
+                  <span className="profile-name">{firstName}</span>
                 </summary>
-                <div style={{ position: 'absolute', background: '#fff', border: '1px solid #eee', borderRadius: 8, padding: 8, marginTop: 8, right: 16 }}>
-                  <a href="/api/auth/logout">Logout</a>
+                <div className="profile-menu" role="menu">
+                  <a role="menuitem" href="/api/auth/logout">Logout</a>
                 </div>
               </details>
             </div>
