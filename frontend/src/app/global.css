@@ -557,6 +557,18 @@ body {
   .google-btn { padding: 0 10px; width: auto; }
 }
 
+/* Utilities for responsive visibility */
+.mobile-only { display: none; }
+.hide-mobile { display: inline; }
+@media (max-width: 520px) {
+  .mobile-only { display: inline; }
+  .hide-mobile { display: none !important; }
+}
+
+/* Micro link styling in hero fineprint */
+.micro-link { color: #1a73e8; text-decoration: none; font-weight: 600; }
+.micro-link:hover { text-decoration: underline; }
+
 .hero-section {
   display: grid;
   place-items: center;
@@ -620,6 +632,7 @@ body {
   margin-top: 24px;
 }
 .fineprint { color: var(--muted); margin: 0; font-size: 13px; }
+.cta .fineprint + .fineprint { margin-top: 6px; }
 
 .stepper {
   display: grid;
@@ -721,7 +734,7 @@ body {
 
 /* Mobile tweaks: prevent feature/phone overlap */
 @media (max-width: 859px) {
-  .cta { margin-bottom: 6px; }
+  .cta { margin-top: 12px; margin-bottom: 6px; }
 }
 
 .copy { margin-top: 18px; color: var(--ink); }

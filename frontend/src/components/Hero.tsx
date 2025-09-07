@@ -10,7 +10,12 @@ export default function Hero() {
           </h1>
           <p className="hero-sub">Craft researched, respectful letters to your MP in minutes.</p>
           <div className="cta">
-            <p className="fineprint">Login is secure and simple with a Google account.</p>
+            <p className="fineprint mobile-only">
+              <a className="micro-link" href="/how-it-works">How it works</a>
+            </p>
+            <p className="fineprint">
+              Login is secure and simple with a Google account.
+            </p>
           </div>
         </div>
         <div className="hero-graphic" aria-hidden>
@@ -85,5 +90,3 @@ export default function Hero() {
     </section>
   );
 }
-
-

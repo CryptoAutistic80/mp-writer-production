@@ -27,6 +27,11 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     });
   }
 
+  // Always show Google account chooser
+  authorizationParams() {
+    return { prompt: 'select_account' } as any;
+  }
+
   async validate(
     accessToken: string,
     refreshToken: string,
@@ -41,4 +46,3 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     return user;
   }
 }
-
