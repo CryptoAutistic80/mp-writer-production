@@ -25,7 +25,7 @@ export default function Hero() {
 
       <div className="value-callout" role="note" aria-label="Key benefits">
         <p className="value-1"><strong>Most of us never write to our MP.</strong></p>
-        <p className="value-2">For years, writing to your MP meant long hours researching, drafting, and editing — often leaving important issues unspoken. MPWriter changes that. By combining AI-powered research with clear, structured drafting, it gives you the ability to share perfectly articulated, evidence-based letters in minutes. All you need to do is tell us what matters to you — we’ll handle the heavy lifting, so your voice reaches Parliament with clarity and impact.</p>
+        <p className="value-2">For years, writing to your MP meant long hours researching, drafting, and editing — often leaving important issues unspoken. MP Writer changes that. By combining AI-powered research with clear, structured drafting, it gives you the ability to share perfectly articulated, evidence-based letters in minutes. All you need to do is tell us what matters to you — we’ll handle the heavy lifting, so your voice reaches Parliament with clarity and impact.</p>
         <p className="value-3"><strong>One credit = one research & draft.</strong> Buy only what you use.</p>
       </div>
 
