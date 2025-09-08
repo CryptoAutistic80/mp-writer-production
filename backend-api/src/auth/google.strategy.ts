@@ -27,10 +27,9 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     });
   }
 
-  // Ensure Google always shows the account chooser
-  // (fixes cases where it auto-selects the last used account)
-  authorizationParams(): any {
-    return { prompt: 'select_account' };
+  // Always show Google account chooser
+  authorizationParams() {
+    return { prompt: 'select_account' } as any;
   }
 
   async validate(
