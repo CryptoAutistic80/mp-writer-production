@@ -12,6 +12,7 @@ import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
 import { PurchasesModule } from '../purchases/purchases.module';
 import { AiModule } from '../ai/ai.module';
+import { MpsModule } from '../mps/mps.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { AiModule } from '../ai/ai.module';
     AuthModule,
     PurchasesModule,
     AiModule,
+    MpsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
