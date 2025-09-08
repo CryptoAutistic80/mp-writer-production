@@ -27,6 +27,12 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     });
   }
 
+  // Ensure Google always shows the account chooser
+  // (fixes cases where it auto-selects the last used account)
+  authorizationParams(): any {
+    return { prompt: 'select_account' };
+  }
+
   async validate(
     accessToken: string,
     refreshToken: string,
@@ -41,4 +47,3 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     return user;
   }
 }
-
