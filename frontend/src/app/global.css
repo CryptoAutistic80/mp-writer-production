@@ -791,3 +791,43 @@ body {
 #nx-console, #nx-console-jetbrains, #nx-welcome, .nx-console, .nx-welcome {
   display: none !important;
 }
+
+/* Simple form styling */
+.section-title { font-weight: 800; color: var(--brand); font-size: 22px; }
+.section-sub { margin-top: 6px; color: var(--ink-600); }
+.form-grid { margin-top: 16px; display: grid; gap: 14px; }
+.field { display: grid; gap: 6px; }
+.label { font-weight: 600; color: var(--ink); }
+.input {
+  appearance: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+.input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--ring); }
+.actions { display: flex; align-items: center; margin-top: 2px; }
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--blue);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:hover { filter: brightness(0.95); }
+.btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.result { margin-top: 8px; }
+.result-placeholder {
+  background: #f8fafc;
+  border: 1px dashed #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  color: var(--ink-600);
+}
