@@ -25,6 +25,9 @@ services:
       - JWT_SECRET=supersecret
       - PORT=4000
       - APP_ORIGIN=http://localhost:3000
+      # Address lookup provider (getaddress.io)
+      - GETADDRESS_API_KEY=${GETADDRESS_API_KEY:-}
+      - ADDRESS_DEBUG=${ADDRESS_DEBUG:-}
       # Google OAuth (set these in your local override if needed)
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}

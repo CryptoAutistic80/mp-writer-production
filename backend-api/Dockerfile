@@ -20,6 +20,7 @@ COPY --from=builder /app/dist/backend-api ./
 RUN npm ci --omit=dev
 
 EXPOSE 4000
-ENV PORT=4000
+ENV PORT=4000 \
+    ADDRESS_DEBUG=0
 
 CMD ["node", "main.js"]
