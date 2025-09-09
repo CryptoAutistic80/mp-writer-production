@@ -15,6 +15,7 @@ import { AiModule } from '../ai/ai.module';
 import { MpsModule } from '../mps/mps.module';
 import { UserMpModule } from '../user-mp/user-mp.module';
 import { AddressesModule } from '../user-address/addresses.module';
+import { UserAddressModule } from '../user-address-store/user-address.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { AddressesModule } from '../user-address/addresses.module';
     MpsModule,
     UserMpModule,
     AddressesModule,
+    UserAddressModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type Address = {
   id: string;
@@ -25,6 +25,8 @@ export default function AddressForm() {
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selected, setSelected] = useState<Address | null>(null);
   const [manual, setManual] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   const valid = useMemo(() => !!normalisePostcode(postcode), [postcode]);
 
@@ -89,6 +91,61 @@ export default function AddressForm() {
   }, [addresses]);
 
   const current = selected || (manual ? { id: 'manual', line1: '', line2: '', city: '', county: '', postcode: normalisePostcode(postcode) || '' , label: '' } : null);
+
+  // Load saved address on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/user/address', { credentials: 'include', cache: 'no-store' });
+        if (!res.ok) return;
+        const json: any = await res.json().catch(() => null);
+        const a = json?.address;
+        if (a && a.postcode) {
+          const addr: Address = { id: 'saved', line1: a.line1 || '', line2: a.line2 || '', city: a.city || '', county: a.county || '', postcode: a.postcode || '', label: '' };
+          setSelected(addr);
+          setPostcode(a.postcode || '');
+        }
+      } catch {}
+    })();
+  }, []);
+
+  const save = useCallback(async () => {
+    if (!current) return;
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const body = {
+        line1: current.line1,
+        line2: current.line2 || '',
+        city: current.city || '',
+        county: current.county || '',
+        postcode: current.postcode,
+      };
+      const res = await fetch('/api/user/address', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(msg || `Save failed (${res.status})`);
+      }
+      setSavedMsg('Address saved');
+    } catch (e: any) {
+      setSavedMsg(e?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }, [current]);
+
+  const clearSaved = useCallback(async () => {
+    setSavedMsg(null);
+    try {
+      await fetch('/api/user/address', { method: 'DELETE', credentials: 'include' });
+      setSelected(null);
+    } catch {}
+  }, []);
 
   return (
     <div className="container">
@@ -173,13 +230,17 @@ export default function AddressForm() {
                 onChange={(e) => setSelected({ ...(current as Address), postcode: e.target.value })} />
             </div>
             <div className="actions" style={{ marginTop: 10 }}>
-              <button type="button" className="btn-primary" onClick={() => alert('Save coming soon')}>Save address</button>
+              <button type="button" className="btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save address'}</button>
               {!manual && (
                 <button type="button" className="btn-link" onClick={() => setManual(true)}>
                   Edit manually
                 </button>
               )}
+              <button type="button" className="btn-link" onClick={clearSaved}>Clear saved</button>
             </div>
+            {savedMsg && (
+              <div className="status" aria-live="polite"><p style={{ color: '#2563eb', marginTop: 8 }}>{savedMsg}</p></div>
+            )}
           </div>
         )}
       </form>
