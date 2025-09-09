@@ -38,21 +38,12 @@ export class AddressesService {
         return { res, url: logUrl };
       };
 
-      const getFullAddress = async (id: string) => {
-        const url = `https://api.getaddress.io/get/${encodeURIComponent(id)}?api-key=${encodeURIComponent(getAddressKey)}`;
-        const logUrl = `https://api.getaddress.io/get/${encodeURIComponent(id)}`;
-        if (debug) console.log(`[addresses] GET ${logUrl}`);
-        const res = await fetch(url);
-        if (debug) console.log(`[addresses] <= ${res.status}`);
-        return res;
-      };
-
       try {
         // First try with spaced format; fall back to tight format on 404
-        let { res, url } = await attemptAutocomplete(pc);
+        let { res } = await attemptAutocomplete(pc);
         if (res.status === 404) {
           const tight = pc.replace(/\s+/g, '');
-          ({ res, url } = await attemptAutocomplete(tight));
+          ({ res } = await attemptAutocomplete(tight));
         }
         if (res.status === 404) {
           if (debug) console.log('[addresses] No results for postcode');
@@ -68,39 +59,25 @@ export class AddressesService {
         const suggestions: any[] = Array.isArray(autocompleteData?.suggestions) ? autocompleteData.suggestions : [];
         if (debug) console.log(`[addresses] Found ${suggestions.length} suggestions`);
 
-        // Get full address details for each suggestion
-        const addresses: NormalizedAddress[] = [];
-        for (const suggestion of suggestions) {
-          if (!suggestion.id) continue;
-          
-          try {
-            const fullAddressRes = await getFullAddress(suggestion.id);
-            if (!fullAddressRes.ok) continue;
-            
-            const fullAddress: any = await fullAddressRes.json();
-            const line1 = fullAddress.line_1 || fullAddress.building_number + ' ' + fullAddress.thoroughfare || '';
-            const line2 = fullAddress.line_2 || '';
-            const city = fullAddress.town_or_city || '';
-            const county = fullAddress.county || '';
-            const postcode = fullAddress.postcode || pc;
-            const label = [line1, line2, city, county, postcode].filter(Boolean).join(', ');
-            
-            addresses.push({
-              id: suggestion.id,
-              line1: line1.trim(),
-              line2: line2.trim(),
-              city,
-              county,
-              postcode,
-              label
-            } as NormalizedAddress);
-          } catch (e) {
-            if (debug) console.log(`[addresses] Failed to get full address for ${suggestion.id}:`, e);
-            // Continue with next suggestion
-          }
-        }
-        
-        if (debug) console.log(`[addresses] Parsed ${addresses.length} addresses`);
+        // IMPORTANT: Do NOT call provider's get endpoint for every suggestion.
+        // Only return lightweight suggestions (id + label). Client will
+        // fetch details for the selected id via getById().
+        const addresses: NormalizedAddress[] = suggestions
+          .filter((s: any) => s?.id && (s?.address || s?.text))
+          .map((s: any) => {
+            const label = (s.address || s.text || '').toString();
+            return {
+              id: s.id.toString(),
+              line1: '',
+              line2: '',
+              city: '',
+              county: '',
+              postcode: pc,
+              label,
+            } as NormalizedAddress;
+          });
+
+        if (debug) console.log(`[addresses] Returning ${addresses.length} suggestions (no prefetch)`);
         return addresses;
       } catch (e) {
         if (e instanceof BadGatewayException) throw e;
@@ -120,4 +97,38 @@ export class AddressesService {
     // In production, return empty list
     return [];
   }
+}
+
+// Separate function on the service to fetch a single full address by id.
+// This avoids N+1 request amplification during lookup.
+export async function getAddressById(config: ConfigService, id: string, defaultPostcode?: string): Promise<NormalizedAddress | null> {
+  const getAddressKey = config.get<string>('GETADDRESS_API_KEY');
+  const debug = config.get<string>('ADDRESS_DEBUG') === '1';
+  if (!getAddressKey) return null;
+  if (!id) return null;
+
+  const url = `https://api.getaddress.io/get/${encodeURIComponent(id)}?api-key=${encodeURIComponent(getAddressKey)}`;
+  const logUrl = `https://api.getaddress.io/get/${encodeURIComponent(id)}`;
+  if (debug) console.log(`[addresses] GET ${logUrl}`);
+  const res = await fetch(url);
+  if (debug) console.log(`[addresses] <= ${res.status}`);
+  if (!res.ok) return null;
+
+  const full: any = await res.json();
+  const line1 = (full.line_1 || `${full.building_number || ''} ${full.thoroughfare || ''}`).trim();
+  const line2 = (full.line_2 || '').trim();
+  const city = full.town_or_city || '';
+  const county = full.county || '';
+  const postcode = full.postcode || defaultPostcode || '';
+  const label = [line1, line2, city, county, postcode].filter(Boolean).join(', ');
+
+  return {
+    id: id.toString(),
+    line1,
+    line2,
+    city,
+    county,
+    postcode,
+    label,
+  } as NormalizedAddress;
 }

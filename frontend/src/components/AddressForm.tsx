@@ -48,15 +48,29 @@ export default function AddressForm() {
         const json: any = await res.json();
         const raw = json?.items ?? json?.addresses ?? json?.result;
         if (Array.isArray(raw)) {
-          // handle formats: [{ line1, line2, town, county, postcode }] OR ["1 Road, Town, County, PC"]
+          // Accept various shapes: strings; label-only suggestions from backend; or full objects
           items = raw.map((r: any, i: number) => {
             if (typeof r === 'string') {
               const parts = r.split(',').map((s) => s.trim()).filter(Boolean);
               const label = r;
               const last = parts[parts.length - 1];
               const pc2 = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/.test(last) ? last.toUpperCase() : pc;
-              return { id: `${i}`, line1: parts[0] || '', line2: parts[1] || '', city: parts[2] || '', county: parts[3] || '', postcode: pc2, label } as Address;
+              return { id: `${i}`,
+                line1: parts[0] || '', line2: parts[1] || '', city: parts[2] || '', county: parts[3] || '', postcode: pc2, label } as Address;
             }
+            // If backend already provided a normalized suggestion with label, use it as-is
+            if (r && (r.label || r.id)) {
+              return {
+                id: r.id?.toString?.() || `${i}`,
+                line1: r.line1 || '',
+                line2: r.line2 || '',
+                city: r.city || '',
+                county: r.county || '',
+                postcode: r.postcode || pc,
+                label: r.label || [r.line1 || r.address1, r.line2 || r.address2, r.town || r.city, r.county, r.postcode || pc].filter(Boolean).join(', '),
+              } as Address;
+            }
+            // Fallback: try to build a label from common field names
             const label = [r.line1 || r.address1, r.line2 || r.address2, r.town || r.city, r.county, r.postcode || pc].filter(Boolean).join(', ');
             return {
               id: r.id?.toString?.() || r.udprn?.toString?.() || `${i}`,
@@ -85,10 +99,38 @@ export default function AddressForm() {
     }
   }, [postcode]);
 
-  const onSelect = useCallback((id: string) => {
-    const a = addresses.find((x) => x.id === id) || null;
-    setSelected(a);
-  }, [addresses]);
+  const onSelect = useCallback(async (id: string) => {
+    setError(null);
+    // Find the chosen suggestion (for postcode default), then fetch full details by id
+    const chosen = addresses.find((x) => x.id === id) || null;
+    setLoading(true);
+    try {
+      const pc = chosen?.postcode || normalisePostcode(postcode) || '';
+      const res = await fetch(`/api/addresses/get?id=${encodeURIComponent(id)}${pc ? `&postcode=${encodeURIComponent(pc)}` : ''}`, { cache: 'no-store', credentials: 'include' });
+      if (!res.ok) throw new Error(`Failed to fetch address details (${res.status})`);
+      const json: any = await res.json();
+      const item = json?.item || json?.address || json;
+      if (item && item.id) {
+        const a: Address = {
+          id: item.id?.toString?.() || id,
+          line1: item.line1 || item.address1 || '',
+          line2: item.line2 || item.address2 || '',
+          city: item.city || item.town || '',
+          county: item.county || '',
+          postcode: item.postcode || pc,
+          label: item.label || [item.line1 || item.address1, item.line2 || item.address2, item.city || item.town, item.county, item.postcode || pc].filter(Boolean).join(', '),
+        };
+        setSelected(a);
+      } else {
+        throw new Error('No address details returned');
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load address details. You can enter it manually.');
+      setSelected(chosen); // keep at least the label
+    } finally {
+      setLoading(false);
+    }
+  }, [addresses, postcode]);
 
   const current = selected || (manual ? { id: 'manual', line1: '', line2: '', city: '', county: '', postcode: normalisePostcode(postcode) || '' , label: '' } : null);
 
@@ -189,7 +231,7 @@ export default function AddressForm() {
         {!selected && !manual && addresses.length > 0 && (
           <div className="result" aria-live="polite">
             <label htmlFor="addr-select" className="label">Select address</label>
-            <select id="addr-select" className="select" onChange={(e) => onSelect(e.target.value)} defaultValue="">
+            <select id="addr-select" className="select" onChange={(e) => { void onSelect(e.target.value); }} defaultValue="">
               <option value="" disabled>Choose your address…</option>
               {addresses.map((a) => (
                 <option key={a.id} value={a.id}>{a.label}</option>
