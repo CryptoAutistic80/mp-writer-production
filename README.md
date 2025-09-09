@@ -34,3 +34,14 @@ Auth & API (Backend)
 - Current user: `GET /api/auth/me` (Authorization: `Bearer <token>`)
 - Purchases: `GET /api/purchases`, `POST /api/purchases`, `GET /api/purchases/:id`
 - OpenAI: `POST /api/ai/generate` (Authorization required)
+
+Persisting a User's MP
+- Model: separate collection `user_mps` keyed by `user` (ObjectId). See `backend-api/src/user-mp/schemas/user-mp.schema.ts`.
+- Endpoints (auth required):
+  - `GET /api/user/mp` — return the saved MP for the current user.
+  - `PUT /api/user/mp` — upsert `{ constituency, mp }`.
+  - `DELETE /api/user/mp` — clear saved MP.
+- Frontend integration: `frontend/src/components/mpFetch.tsx`
+  - Auto-loads saved MP on mount.
+  - Saves after successful lookup.
+  - “Change my MP” clears server state and returns to search.

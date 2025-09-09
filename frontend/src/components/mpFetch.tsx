@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type Lookup = {
   constituency: string;
@@ -22,6 +22,8 @@ export default function MpFetch() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<Lookup | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const normalized = useMemo(() => postcode.replace(/\s+/g, '').toUpperCase(), [postcode]);
   const valid = useMemo(() => /^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/.test(normalized), [normalized]);
@@ -43,6 +45,15 @@ export default function MpFetch() {
       }
       const json = (await res.json()) as Lookup;
       setData(json);
+      // Try to persist for signed-in users; ignore failures
+      try {
+        await fetch('/api/user/mp', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ constituency: json.constituency, mp: json.mp ?? null }),
+        });
+      } catch {}
     } catch (err: any) {
       setError('We couldn\'t find a match for that postcode.');
     } finally {
@@ -50,43 +61,83 @@ export default function MpFetch() {
     }
   }, [postcode, valid]);
 
+  // On mount, attempt to load any saved MP for the current user
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/user/mp', { credentials: 'include', cache: 'no-store' });
+        if (!res.ok) return; // likely unauthenticated or none saved
+        const doc = await res.json();
+        if (!cancelled && doc && (doc.constituency || doc.mp)) {
+          setData({ constituency: doc.constituency, mp: doc.mp });
+        }
+      } catch {
+        // ignore errors silently
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="container">
       <h2 id="find-mp-heading" className="section-title">Find your MP</h2>
       <p className="section-sub">Enter your UK postcode to look up your constituency MP.</p>
 
-      <form className="form-grid" aria-labelledby="find-mp-heading" onSubmit={onSubmit}>
-        <div className="field">
-          <label htmlFor="postcode" className="label">Postcode</label>
-          <input
-            id="postcode"
-            name="postcode"
-            inputMode="text"
-            autoComplete="postal-code"
-            placeholder="e.g. SW1A 1AA"
-            className="input"
-            value={postcode}
-            onChange={(e) => setPostcode(e.target.value)}
-            disabled={loading}
-            aria-invalid={!valid && postcode.length > 0}
-          />
-        </div>
+      <form
+        className={`form-grid ${data ? 'single' : ''}`}
+        aria-labelledby="find-mp-heading"
+        onSubmit={onSubmit}
+      >
+        {!data && (
+          <div className="field">
+            <label htmlFor="postcode" className="label">Postcode</label>
+            <input
+              ref={inputRef}
+              id="postcode"
+              name="postcode"
+              inputMode="text"
+              autoComplete="postal-code"
+              placeholder="e.g. SW1A 1AA"
+              className="input"
+              value={postcode}
+              onChange={(e) => setPostcode(e.target.value)}
+              disabled={loading}
+              aria-invalid={!valid && postcode.length > 0}
+            />
+          </div>
+        )}
 
         <div className="actions">
-          <button type="submit" className="btn-primary" disabled={!valid || loading} aria-busy={loading}>
-            {loading ? 'Finding…' : 'Find my MP'}
-          </button>
-          <p className="fineprint" style={{ marginLeft: 12 }}>We’ll never post anywhere on your behalf.</p>
+          {data ? (
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                setError(null);
+                // Clear saved MP server-side if present; ignore result
+                fetch('/api/user/mp', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+                setData(null);
+                setPostcode('');
+                setTimeout(() => inputRef.current?.focus(), 0);
+              }}
+            >
+              Change my MP
+            </button>
+          ) : (
+            <button type="submit" className="btn-primary" disabled={!valid || loading} aria-busy={loading}>
+              {loading ? 'Finding…' : 'Find my MP'}
+            </button>
+          )}
         </div>
 
-        <div className="status" aria-live="polite">
-          {error && <p style={{ color: '#b91c1c', marginTop: 10 }}>{error}</p>}
-        </div>
+        {error && (
+          <div className="status" aria-live="polite">
+            <p style={{ color: '#b91c1c', marginTop: 10 }}>{error}</p>
+          </div>
+        )}
 
         <div className="result" aria-live="polite">
-          {!data && !error && (
-            <div className="result-placeholder">Your MP will appear here after lookup.</div>
-          )}
           {data && (
             <article className="mp-card">
               {data.mp?.portraitUrl && (
@@ -101,7 +152,37 @@ export default function MpFetch() {
                 {(data.mp?.email || data.mp?.twitter || data.mp?.website) && (
                   <ul className="mp-links">
                     {data.mp?.email && (
-                      <li><a href={`mailto:${data.mp.email}`}>Email</a></li>
+                      <li>
+                        <button
+                          type="button"
+                          className="mp-email"
+                          aria-label={`Copy email ${data.mp.email}`}
+                          onClick={async () => {
+                            try {
+                              if (navigator?.clipboard?.writeText) {
+                                await navigator.clipboard.writeText(data.mp!.email!);
+                              } else {
+                                const el = document.createElement('textarea');
+                                el.value = data.mp!.email!;
+                                el.style.position = 'fixed';
+                                el.style.opacity = '0';
+                                document.body.appendChild(el);
+                                el.focus();
+                                el.select();
+                                document.execCommand('copy');
+                                document.body.removeChild(el);
+                              }
+                              setCopied(true);
+                              setTimeout(() => setCopied(false), 1500);
+                            } catch {
+                              // ignore copy errors silently
+                            }
+                          }}
+                        >
+                          {data.mp.email}
+                        </button>
+                        {copied && <span className="copy-hint" aria-live="polite">Copied</span>}
+                      </li>
                     )}
                     {data.mp?.twitter && (
                       <li><a target="_blank" rel="noreferrer" href={`https://twitter.com/${data.mp.twitter.replace(/^@/, '')}`}>Twitter</a></li>

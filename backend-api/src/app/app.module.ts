@@ -13,6 +13,7 @@ import { UsersModule } from '../users/users.module';
 import { PurchasesModule } from '../purchases/purchases.module';
 import { AiModule } from '../ai/ai.module';
 import { MpsModule } from '../mps/mps.module';
+import { UserMpModule } from '../user-mp/user-mp.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { MpsModule } from '../mps/mps.module';
     PurchasesModule,
     AiModule,
     MpsModule,
+    UserMpModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

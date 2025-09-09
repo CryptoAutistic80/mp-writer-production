@@ -824,8 +824,8 @@ body {
 }
 .btn-primary:hover { filter: brightness(0.95); }
 .btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.status { min-height: 22px; }
-.result { margin-top: 8px; }
+.status { min-height: 0; }
+.result { margin-top: 0; }
 .result-placeholder {
   background: #f8fafc;
   border: 1px dashed #e2e8f0;
@@ -836,7 +836,7 @@ body {
 
 /* MP card */
 .mp-card {
-  margin-top: 12px;
+  margin-top: 8px;
   display: grid;
   grid-template-columns: 64px 1fr;
   gap: 12px;
@@ -851,15 +851,23 @@ body {
 .mp-body { min-width: 0; }
 .mp-name { font-weight: 800; color: var(--brand); }
 .mp-meta { color: var(--ink-600); margin-top: 2px; }
-.mp-links { list-style: none; padding: 0; margin: 10px 0 0 0; display: flex; gap: 12px; }
+.mp-links { list-style: none; padding: 0; margin: 10px 0 0 0; display: flex; gap: 12px; flex-wrap: wrap; }
 .mp-links a { color: var(--blue); text-decoration: none; font-weight: 600; }
 .mp-links a:hover { text-decoration: underline; }
-.mp-address { margin-top: 8px; color: var(--ink-600); }
+.mp-address { margin-top: 8px; color: var(--ink-600); white-space: pre-line; }
+.mp-email { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; cursor: pointer; background: none; border: none; padding: 0; font-size: clamp(13px, 3.6vw, 16px); }
+.mp-email:hover { text-decoration: underline; }
+.copy-hint { margin-left: 8px; color: var(--ink-600); font-size: 12px; }
 
 @media (min-width: 640px) {
   .form-grid { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .form-grid .field { grid-column: 1 / 2; }
   .form-grid .actions { grid-column: 2 / 3; justify-self: start; }
+  /* Ensure feedback and results span full width under fields */
+  .form-grid .status, .form-grid .result { grid-column: 1 / -1; }
+  /* When a result is present, collapse to one column and keep actions left */
+  .form-grid.single { grid-template-columns: 1fr; }
+  .form-grid.single .actions { grid-column: 1 / 2; }
 }
 
 .mp-result {
