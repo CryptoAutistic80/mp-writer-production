@@ -21,6 +21,8 @@ RUN npm ci --omit=dev
 
 EXPOSE 4000
 ENV PORT=4000 \
-    ADDRESS_DEBUG=0
+    ADDRESS_DEBUG=0 \
+    GETADDRESS_API_KEY= \
+    DATA_ENCRYPTION_KEY=
 
 CMD ["node", "main.js"]

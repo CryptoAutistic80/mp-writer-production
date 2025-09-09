@@ -25,6 +25,7 @@ services:
       - JWT_SECRET=supersecret
       - PORT=4000
       - APP_ORIGIN=http://localhost:3000
+      - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:-}
       # Address lookup provider (getaddress.io)
       - GETADDRESS_API_KEY=${GETADDRESS_API_KEY:-}
       - ADDRESS_DEBUG=${ADDRESS_DEBUG:-}
