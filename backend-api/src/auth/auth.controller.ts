@@ -46,8 +46,8 @@ export class AuthController {
       path: '/',
     });
 
-    // Best-practice: redirect back to app
-    let target = appOrigin;
+    // Best-practice: redirect back to app — default to dashboard
+    let target = appOrigin.replace(/\/$/, '') + '/dashboard';
     // Defensive: only allow relative paths for returnTo
     if (returnTo && returnTo.startsWith('/')) {
       target = appOrigin.replace(/\/$/, '') + returnTo;

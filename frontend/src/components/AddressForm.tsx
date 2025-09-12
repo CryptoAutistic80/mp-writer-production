@@ -18,7 +18,12 @@ function normalisePostcode(input: string) {
   return `${tight.slice(0, -3)} ${tight.slice(-3)}`;
 }
 
-export default function AddressForm() {
+type AddressFormProps = {
+  // Postcode typed in the MP lookup step; used to seed and keep the field in sync.
+  seedPostcode?: string;
+};
+
+export default function AddressForm({ seedPostcode }: AddressFormProps) {
   const [postcode, setPostcode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +42,7 @@ export default function AddressForm() {
     setManual(false);
     const pc = normalisePostcode(postcode);
     if (!pc) {
-      setError('Please enter a valid UK postcode.');
+      // Invalid postcode – quietly stop; UI hints via aria-invalid
       return;
     }
     setLoading(true);
@@ -98,6 +103,31 @@ export default function AddressForm() {
       setLoading(false);
     }
   }, [postcode]);
+
+  // Keep this form's postcode synced with the postcode typed in the MP lookup.
+  useEffect(() => {
+    if (seedPostcode != null && seedPostcode !== postcode) {
+      setPostcode(seedPostcode);
+    }
+  }, [seedPostcode]);
+
+  // Auto-search when postcode changes to a valid UK postcode.
+  useEffect(() => {
+    const pc = normalisePostcode(postcode);
+    if (!pc) {
+      setAddresses([]);
+      setError(null);
+      return;
+    }
+    // If a saved/selected address already matches this postcode, don't refetch.
+    if (selected && normalisePostcode(selected.postcode) === pc) {
+      return;
+    }
+    const t = setTimeout(() => {
+      void search();
+    }, 350);
+    return () => clearTimeout(t);
+  }, [postcode, search, selected]);
 
   const onSelect = useCallback(async (id: string) => {
     setError(null);
@@ -195,31 +225,18 @@ export default function AddressForm() {
       <p className="section-sub">Enter the address you want to use when writing to your MP.</p>
 
       {/* Search row */}
-      <form className="form-grid" onSubmit={search}>
-        {!selected && !manual && (
-          <div className="field">
-            <label htmlFor="addr-postcode" className="label">Postcode</label>
-            <input
-              id="addr-postcode"
-              className="input"
-              placeholder="e.g. SW1A 1AA"
-              autoComplete="postal-code"
-              value={postcode}
-              onChange={(e) => setPostcode(e.target.value)}
-              aria-invalid={!valid && postcode.length > 0}
-            />
-          </div>
-        )}
-        <div className="actions">
-          {!selected && !manual ? (
-            <button type="submit" className="btn-primary" disabled={!valid || loading} aria-busy={loading}>
-              {loading ? 'Searching…' : 'Find address'}
-            </button>
-          ) : (
-            <button type="button" className="btn-primary" onClick={() => { setSelected(null); setManual(false); setAddresses([]); }}>
-              Search again
-            </button>
-          )}
+      <form className="form-grid" onSubmit={(e) => e.preventDefault()}>
+        <div className="field">
+          <label htmlFor="addr-postcode" className="label">Postcode</label>
+          <input
+            id="addr-postcode"
+            className="input"
+            placeholder="e.g. SW1A 1AA"
+            autoComplete="postal-code"
+            value={postcode}
+            onChange={(e) => setPostcode(e.target.value)}
+            aria-invalid={!valid && postcode.length > 0}
+          />
         </div>
 
         {/* Error */}

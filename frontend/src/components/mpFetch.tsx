@@ -17,7 +17,11 @@ type Lookup = {
   } | null;
 };
 
-export default function MpFetch() {
+type MpFetchProps = {
+  onPostcodeChange?: (postcode: string) => void;
+};
+
+export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
   const [postcode, setPostcode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +105,11 @@ export default function MpFetch() {
               placeholder="e.g. SW1A 1AA"
               className="input"
               value={postcode}
-              onChange={(e) => setPostcode(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPostcode(v);
+                try { onPostcodeChange?.(v); } catch {}
+              }}
               disabled={loading}
               aria-invalid={!valid && postcode.length > 0}
             />
