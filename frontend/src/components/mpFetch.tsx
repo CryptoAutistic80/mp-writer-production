@@ -32,8 +32,7 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
   const normalized = useMemo(() => postcode.replace(/\s+/g, '').toUpperCase(), [postcode]);
   const valid = useMemo(() => /^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/.test(normalized), [normalized]);
 
-  const onSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doLookup = useCallback(async () => {
     setError(null);
     setData(null);
     if (!valid) {
@@ -65,6 +64,11 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
     }
   }, [postcode, valid]);
 
+  const onSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    await doLookup();
+  }, [doLookup]);
+
   // On mount, attempt to load any saved MP for the current user
   useEffect(() => {
     let cancelled = false;
@@ -85,8 +89,42 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
 
   return (
     <div className="container">
-      <h2 id="find-mp-heading" className="section-title">Find your MP</h2>
-      <p className="section-sub">Enter your UK postcode to look up your constituency MP.</p>
+      <div className="section-header">
+        <div>
+          <h2 id="find-mp-heading" className="section-title">Find your MP</h2>
+          <p className="section-sub">Enter your UK postcode to look up your constituency MP.</p>
+        </div>
+        {(data || !data) && (
+          <div className="header-actions">
+            {data ? (
+              <button
+                type="button"
+                className="btn-primary btn-wide"
+                onClick={() => {
+                  setError(null);
+                  // Clear saved MP server-side if present; ignore result
+                  fetch('/api/user/mp', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+                  setData(null);
+                  setPostcode('');
+                  setTimeout(() => inputRef.current?.focus(), 0);
+                }}
+              >
+                Change my MP
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-primary btn-wide"
+                disabled={!valid || loading}
+                aria-busy={loading}
+                onClick={() => { void doLookup(); }}
+              >
+                {loading ? 'Finding…' : 'Find my MP'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       <form
         className={`form-grid ${data ? 'single' : ''}`}
@@ -116,28 +154,7 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
           </div>
         )}
 
-        <div className="actions">
-          {data ? (
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => {
-                setError(null);
-                // Clear saved MP server-side if present; ignore result
-                fetch('/api/user/mp', { method: 'DELETE', credentials: 'include' }).catch(() => {});
-                setData(null);
-                setPostcode('');
-                setTimeout(() => inputRef.current?.focus(), 0);
-              }}
-            >
-              Change my MP
-            </button>
-          ) : (
-            <button type="submit" className="btn-primary" disabled={!valid || loading} aria-busy={loading}>
-              {loading ? 'Finding…' : 'Find my MP'}
-            </button>
-          )}
-        </div>
+        {/* No inline actions; button lives in the section header */}
 
         {error && (
           <div className="status" aria-live="polite">
