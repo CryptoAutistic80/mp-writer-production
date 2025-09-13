@@ -1011,6 +1011,28 @@ body {
   color: var(--brand);
   font-size: 22px;
 }
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.section-header .header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .section-header {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .section-header .header-actions {
+    align-self: center;
+    margin-top: 6px;
+  }
+}
 .section-sub {
   margin-top: 6px;
   color: var(--ink-600);
@@ -1088,6 +1110,10 @@ body {
   font-weight: 600;
   cursor: pointer;
 }
+.btn-wide {
+  min-width: 140px;
+  justify-content: center;
+}
 .btn-primary:hover {
   filter: brightness(0.95);
 }
@@ -1141,20 +1167,88 @@ body {
   margin-top: 2px;
 }
 
+/* Start Writing button panel */
+.hero-section .card.card-compact {
+  /* Extremely compact: just a touch above the button */
+  padding: 6px 12px;
+}
+
+.start-writing-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.start-writing-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  animation: soft-bounce 2.6s ease-in-out infinite;
+  will-change: transform;
+  transform-origin: center;
+  line-height: 0; /* remove inline button baseline gap */
+  display: inline-block;
+}
+.start-writing-btn:hover {
+  transform: translateY(-1px) scale(1.02);
+}
+
+.start-writing-img {
+  display: block;
+  width: clamp(180px, 40vw, 320px);
+  height: auto;
+}
+
+@keyframes soft-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+/* Simple toast for inline feedback */
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: #0b3b66;
+  color: #ffffff;
+  padding: 10px 14px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(2, 8, 23, 0.25);
+  font-size: 14px;
+  z-index: 50;
+  animation: toast-in 150ms ease-out;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+
 .dashboard-welcome {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
+.welcome-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .credits-info {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 .credits-count {
   font-weight: 800;
   color: var(--brand);
   font-size: 20px;
+  text-align: center;
 }
 @media (min-width: 640px) {
   .dashboard-welcome {
@@ -1163,6 +1257,13 @@ body {
     align-items: center;
   }
 }
+@media (max-width: 640px) {
+  .dashboard-welcome .welcome-copy {
+    align-items: center;
+    text-align: center;
+  }
+}
+/* No mobile override needed; keep centered under button */
 .mp-links {
   list-style: none;
   padding: 0;

@@ -2,6 +2,8 @@
 
 import MpFetch from '../../components/mpFetch';
 import AddressForm from '../../components/AddressForm';
+import DashboardWelcome from '../../components/DashboardWelcome';
+import StartWritingButton from '../../components/StartWritingButton';
 import { useEffect, useState } from 'react';
 
 export default function DashboardPage() {
@@ -31,26 +33,32 @@ export default function DashboardPage() {
     };
   }, []);
 
+  async function handleCreditShopClick() {
+    try {
+      const res = await fetch('/api/user/credits/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: 1 }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (typeof data?.credits === 'number') setCredits(data.credits);
+    } catch {
+      // ignore temporary demo errors
+    }
+  }
+
   return (
     <main className="hero-section">
-      <section className="card">
-        <div className="container dashboard-welcome">
-          <h2 className="section-title">
-            Welcome to your dashboard {firstName}!
-          </h2>
-          <div className="credits-info">
-            <span className="credits-count">{credits} credits</span>
-            <button type="button" className="btn-primary">
-              Credit shop
-            </button>
-          </div>
-        </div>
-      </section>
+      <DashboardWelcome firstName={firstName} credits={credits} onAddCredit={handleCreditShopClick} />
       <section className="card" style={{ marginTop: 16 }}>
         <MpFetch onPostcodeChange={setSharedPostcode} />
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <AddressForm seedPostcode={sharedPostcode} />
+      </section>
+      <section className="card card-compact" style={{ marginTop: 16 }}>
+        <StartWritingButton />
       </section>
     </main>
   );

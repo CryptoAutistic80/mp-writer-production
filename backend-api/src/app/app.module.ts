@@ -16,6 +16,7 @@ import { MpsModule } from '../mps/mps.module';
 import { UserMpModule } from '../user-mp/user-mp.module';
 import { AddressesModule } from '../user-address/addresses.module';
 import { UserAddressModule } from '../user-address-store/user-address.module';
+import { UserCreditsModule } from '../user-credits/user-credits.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { UserAddressModule } from '../user-address-store/user-address.module';
     UserMpModule,
     AddressesModule,
     UserAddressModule,
+    UserCreditsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

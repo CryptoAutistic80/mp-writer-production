@@ -221,8 +221,12 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
 
   return (
     <div className="container">
-      <h2 className="section-title">Your address</h2>
-      <p className="section-sub">Enter the address you want to use when writing to your MP.</p>
+      <div className="section-header">
+        <div>
+          <h2 className="section-title">Your address</h2>
+          <p className="section-sub">Enter the address you want to use when writing to your MP.</p>
+        </div>
+      </div>
 
       {/* Search row */}
       <form className="form-grid" onSubmit={(e) => e.preventDefault()}>

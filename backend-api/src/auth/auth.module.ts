@@ -7,11 +7,13 @@ import { AuthController } from './auth.controller';
 import { GoogleStrategy } from './google.strategy';
 import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
+import { UserCreditsModule } from '../user-credits/user-credits.module';
 
 @Module({
   imports: [
     ConfigModule,
     UsersModule,
+    UserCreditsModule,
     PassportModule.register({ session: false }),
     JwtModule.registerAsync({
       inject: [ConfigService],

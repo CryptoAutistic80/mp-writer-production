@@ -3,10 +3,15 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { UsersService } from '../users/users.service';
+import { UserCreditsService } from '../user-credits/user-credits.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(config: ConfigService, private readonly users: UsersService) {
+  constructor(
+    config: ConfigService,
+    private readonly users: UsersService,
+    private readonly credits: UserCreditsService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         // Prefer HttpOnly cookie, fallback to Bearer header
@@ -30,7 +35,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: { sub: string; email?: string }) {
     const user = await this.users.findById(payload.sub);
+    if (!user) return null;
+    const credits = await this.credits.getMine((user as any)._id?.toString?.() ?? payload.sub);
     // Mongoose documents expose id via _id; use string form
-    return user ? { id: (user as any)._id?.toString?.() ?? undefined, email: (user as any).email, name: (user as any).name, image: (user as any).image } : null;
+    return {
+      id: (user as any)._id?.toString?.() ?? undefined,
+      email: (user as any).email,
+      name: (user as any).name,
+      image: (user as any).image,
+      credits: credits.credits ?? 0,
+    } as any;
   }
 }
