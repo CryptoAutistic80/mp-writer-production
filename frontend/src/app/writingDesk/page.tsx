@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import WritingDeskClient from './WritingDeskClient';
 
 export const metadata = {
   title: 'Writing Desk — MPWriter',
@@ -14,15 +15,16 @@ export default function WritingDeskPage() {
         </div>
       </section>
 
+      <WritingDeskClient />
+
       <section className="card" style={{ marginTop: 16 }}>
         <div className="container">
           <p>
-            This space is reserved for the letter composer. In the meantime, you can return to the
-            {' '}<Link href="/dashboard">dashboard</Link>.
+            Need to update your saved details first? Head back to the{' '}
+            <Link href="/dashboard">dashboard</Link>.
           </p>
         </div>
       </section>
     </main>
   );
 }
-
