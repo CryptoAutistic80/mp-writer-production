@@ -3,12 +3,14 @@
 type Props = {
   firstName: string;
   credits: number;
-  onAddCredit: () => void;
+  onAddCredit?: () => void;
+  demoPurchasesEnabled?: boolean;
 };
 
-export default function DashboardWelcome({ firstName, credits, onAddCredit }: Props) {
+export default function DashboardWelcome({ firstName, credits, onAddCredit, demoPurchasesEnabled }: Props) {
   const pricePence = Number(process.env.NEXT_PUBLIC_CREDIT_PRICE_PENCE ?? '500');
   const priceText = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format((pricePence || 500) / 100);
+  const showPurchase = (demoPurchasesEnabled ?? true) && typeof onAddCredit === 'function';
   return (
     <section className="card">
       <div className="container dashboard-welcome">
@@ -19,9 +21,11 @@ export default function DashboardWelcome({ firstName, credits, onAddCredit }: Pr
           <p><em className="fineprint">(Saved addresses are encrypted and can only be read by you.)</em></p>
         </div>
         <div className="credits-info">
-          <button type="button" className="btn-primary btn-wide" onClick={onAddCredit}>
-            Buy 1 credit ({priceText})
-          </button>
+          {showPurchase && (
+            <button type="button" className="btn-primary btn-wide" onClick={onAddCredit}>
+              Buy 1 credit ({priceText})
+            </button>
+          )}
           <span className="credits-count">{credits} credits</span>
         </div>
       </div>

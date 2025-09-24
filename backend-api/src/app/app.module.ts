@@ -17,10 +17,59 @@ import { UserMpModule } from '../user-mp/user-mp.module';
 import { AddressesModule } from '../user-address/addresses.module';
 import { UserAddressModule } from '../user-address-store/user-address.module';
 import { UserCreditsModule } from '../user-credits/user-credits.module';
+import { EncryptionService } from '../crypto/encryption.service';
+
+function validateConfig(config: Record<string, unknown>) {
+  const errors: string[] = [];
+
+  const requireString = (key: string, opts?: { minLength?: number; forbid?: string[] }) => {
+    const raw = config[key];
+    if (typeof raw !== 'string' || raw.trim().length === 0) {
+      errors.push(`${key} is required`);
+      return;
+    }
+    if (opts?.minLength && raw.length < opts.minLength) {
+      errors.push(`${key} must be at least ${opts.minLength} characters`);
+    }
+    if (opts?.forbid?.some((value) => value === raw)) {
+      errors.push(`${key} must not use the default value '${raw}'`);
+    }
+  };
+
+  requireString('MONGO_URI');
+  requireString('JWT_SECRET', { minLength: 32, forbid: ['changeme'] });
+
+  const dek = config.DATA_ENCRYPTION_KEY;
+  if (typeof dek !== 'string' || dek.trim().length === 0) {
+    errors.push('DATA_ENCRYPTION_KEY is required');
+  } else {
+    try {
+      EncryptionService.deriveKey(dek);
+    } catch (e: unknown) {
+      errors.push(`DATA_ENCRYPTION_KEY invalid: ${(e as Error).message}`);
+    }
+  }
+
+  const appOrigin = config.APP_ORIGIN;
+  if (appOrigin && typeof appOrigin === 'string') {
+    if (!/^https?:\/\//i.test(appOrigin)) {
+      errors.push('APP_ORIGIN must be an absolute http(s) URL');
+    }
+  }
+
+  if (errors.length) {
+    throw new Error(`Environment validation failed:\n- ${errors.join('\n- ')}`);
+  }
+
+  return config;
+}
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validate: validateConfig,
+    }),
     TerminusModule,
     ThrottlerModule.forRoot([{ ttl: 60, limit: 60 }]),
     MongooseModule.forRootAsync({

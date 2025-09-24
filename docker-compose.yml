@@ -22,13 +22,14 @@ services:
         condition: service_healthy
     environment:
       - MONGO_URI=mongodb://mongo:27017/mp_writer
-      - JWT_SECRET=supersecret
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - PORT=4000
       - APP_ORIGIN=http://localhost:3000
       - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:-}
       # Address lookup provider (getaddress.io)
       - GETADDRESS_API_KEY=${GETADDRESS_API_KEY:-}
       - ADDRESS_DEBUG=${ADDRESS_DEBUG:-}
+      - ALLOW_DEV_CREDIT_MUTATION=${ALLOW_DEV_CREDIT_MUTATION:-1}
       # Google OAuth (set these in your local override if needed)
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
@@ -55,6 +56,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=/api
       - NEXT_BACKEND_ORIGIN=http://backend-api:4000
+      - NEXT_PUBLIC_ENABLE_DEMO_PURCHASE=${NEXT_PUBLIC_ENABLE_DEMO_PURCHASE:-1}
     ports:
       - "3000:3000"
 

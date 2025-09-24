@@ -11,6 +11,7 @@ export default function DashboardPage() {
   const [sharedPostcode, setSharedPostcode] = useState('');
   const [firstName, setFirstName] = useState('User');
   const [credits, setCredits] = useState(0);
+  const demoPurchasesEnabled = process.env.NEXT_PUBLIC_ENABLE_DEMO_PURCHASE !== '0';
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +35,7 @@ export default function DashboardPage() {
   }, []);
 
   async function handleCreditShopClick() {
+    if (!demoPurchasesEnabled) return;
     try {
       const res = await fetch('/api/user/credits/add', {
         method: 'POST',
@@ -50,7 +52,12 @@ export default function DashboardPage() {
 
   return (
     <main className="hero-section">
-      <DashboardWelcome firstName={firstName} credits={credits} onAddCredit={handleCreditShopClick} />
+      <DashboardWelcome
+        firstName={firstName}
+        credits={credits}
+        onAddCredit={demoPurchasesEnabled ? handleCreditShopClick : undefined}
+        demoPurchasesEnabled={demoPurchasesEnabled}
+      />
       <section className="card" style={{ marginTop: 16 }}>
         <MpFetch onPostcodeChange={setSharedPostcode} />
       </section>
