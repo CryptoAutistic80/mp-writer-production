@@ -13,7 +13,12 @@ async function bootstrap() {
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true })
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      // Coerce primitive types (e.g., "5.00" -> 5) for DTOs
+      transformOptions: { enableImplicitConversion: true },
+    })
   );
   // Security hardening
   app.use(helmet());

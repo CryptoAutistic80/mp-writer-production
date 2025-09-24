@@ -7,6 +7,8 @@ type Props = {
 };
 
 export default function DashboardWelcome({ firstName, credits, onAddCredit }: Props) {
+  const pricePence = Number(process.env.NEXT_PUBLIC_CREDIT_PRICE_PENCE ?? '500');
+  const priceText = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format((pricePence || 500) / 100);
   return (
     <section className="card">
       <div className="container dashboard-welcome">
@@ -18,7 +20,7 @@ export default function DashboardWelcome({ firstName, credits, onAddCredit }: Pr
         </div>
         <div className="credits-info">
           <button type="button" className="btn-primary btn-wide" onClick={onAddCredit}>
-            Credit shop
+            Buy 1 credit ({priceText})
           </button>
           <span className="credits-count">{credits} credits</span>
         </div>
