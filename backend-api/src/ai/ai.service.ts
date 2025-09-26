@@ -59,7 +59,8 @@ export class AiService {
     const instructions = `You help constituents prepare to write letters to their Members of Parliament.
 From the provided information, identify up to three missing details that would materially strengthen the letter.
 Ask at most three concise follow-up questions. If everything is already clear, return an empty list.
-Only ask about facts the user might reasonably know (no policy advice).`;
+Focus on understanding the core issue better - ask about the nature of the problem, its impact, timeline, or context.
+Do NOT ask for documents, permissions, names, addresses, or personal details. Only ask about the issue itself.`;
 
     const userSummary = `Issue detail:\n${input.issueDetail}\n\nAffected parties:\n${input.affectedDetail}\n\nSupporting background:\n${input.backgroundDetail}\n\nDesired outcome:\n${input.desiredOutcome}`;
 
@@ -195,15 +196,22 @@ Only ask about facts the user might reasonably know (no policy advice).`;
 
   private buildStubFollowUps(input: WritingDeskIntakeDto) {
     const questions: string[] = [];
-    if (!/\bdate\b/i.test(input.backgroundDetail)) {
-      questions.push('Do you know when this issue first arose or any key dates we should mention?');
+    
+    // Check if issue detail is too brief or vague
+    if (input.issueDetail.length < 100 || !/\b(problem|issue|concern|matter)\b/i.test(input.issueDetail)) {
+      questions.push('Can you describe the specific problem or issue you\'re facing in more detail?');
     }
-    if (!/contact(ed)?\b/i.test(input.issueDetail)) {
-      questions.push('Have you already contacted anyone about this issue, such as the council or an agency?');
+    
+    // Check if affected parties need more detail
+    if (input.affectedDetail.length < 50 || !/\b(people|residents|community|families|businesses)\b/i.test(input.affectedDetail)) {
+      questions.push('Who else is affected by this issue in your area?');
     }
-    if (questions.length < 3 && !/evidence|document|proof/i.test(input.backgroundDetail)) {
-      questions.push('Are there any documents or evidence you can reference to support your case?');
+    
+    // Check if desired outcome is clear
+    if (input.desiredOutcome.length < 50 || !/\b(want|need|hope|expect|should|must)\b/i.test(input.desiredOutcome)) {
+      questions.push('What specific outcome or resolution are you hoping for?');
     }
+    
     return questions.slice(0, 3);
   }
 }

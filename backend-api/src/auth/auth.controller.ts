@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Req, Res, UseGuards, Param } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -60,6 +60,41 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async me(@Req() req: any) {
     return req.user;
+  }
+
+  // Proxy Google profile images to avoid CORS issues
+  @Get('avatar/:userId')
+  @UseGuards(JwtAuthGuard)
+  async getAvatar(@Req() req: any, @Res() res: Response, @Param('userId') userId: string) {
+    // Only allow users to access their own avatar
+    if (req.user.id !== userId) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const user = await this.auth.getUserById(userId);
+    if (!user || !user.image) {
+      return res.status(404).json({ message: 'Avatar not found' });
+    }
+
+    try {
+      // Fetch the image from Google
+      const response = await fetch(user.image);
+      if (!response.ok) {
+        return res.status(404).json({ message: 'Avatar not found' });
+      }
+
+      const imageBuffer = await response.arrayBuffer();
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+
+      res.set({
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+      });
+      
+      return res.send(Buffer.from(imageBuffer));
+    } catch (error) {
+      return res.status(500).json({ message: 'Failed to fetch avatar' });
+    }
   }
 
   // Logout clears cookie and redirects to app

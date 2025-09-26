@@ -18,6 +18,7 @@ export class AuthService {
     const email = profile.emails?.[0]?.value;
     const name = profile.displayName ?? email ?? 'Unknown';
     const image = profile.photos?.[0]?.value;
+    
     return this.users.findOrCreateFromOAuth({
       provider: 'google',
       providerId: profile.id,
@@ -25,6 +26,10 @@ export class AuthService {
       name,
       image,
     });
+  }
+
+  async getUserById(id: string) {
+    return this.users.findById(id);
   }
 
   async signJwt(user: { id: string; email?: string | null }) {

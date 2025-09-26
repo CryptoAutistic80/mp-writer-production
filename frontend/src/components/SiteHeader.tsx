@@ -59,7 +59,11 @@ export default async function SiteHeader() {
             <div className="profile-chip">
               <details className="profile-details">
                 <summary className="profile-summary">
-                  <Avatar src={user?.image || undefined} alt={firstName} size={28} />
+                  <Avatar 
+                    src={user?.image ? `/api/auth/avatar/${user.id}` : undefined} 
+                    alt={firstName} 
+                    size={28} 
+                  />
                   <span className="profile-name">{firstName}</span>
                 </summary>
                 <div className="profile-menu" role="menu">
