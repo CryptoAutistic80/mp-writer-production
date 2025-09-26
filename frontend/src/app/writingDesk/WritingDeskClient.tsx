@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
+import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
+import { ActiveWritingDeskJob, UpsertActiveWritingDeskJobPayload } from '../../features/writing-desk/types';
 
 type StepKey = 'issueDetail' | 'affectedDetail' | 'backgroundDetail' | 'desiredOutcome';
 
@@ -59,6 +62,22 @@ export default function WritingDeskClient() {
   const [responseId, setResponseId] = useState<string | null>(null);
   const [ellipsisCount, setEllipsisCount] = useState(0);
   const [availableCredits, setAvailableCredits] = useState<number | null>(null);
+  const {
+    activeJob,
+    isLoading: isActiveJobLoading,
+    saveJob,
+    isSaving: isSavingJob,
+    clearJob,
+    isClearing: isClearingJob,
+    error: activeJobError,
+  } = useActiveWritingDeskJob();
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [hasHandledInitialJob, setHasHandledInitialJob] = useState(false);
+  const [pendingJob, setPendingJob] = useState<ActiveWritingDeskJob | null>(null);
+  const [resumeModalOpen, setResumeModalOpen] = useState(false);
+  const [persistenceEnabled, setPersistenceEnabled] = useState(false);
+  const lastPersistedRef = useRef<string | null>(null);
+  const [jobSaveError, setJobSaveError] = useState<string | null>(null);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -141,16 +160,177 @@ export default function WritingDeskClient() {
 
   const generatingMessage = `Generating follow-up questions${'.'.repeat((ellipsisCount % 5) + 1)}`;
 
-  const resetFollowUps = () => {
+  const resetFollowUps = useCallback(() => {
     setFollowUps([]);
     setFollowUpAnswers([]);
     setFollowUpIndex(0);
     setNotes(null);
     setResponseId(null);
-  };
+  }, []);
+
+  const resetLocalState = useCallback(() => {
+    setForm({ ...initialFormState });
+    setPhase('initial');
+    setStepIndex(0);
+    setFollowUpIndex(0);
+    setError(null);
+    setServerError(null);
+    setLoading(false);
+    resetFollowUps();
+  }, [resetFollowUps]);
+
+  const applySnapshot = useCallback(
+    (job: ActiveWritingDeskJob) => {
+      setForm({
+        issueDetail: job.form?.issueDetail ?? '',
+        affectedDetail: job.form?.affectedDetail ?? '',
+        backgroundDetail: job.form?.backgroundDetail ?? '',
+        desiredOutcome: job.form?.desiredOutcome ?? '',
+      });
+      setPhase(job.phase);
+      setStepIndex(Math.max(0, job.stepIndex ?? 0));
+      const questions = Array.isArray(job.followUpQuestions) ? [...job.followUpQuestions] : [];
+      setFollowUps(questions);
+      const answers = questions.map((_, idx) => job.followUpAnswers?.[idx] ?? '');
+      setFollowUpAnswers(answers);
+      const maxFollowUpIndex = questions.length > 0 ? questions.length - 1 : 0;
+      const nextFollowUpIndex = Math.max(0, Math.min(job.followUpIndex ?? 0, maxFollowUpIndex));
+      setFollowUpIndex(nextFollowUpIndex);
+      setNotes(job.notes ?? null);
+      setResponseId(job.responseId ?? null);
+      setError(null);
+      setServerError(null);
+      setLoading(false);
+      setJobSaveError(null);
+    },
+    [resetFollowUps],
+  );
+
+  const resourceToPayload = useCallback(
+    (job: ActiveWritingDeskJob): UpsertActiveWritingDeskJobPayload => ({
+      jobId: job.jobId,
+      phase: job.phase,
+      stepIndex: job.stepIndex,
+      followUpIndex: job.followUpIndex,
+      form: {
+        issueDetail: job.form?.issueDetail ?? '',
+        affectedDetail: job.form?.affectedDetail ?? '',
+        backgroundDetail: job.form?.backgroundDetail ?? '',
+        desiredOutcome: job.form?.desiredOutcome ?? '',
+      },
+      followUpQuestions: Array.isArray(job.followUpQuestions) ? [...job.followUpQuestions] : [],
+      followUpAnswers: Array.isArray(job.followUpAnswers) ? [...job.followUpAnswers] : [],
+      notes: job.notes ?? null,
+      responseId: job.responseId ?? null,
+    }),
+    [],
+  );
+
+  const buildSnapshotPayload = useCallback(
+    (): UpsertActiveWritingDeskJobPayload => ({
+      jobId: jobId ?? undefined,
+      phase,
+      stepIndex,
+      followUpIndex,
+      form: { ...form },
+      followUpQuestions: [...followUps],
+      followUpAnswers: [...followUpAnswers],
+      notes: notes ?? null,
+      responseId: responseId ?? null,
+    }),
+    [followUpAnswers, followUpIndex, followUps, form, jobId, notes, phase, responseId, stepIndex],
+  );
+
+  const signatureForPayload = useCallback(
+    (payload: UpsertActiveWritingDeskJobPayload, resolvedJobId?: string | null) =>
+      JSON.stringify({
+        ...payload,
+        jobId: resolvedJobId ?? payload.jobId ?? null,
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (hasHandledInitialJob || isActiveJobLoading) return;
+    if (activeJob) {
+      setPendingJob(activeJob);
+      setResumeModalOpen(true);
+    } else {
+      resetLocalState();
+      setHasHandledInitialJob(true);
+      setJobId(null);
+      lastPersistedRef.current = null;
+    }
+  }, [activeJob, hasHandledInitialJob, isActiveJobLoading, resetLocalState]);
+
+  useEffect(() => {
+    if (!activeJobError) return;
+    setJobSaveError('We could not load your saved letter. You can start a new one.');
+    resetLocalState();
+    setHasHandledInitialJob(true);
+    setJobId(null);
+    lastPersistedRef.current = null;
+    setPendingJob(null);
+    setResumeModalOpen(false);
+  }, [activeJobError, resetLocalState]);
+
+  const handleResumeExistingJob = useCallback(() => {
+    if (!pendingJob) return;
+    applySnapshot(pendingJob);
+    setJobId(pendingJob.jobId);
+    const payload = resourceToPayload(pendingJob);
+    lastPersistedRef.current = signatureForPayload(payload, pendingJob.jobId);
+    setResumeModalOpen(false);
+    setPendingJob(null);
+    setHasHandledInitialJob(true);
+    setPersistenceEnabled(true);
+    setJobSaveError(null);
+  }, [applySnapshot, pendingJob, resourceToPayload, signatureForPayload]);
+
+  const handleDiscardExistingJob = useCallback(async () => {
+    setJobSaveError(null);
+    setPersistenceEnabled(false);
+    lastPersistedRef.current = null;
+    setJobId(null);
+    try {
+      await clearJob();
+      resetLocalState();
+      setPendingJob(null);
+      setResumeModalOpen(false);
+      setHasHandledInitialJob(true);
+    } catch {
+      setJobSaveError('We could not clear your saved letter. Please try again.');
+    }
+  }, [clearJob, resetLocalState]);
+
+  const currentSnapshot = useMemo(() => buildSnapshotPayload(), [buildSnapshotPayload]);
+
+  useEffect(() => {
+    if (!persistenceEnabled) return;
+    if (isSavingJob) return;
+    const signature = signatureForPayload(currentSnapshot, jobId);
+    if (lastPersistedRef.current === signature) return;
+
+    const timeout = window.setTimeout(() => {
+      saveJob(currentSnapshot)
+        .then((job) => {
+          setJobId(job.jobId);
+          lastPersistedRef.current = signatureForPayload(currentSnapshot, job.jobId);
+          setJobSaveError(null);
+        })
+        .catch(() => {
+          setJobSaveError('We could not save your progress. We will keep trying automatically.');
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [currentSnapshot, isSavingJob, jobId, persistenceEnabled, saveJob, signatureForPayload]);
 
   const handleInitialChange = (value: string) => {
     if (!currentStep) return;
+    if (!persistenceEnabled) setPersistenceEnabled(true);
     setForm((prev) => ({ ...prev, [currentStep.key]: value }));
   };
 
@@ -189,6 +369,11 @@ export default function WritingDeskClient() {
         throw new Error(text || `Request failed (${res.status})`);
       }
       setPhase('summary');
+      setPersistenceEnabled(false);
+      lastPersistedRef.current = null;
+      setJobId(null);
+      setJobSaveError(null);
+      await clearJob().catch(() => undefined);
     } catch (err: any) {
       setServerError(err?.message || 'Something went wrong. Please try again.');
       setPhase(followUps.length > 0 ? 'followup' : 'initial');
@@ -275,6 +460,7 @@ export default function WritingDeskClient() {
   };
 
   const handleFollowUpChange = (value: string) => {
+    if (!persistenceEnabled) setPersistenceEnabled(true);
     setFollowUpAnswers((prev) => {
       const next = [...prev];
       next[followUpIndex] = value;
@@ -313,20 +499,35 @@ export default function WritingDeskClient() {
     await submitBundle(followUps, nextAnswers);
   };
 
-  const handleStartOver = () => {
-    setForm(initialFormState);
-    setPhase('initial');
-    setStepIndex(0);
-    setFollowUpIndex(0);
-    setError(null);
-    setServerError(null);
-    setLoading(false);
-    resetFollowUps();
-  };
+  const handleStartOver = useCallback(async () => {
+    setJobSaveError(null);
+    setPersistenceEnabled(false);
+    lastPersistedRef.current = null;
+    setJobId(null);
+    setHasHandledInitialJob(true);
+    setPendingJob(null);
+    setResumeModalOpen(false);
+    resetLocalState();
+    try {
+      await clearJob();
+    } catch {
+      setJobSaveError('We could not clear your saved letter. Please try again.');
+    }
+  }, [clearJob, resetLocalState]);
 
   return (
-    <section className="card" style={{ marginTop: 16 }}>
-      <div className="container">
+    <>
+      <ActiveJobResumeModal
+        open={resumeModalOpen}
+        job={pendingJob}
+        onContinue={handleResumeExistingJob}
+        onDiscard={() => {
+          void handleDiscardExistingJob();
+        }}
+        isDiscarding={isClearingJob}
+      />
+      <section className="card" style={{ marginTop: 16 }} aria-hidden={resumeModalOpen}>
+        <div className="container">
         <header style={{ marginBottom: 16 }}>
           <div className="section-header">
             <div>
@@ -367,6 +568,12 @@ export default function WritingDeskClient() {
             <div style={{ width: `${Math.min(progress, 100)}%`, height: '100%', background: '#2563eb', borderRadius: 999 }} />
           </div>
         </header>
+
+        {jobSaveError && (
+          <div className="status" aria-live="polite" style={{ marginBottom: 16 }}>
+            <p style={{ color: '#b45309' }}>{jobSaveError}</p>
+          </div>
+        )}
 
         {phase === 'initial' && currentStep && (
           <form className="form-grid" onSubmit={(e) => { e.preventDefault(); void handleInitialNext(); }}>
@@ -557,6 +764,7 @@ export default function WritingDeskClient() {
           </div>
         )}
       </div>
-    </section>
+      </section>
+    </>
   );
 }

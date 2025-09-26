@@ -18,6 +18,7 @@ import { AddressesModule } from '../user-address/addresses.module';
 import { UserAddressModule } from '../user-address-store/user-address.module';
 import { UserCreditsModule } from '../user-credits/user-credits.module';
 import { EncryptionService } from '../crypto/encryption.service';
+import { WritingDeskJobsModule } from '../writing-desk-jobs/writing-desk-jobs.module';
 
 function validateConfig(config: Record<string, unknown>) {
   const errors: string[] = [];
@@ -88,6 +89,7 @@ function validateConfig(config: Record<string, unknown>) {
     AddressesModule,
     UserAddressModule,
     UserCreditsModule,
+    WritingDeskJobsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
