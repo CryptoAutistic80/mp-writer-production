@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type StepKey = 'issueDetail' | 'affectedDetail' | 'backgroundDetail' | 'desiredOutcome';
 
@@ -47,7 +47,7 @@ const initialFormState: FormState = {
 
 export default function WritingDeskClient() {
   const [form, setForm] = useState<FormState>(initialFormState);
-  const [phase, setPhase] = useState<'initial' | 'followup' | 'summary'>('initial');
+  const [phase, setPhase] = useState<'initial' | 'generating' | 'followup' | 'summary'>('initial');
   const [stepIndex, setStepIndex] = useState(0);
   const [followUpIndex, setFollowUpIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +57,7 @@ export default function WritingDeskClient() {
   const [followUpAnswers, setFollowUpAnswers] = useState<string[]>([]);
   const [notes, setNotes] = useState<string | null>(null);
   const [responseId, setResponseId] = useState<string | null>(null);
+  const [ellipsisCount, setEllipsisCount] = useState(0);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
 
@@ -64,10 +65,28 @@ export default function WritingDeskClient() {
   const totalSteps = steps.length + totalFollowUpSteps;
   const currentStepNumber = useMemo(() => {
     if (phase === 'initial') return stepIndex + 1;
+    if (phase === 'generating') return steps.length;
     if (phase === 'followup') return steps.length + followUpIndex + 1;
     return steps.length + totalFollowUpSteps;
   }, [phase, stepIndex, followUpIndex, totalFollowUpSteps]);
   const progress = useMemo(() => (currentStepNumber / totalSteps) * 100, [currentStepNumber, totalSteps]);
+  const isGeneratingFollowUps = phase === 'generating';
+
+  useEffect(() => {
+    if (!isGeneratingFollowUps) {
+      setEllipsisCount(0);
+      return;
+    }
+    // Animate the status text while we wait for follow-up questions to arrive.
+    const interval = window.setInterval(() => {
+      setEllipsisCount((prev) => (prev + 1) % 5);
+    }, 400);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isGeneratingFollowUps]);
+
+  const generatingMessage = `Generating follow-up questions${'.'.repeat((ellipsisCount % 5) + 1)}`;
 
   const resetFollowUps = () => {
     setFollowUps([]);
@@ -119,6 +138,7 @@ export default function WritingDeskClient() {
       setPhase('summary');
     } catch (err: any) {
       setServerError(err?.message || 'Something went wrong. Please try again.');
+      setPhase(followUps.length > 0 ? 'followup' : 'initial');
     } finally {
       setLoading(false);
     }
@@ -140,6 +160,7 @@ export default function WritingDeskClient() {
     }
 
     // Final initial step – ask for follow-up questions
+    setPhase('generating');
     setLoading(true);
     setServerError(null);
     try {
@@ -177,6 +198,7 @@ export default function WritingDeskClient() {
       }
     } catch (err: any) {
       setServerError(err?.message || 'Something went wrong. Please try again.');
+      setPhase('initial');
     } finally {
       setLoading(false);
     }
@@ -293,6 +315,25 @@ export default function WritingDeskClient() {
               </button>
             </div>
           </form>
+        )}
+
+        {phase === 'generating' && (
+          <div
+            className="status"
+            role="status"
+            aria-live="polite"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '48px 0',
+              textAlign: 'center',
+              minHeight: 280,
+            }}
+          >
+            <p style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#2563eb' }}>{generatingMessage}</p>
+          </div>
         )}
 
         {phase === 'followup' && followUps.length > 0 && (
