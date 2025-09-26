@@ -396,6 +396,63 @@ summary svg {
   display: inline;
   margin-top: -0.25rem;
 }
+.header-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+.credit-balance {
+  align-items: center;
+  background: linear-gradient(135deg, #1e3a8a, #0f172a);
+  border-radius: 999px;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.2);
+  color: #f8fafc;
+  display: flex;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem;
+}
+.credit-balance__icon {
+  color: #fcd34d;
+  height: 1.125rem;
+  width: 1.125rem;
+}
+.credit-balance__content {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+.credit-balance__label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+  text-transform: uppercase;
+}
+.credit-balance__value {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.credit-balance--loading {
+  background: linear-gradient(135deg, #334155, #1f2937);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.15);
+  color: #e2e8f0;
+}
+.credit-balance--loading .credit-balance__icon {
+  color: #e8e8e8;
+}
+.credit-balance--low {
+  background: linear-gradient(135deg, #b91c1c, #7f1d1d);
+  box-shadow: 0 6px 14px rgba(127, 29, 29, 0.35);
+}
+.credit-balance--low .credit-balance__icon {
+  color: #fee2e2;
+}
+.credit-balance--low .credit-balance__value {
+  color: #fff7ed;
+}
 @media screen and (min-width: 768px) {
   #hero {
     grid-template-columns: repeat(2, minmax(0, 1fr));

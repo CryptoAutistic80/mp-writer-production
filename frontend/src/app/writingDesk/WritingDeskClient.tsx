@@ -96,6 +96,21 @@ export default function WritingDeskClient() {
   }, [phase, stepIndex, followUpIndex, totalFollowUpSteps]);
   const progress = useMemo(() => (completedSteps / totalSteps) * 100, [completedSteps, totalSteps]);
   const isGeneratingFollowUps = phase === 'generating';
+  const creditState = useMemo<'loading' | 'low' | 'ok'>(() => {
+    if (availableCredits === null) return 'loading';
+    return availableCredits < followUpCreditCost ? 'low' : 'ok';
+  }, [availableCredits, followUpCreditCost]);
+  const creditClassName = useMemo(() => {
+    const classes = ['credit-balance'];
+    if (creditState === 'low') classes.push('credit-balance--low');
+    if (creditState === 'loading') classes.push('credit-balance--loading');
+    return classes.join(' ');
+  }, [creditState]);
+  const creditDisplayValue = availableCredits === null ? 'Checking…' : formatCredits(availableCredits);
+  const creditAriaLabel =
+    availableCredits === null
+      ? 'Checking available credits'
+      : `You have ${formatCredits(availableCredits)} credits available`;
 
   useEffect(() => {
     if (!isGeneratingFollowUps) {
@@ -318,13 +333,34 @@ export default function WritingDeskClient() {
               <h2 className="section-title">Tell us about the issue</h2>
               <p className="section-sub">We’ll use your answers to draft clarifying questions before the deep research step.</p>
             </div>
-            <div className="header-actions" aria-hidden>
+            <div className="header-actions">
               <span className="badge">Step {Math.min(currentStepNumber, totalSteps)} of {totalSteps}</span>
-              {availableCredits !== null && (
-                <span className="badge" style={{ background: '#0f172a' }}>
-                  Credits: {formatCredits(availableCredits)}
-                </span>
-              )}
+              <div className={creditClassName} role="status" aria-live="polite" aria-label={creditAriaLabel}>
+                <svg
+                  className="credit-balance__icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                  focusable="false"
+                >
+                  <path
+                    d="M4.5 7.5a3 3 0 013-3h9a3 3 0 013 3v9a3 3 0 01-3 3h-9a3 3 0 01-3-3v-9z"
+                    fill="currentColor"
+                    opacity="0.25"
+                  />
+                  <path
+                    d="M12 6v12m0-6h2.25a1.5 1.5 0 100-3H9.75a1.5 1.5 0 110-3H15"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <div className="credit-balance__content">
+                  <span className="credit-balance__label">Credits</span>
+                  <span className="credit-balance__value">{creditDisplayValue}</span>
+                </div>
+              </div>
             </div>
           </div>
           <div aria-hidden style={{ marginTop: 8, height: 6, background: '#e5e7eb', borderRadius: 999 }}>
