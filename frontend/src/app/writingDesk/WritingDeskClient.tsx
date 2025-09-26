@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
+import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import { ActiveWritingDeskJob, UpsertActiveWritingDeskJobPayload } from '../../features/writing-desk/types';
 
@@ -80,6 +81,7 @@ export default function WritingDeskClient() {
   const lastPersistedRef = useRef<string | null>(null);
   const [jobSaveError, setJobSaveError] = useState<string | null>(null);
   const [editIntakeModalOpen, setEditIntakeModalOpen] = useState(false);
+  const [startOverConfirmOpen, setStartOverConfirmOpen] = useState(false);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -583,6 +585,15 @@ export default function WritingDeskClient() {
     }
   }, [clearJob, resetLocalState]);
 
+  const handleConfirmStartOver = useCallback(() => {
+    setStartOverConfirmOpen(false);
+    void handleStartOver();
+  }, [handleStartOver]);
+
+  const handleCancelStartOver = useCallback(() => {
+    setStartOverConfirmOpen(false);
+  }, []);
+
   const handleEditInitialStep = useCallback(
     (stepKey: StepKey) => {
       const targetIndex = steps.findIndex((step) => step.key === stepKey);
@@ -619,6 +630,11 @@ export default function WritingDeskClient() {
 
   return (
     <>
+      <StartOverConfirmModal
+        open={startOverConfirmOpen}
+        onConfirm={handleConfirmStartOver}
+        onCancel={handleCancelStartOver}
+      />
       <EditIntakeConfirmModal
         open={editIntakeModalOpen}
         creditCost={formatCredits(followUpCreditCost)}
@@ -922,6 +938,14 @@ export default function WritingDeskClient() {
               <button
                 type="button"
                 className="btn-secondary"
+                onClick={() => setStartOverConfirmOpen(true)}
+                disabled={loading}
+              >
+                Start again
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
                 onClick={() => setEditIntakeModalOpen(true)}
                 disabled={loading}
               >
@@ -937,8 +961,8 @@ export default function WritingDeskClient() {
                   Review follow-up answers
                 </button>
               )}
-              <button type="button" className="btn-primary" onClick={handleStartOver} disabled={loading}>
-                Start again
+              <button type="button" className="btn-primary" disabled={loading}>
+                Create my letter
               </button>
             </div>
           </div>
