@@ -2,6 +2,7 @@ import './global.css';
 import SiteHeader from '../components/SiteHeader';
 import SiteFooter from '../components/SiteFooter';
 import AnimatedBackground from '../components/AnimatedBackground';
+import Providers from './providers';
 
 export const metadata = {
   title: 'MPWriter — Your voice, clearly heard.',
@@ -20,12 +21,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <AnimatedBackground />
-        <div className="page-wrap">
-          <SiteHeader />
-          {children}
-          <SiteFooter />
-        </div>
+        <Providers>
+          <AnimatedBackground />
+          <div className="page-wrap">
+            <SiteHeader />
+            {children}
+            <SiteFooter />
+          </div>
+        </Providers>
       </body>
     </html>
   );
