@@ -153,12 +153,18 @@ describe('WritingDeskClient', () => {
     expect(screen.getByRole('button', { name: 'Ask for new follow-up questions (costs 0.1 credits)' })).toBeInTheDocument();
   });
 
-  it('skips regeneration when follow-ups already exist and user continues from intake', async () => {
+  it('prompts before editing intake answers and regenerates follow-ups after confirmation', async () => {
     followUpQueue.push({
       followUpQuestions: ['Question one?', 'Question two?'],
       notes: 'Helpful note',
       responseId: 'resp-1',
       remainingCredits: 0.8,
+    });
+    followUpQueue.push({
+      followUpQuestions: ['Regenerated follow-up question'],
+      notes: 'Fresh note',
+      responseId: 'resp-2',
+      remainingCredits: 0.7,
     });
 
     renderComponent();
@@ -167,29 +173,51 @@ describe('WritingDeskClient', () => {
     await answerFollowUpQuestions(['First answer', 'Second answer']);
     await screen.findByText('Initial summary captured');
 
-    const followUpCallsBefore = fetchMock.mock.calls.filter(([url]) => {
-      const requestUrl = typeof url === 'string' ? url : url.toString();
-      return requestUrl === '/api/ai/writing-desk/follow-up';
-    }).length;
+    const countFollowUpRequests = () =>
+      fetchMock.mock.calls.filter(([url]) => {
+        const requestUrl = typeof url === 'string' ? url : url.toString();
+        return requestUrl === '/api/ai/writing-desk/follow-up';
+      }).length;
+
+    const followUpCallsBefore = countFollowUpRequests();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Edit “What do you want to happen?”' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Edit intake answers' }));
     });
 
-    await screen.findByLabelText('What do you want to happen?');
-    expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', { name: 'Edit intake answers?' });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText(/will clear your existing follow-up questions/i)).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      fireEvent.click(screen.getByRole('button', { name: 'No, keep current answers' }));
     });
 
-    const followUpTextarea = await screen.findByLabelText(/Follow-up question 2 of 2/);
-    expect(followUpTextarea).toHaveValue('Second answer');
-    const followUpCallsAfter = fetchMock.mock.calls.filter(([url]) => {
-      const requestUrl = typeof url === 'string' ? url : url.toString();
-      return requestUrl === '/api/ai/writing-desk/follow-up';
-    }).length;
-    expect(followUpCallsAfter).toBe(followUpCallsBefore);
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Edit intake answers?' })).not.toBeInTheDocument(),
+    );
+    expect(countFollowUpRequests()).toBe(followUpCallsBefore);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Edit intake answers' }));
+    });
+
+    await screen.findByRole('dialog', { name: 'Edit intake answers?' });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Yes, edit intake' }));
+    });
+
+    await screen.findByLabelText('Describe the issue in detail');
+
+    await answerInitialQuestions();
+
+    await waitFor(() => expect(countFollowUpRequests()).toBe(followUpCallsBefore + 1));
+
+    const followUpTextarea = await screen.findByLabelText(/Follow-up question 1 of 1/);
+    expect(followUpTextarea).toHaveValue('');
+    expect(screen.getByText('Regenerated follow-up question')).toBeInTheDocument();
+    expect(countFollowUpRequests()).toBe(followUpCallsBefore + 1);
   });
 
   it('regenerates follow-up questions when requested from the summary view', async () => {
