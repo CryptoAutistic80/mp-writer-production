@@ -410,20 +410,35 @@ export default function WritingDeskClient() {
 
   const generateFollowUps = useCallback(
     async (origin: 'initial' | 'summary') => {
-      if (availableCredits !== null && availableCredits < followUpCreditCost) {
+      setError(null);
+      setServerError(null);
+      setLoading(true);
+
+      let currentCredits = availableCredits;
+      const refreshedCredits = await refreshCredits();
+      if (typeof refreshedCredits === 'number') {
+        currentCredits = refreshedCredits;
+        setAvailableCredits(refreshedCredits);
+      }
+
+      if (currentCredits !== null && currentCredits < followUpCreditCost) {
         const message = `You need at least ${formatCredits(followUpCreditCost)} credits to generate follow-up questions.`;
         if (origin === 'initial') {
           setError(message);
         } else {
           setServerError(message);
         }
+        setLoading(false);
         return;
       }
 
-      setError(null);
-      setServerError(null);
       setPhase('generating');
-      setLoading(true);
+
+      const previousCredits = currentCredits;
+      if (currentCredits !== null) {
+        const optimisticCredits = Math.max(0, Math.round((currentCredits - followUpCreditCost) * 100) / 100);
+        setAvailableCredits(optimisticCredits);
+      }
 
       try {
         const res = await fetch('/api/ai/writing-desk/follow-up', {
@@ -478,6 +493,8 @@ export default function WritingDeskClient() {
         const latestCredits = await refreshCredits();
         if (typeof latestCredits === 'number') {
           setAvailableCredits(latestCredits);
+        } else if (previousCredits !== null) {
+          setAvailableCredits(previousCredits);
         }
       } finally {
         setLoading(false);
