@@ -30,7 +30,32 @@ export default function DashboardWelcome({ firstName, credits, onAddCredit, demo
               Buy 1 credit ({priceText})
             </button>
           )}
-          <span className="credits-count">{formatCredits(credits)} credits</span>
+          <div className="credit-balance" aria-label={`You have ${formatCredits(credits)} credits available`}>
+            <svg
+              className="credit-balance__icon"
+              viewBox="0 0 24 24"
+              aria-hidden
+              focusable="false"
+            >
+              <path
+                d="M4.5 7.5a3 3 0 013-3h9a3 3 0 013 3v9a3 3 0 01-3 3h-9a3 3 0 01-3-3v-9z"
+                fill="currentColor"
+                opacity="0.25"
+              />
+              <path
+                d="M12 6v12m0-6h2.25a1.5 1.5 0 100-3H9.75a1.5 1.5 0 110-3H15"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <div className="credit-balance__content">
+              <span className="credit-balance__label">Credits</span>
+              <span className="credit-balance__value">{formatCredits(credits)}</span>
+            </div>
+          </div>
         </div>
       </div>
     </section>

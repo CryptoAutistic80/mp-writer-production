@@ -1331,19 +1331,16 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-}
-.credits-count {
-  font-weight: 800;
-  color: var(--brand);
-  font-size: 20px;
-  text-align: center;
+  gap: 12px;
 }
 @media (min-width: 640px) {
   .dashboard-welcome {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
+  }
+  .credits-info {
+    align-items: flex-end;
   }
 }
 @media (max-width: 640px) {
