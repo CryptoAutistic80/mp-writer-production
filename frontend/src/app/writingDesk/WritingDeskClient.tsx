@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
+import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import { ActiveWritingDeskJob, UpsertActiveWritingDeskJobPayload } from '../../features/writing-desk/types';
 
@@ -78,6 +79,7 @@ export default function WritingDeskClient() {
   const [persistenceEnabled, setPersistenceEnabled] = useState(false);
   const lastPersistedRef = useRef<string | null>(null);
   const [jobSaveError, setJobSaveError] = useState<string | null>(null);
+  const [editIntakeModalOpen, setEditIntakeModalOpen] = useState(false);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -576,6 +578,16 @@ export default function WritingDeskClient() {
     [],
   );
 
+  const handleConfirmEditIntake = useCallback(() => {
+    resetFollowUps();
+    setEditIntakeModalOpen(false);
+    handleEditInitialStep('issueDetail');
+  }, [handleEditInitialStep, resetFollowUps]);
+
+  const handleCancelEditIntake = useCallback(() => {
+    setEditIntakeModalOpen(false);
+  }, []);
+
   const handleEditFollowUpQuestion = useCallback((index: number) => {
     if (index < 0 || index >= followUps.length) return;
     setServerError(null);
@@ -590,6 +602,12 @@ export default function WritingDeskClient() {
 
   return (
     <>
+      <EditIntakeConfirmModal
+        open={editIntakeModalOpen}
+        creditCost={formatCredits(followUpCreditCost)}
+        onConfirm={handleConfirmEditIntake}
+        onCancel={handleCancelEditIntake}
+      />
       <ActiveJobResumeModal
         open={resumeModalOpen}
         job={pendingJob}
@@ -820,24 +838,8 @@ export default function WritingDeskClient() {
               <div className="stack" style={{ marginTop: 12 }}>
                 {steps.map((step) => (
                   <div key={step.key} style={{ marginBottom: 16 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                      }}
-                    >
+                    <div>
                       <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
-                      <button
-                        type="button"
-                        className="btn-link"
-                        onClick={() => handleEditInitialStep(step.key)}
-                        aria-label={`Edit “${step.title}”`}
-                        disabled={loading}
-                      >
-                        Edit
-                      </button>
                     </div>
                     <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
                   </div>
@@ -903,7 +905,7 @@ export default function WritingDeskClient() {
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={() => handleEditInitialStep('issueDetail')}
+                onClick={() => setEditIntakeModalOpen(true)}
                 disabled={loading}
               >
                 Edit intake answers
