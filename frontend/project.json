@@ -5,5 +5,15 @@
   "projectType": "application",
   "tags": [],
   "// targets": "to see all targets run: nx show project frontend --web",
-  "targets": {}
+  "targets": {
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/frontend"],
+      "options": {
+        "jestConfig": "frontend/jest.config.js",
+        "passWithNoTests": false,
+        "tsConfig": "frontend/tsconfig.spec.json"
+      }
+    }
+  }
 }
