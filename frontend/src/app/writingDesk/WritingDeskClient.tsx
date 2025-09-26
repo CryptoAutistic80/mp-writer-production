@@ -368,12 +368,36 @@ export default function WritingDeskClient() {
         const text = await res.text().catch(() => '');
         throw new Error(text || `Request failed (${res.status})`);
       }
+      const trimmedAnswers = answers.map((answer) => answer.trim());
+      const resolvedNotes = (context?.notes ?? notes) ?? null;
+      const resolvedResponseId = (context?.responseId ?? responseId) ?? null;
+
+      setFollowUpAnswers(trimmedAnswers);
+      setNotes(resolvedNotes);
+      setResponseId(resolvedResponseId);
       setPhase('summary');
-      setPersistenceEnabled(false);
-      lastPersistedRef.current = null;
-      setJobId(null);
-      setJobSaveError(null);
-      await clearJob().catch(() => undefined);
+      setPersistenceEnabled(true);
+
+      const payload: UpsertActiveWritingDeskJobPayload = {
+        jobId: jobId ?? undefined,
+        phase: 'summary',
+        stepIndex,
+        followUpIndex,
+        form: { ...form },
+        followUpQuestions: [...questions],
+        followUpAnswers: trimmedAnswers,
+        notes: resolvedNotes,
+        responseId: resolvedResponseId,
+      };
+
+      try {
+        const savedJob = await saveJob(payload);
+        setJobId(savedJob.jobId);
+        lastPersistedRef.current = signatureForPayload(payload, savedJob.jobId);
+        setJobSaveError(null);
+      } catch {
+        setJobSaveError('We could not save your progress. We will keep trying automatically.');
+      }
     } catch (err: any) {
       setServerError(err?.message || 'Something went wrong. Please try again.');
       setPhase(followUps.length > 0 ? 'followup' : 'initial');
@@ -381,6 +405,84 @@ export default function WritingDeskClient() {
       setLoading(false);
     }
   };
+
+  const generateFollowUps = useCallback(
+    async (origin: 'initial' | 'summary') => {
+      if (availableCredits !== null && availableCredits < followUpCreditCost) {
+        const message = `You need at least ${formatCredits(followUpCreditCost)} credits to generate follow-up questions.`;
+        if (origin === 'initial') {
+          setError(message);
+        } else {
+          setServerError(message);
+        }
+        return;
+      }
+
+      setError(null);
+      setServerError(null);
+      setPhase('generating');
+      setLoading(true);
+
+      try {
+        const res = await fetch('/api/ai/writing-desk/follow-up', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            issueDetail: form.issueDetail.trim(),
+            affectedDetail: form.affectedDetail.trim(),
+            backgroundDetail: form.backgroundDetail.trim(),
+            desiredOutcome: form.desiredOutcome.trim(),
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(text || `Request failed (${res.status})`);
+        }
+        const json = await res.json();
+        const questions: string[] = Array.isArray(json?.followUpQuestions)
+          ? json.followUpQuestions.filter((q: unknown) => typeof q === 'string' && q.trim().length > 0)
+          : [];
+        setFollowUps(questions);
+        setNotes(json?.notes ?? null);
+        setResponseId(json?.responseId ?? null);
+        if (typeof json?.remainingCredits === 'number') {
+          setAvailableCredits(Math.round(json.remainingCredits * 100) / 100);
+        } else {
+          const latestCredits = await refreshCredits();
+          if (typeof latestCredits === 'number') {
+            setAvailableCredits(latestCredits);
+          }
+        }
+
+        if (questions.length === 0) {
+          setFollowUpAnswers([]);
+          setFollowUpIndex(0);
+          await submitBundle([], [], { notes: json?.notes ?? null, responseId: json?.responseId ?? null });
+        } else {
+          setFollowUpAnswers(questions.map(() => ''));
+          setFollowUpIndex(0);
+          setPhase('followup');
+        }
+      } catch (err: any) {
+        const message = err?.message || 'Something went wrong. Please try again.';
+        setServerError(message);
+        if (origin === 'initial') {
+          setPhase('initial');
+          setStepIndex(steps.length - 1);
+        } else {
+          setPhase('summary');
+        }
+        const latestCredits = await refreshCredits();
+        if (typeof latestCredits === 'number') {
+          setAvailableCredits(latestCredits);
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [availableCredits, followUpCreditCost, form, refreshCredits, submitBundle],
+  );
 
   const handleInitialNext = async () => {
     if (!currentStep) return;
@@ -397,66 +499,13 @@ export default function WritingDeskClient() {
       return;
     }
 
-    if (availableCredits !== null && availableCredits < followUpCreditCost) {
-      setError(`You need at least ${formatCredits(followUpCreditCost)} credits to generate follow-up questions.`);
+    if (followUps.length > 0) {
+      setPhase('followup');
+      setFollowUpIndex(Math.max(0, Math.min(followUpIndex, followUps.length - 1)));
       return;
     }
 
-    // Final initial step – ask for follow-up questions
-    setPhase('generating');
-    setLoading(true);
-    setServerError(null);
-    try {
-      const res = await fetch('/api/ai/writing-desk/follow-up', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          issueDetail: form.issueDetail.trim(),
-          affectedDetail: form.affectedDetail.trim(),
-          backgroundDetail: form.backgroundDetail.trim(),
-          desiredOutcome: form.desiredOutcome.trim(),
-        }),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || `Request failed (${res.status})`);
-      }
-      const json = await res.json();
-      const questions: string[] = Array.isArray(json?.followUpQuestions)
-        ? json.followUpQuestions.filter((q: unknown) => typeof q === 'string' && q.trim().length > 0)
-        : [];
-      setFollowUps(questions);
-      setNotes(json?.notes ?? null);
-      setResponseId(json?.responseId ?? null);
-      if (typeof json?.remainingCredits === 'number') {
-        setAvailableCredits(Math.round(json.remainingCredits * 100) / 100);
-      } else {
-        const latestCredits = await refreshCredits();
-        if (typeof latestCredits === 'number') {
-          setAvailableCredits(latestCredits);
-        }
-      }
-
-      if (questions.length === 0) {
-        setFollowUpAnswers([]);
-        setFollowUpIndex(0);
-        await submitBundle([], [], { notes: json?.notes ?? null, responseId: json?.responseId ?? null });
-      } else {
-        setFollowUpAnswers(questions.map(() => ''));
-        setFollowUpIndex(0);
-        setPhase('followup');
-      }
-    } catch (err: any) {
-      setServerError(err?.message || 'Something went wrong. Please try again.');
-      setPhase('initial');
-      const latestCredits = await refreshCredits();
-      if (typeof latestCredits === 'number') {
-        setAvailableCredits(latestCredits);
-      }
-    } finally {
-      setLoading(false);
-    }
+    await generateFollowUps('initial');
   };
 
   const handleFollowUpChange = (value: string) => {
@@ -514,6 +563,30 @@ export default function WritingDeskClient() {
       setJobSaveError('We could not clear your saved letter. Please try again.');
     }
   }, [clearJob, resetLocalState]);
+
+  const handleEditInitialStep = useCallback(
+    (stepKey: StepKey) => {
+      const targetIndex = steps.findIndex((step) => step.key === stepKey);
+      if (targetIndex === -1) return;
+      setServerError(null);
+      setError(null);
+      setPhase('initial');
+      setStepIndex(targetIndex);
+    },
+    [],
+  );
+
+  const handleEditFollowUpQuestion = useCallback((index: number) => {
+    if (index < 0 || index >= followUps.length) return;
+    setServerError(null);
+    setError(null);
+    setPhase('followup');
+    setFollowUpIndex(index);
+  }, [followUps.length]);
+
+  const handleRegenerateFollowUps = useCallback(() => {
+    void generateFollowUps('summary');
+  }, [generateFollowUps]);
 
   return (
     <>
@@ -628,13 +701,26 @@ export default function WritingDeskClient() {
                 className="btn-primary"
                 disabled={
                   loading
-                  || (stepIndex === steps.length - 1 && availableCredits !== null && availableCredits < followUpCreditCost)
+                  ||
+                  (stepIndex === steps.length - 1
+                    && followUps.length === 0
+                    && availableCredits !== null
+                    && availableCredits < followUpCreditCost)
                 }
               >
-                {loading ? 'Thinking…' : stepIndex === steps.length - 1 ? 'Generate follow-up questions' : 'Next'}
+                {loading
+                  ? 'Thinking…'
+                  : stepIndex === steps.length - 1
+                    ? followUps.length > 0
+                      ? 'Next'
+                      : 'Generate follow-up questions'
+                    : 'Next'}
               </button>
             </div>
-            {stepIndex === steps.length - 1 && availableCredits !== null && availableCredits < followUpCreditCost && (
+            {stepIndex === steps.length - 1
+              && followUps.length === 0
+              && availableCredits !== null
+              && availableCredits < followUpCreditCost && (
               <div className="status" aria-live="polite" style={{ marginTop: 8 }}>
                 <p style={{ color: '#2563eb' }}>
                   Generating follow-up questions costs {formatCredits(followUpCreditCost)} credits. Please top up to continue.
@@ -723,16 +809,40 @@ export default function WritingDeskClient() {
             <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
             <p className="section-sub">We’ve generated some clarifying questions before moving on to research.</p>
 
+            {serverError && (
+              <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
+                <p style={{ color: '#b91c1c' }}>{serverError}</p>
+              </div>
+            )}
+
             <div className="card" style={{ padding: 16, marginTop: 16 }}>
               <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
-              <dl className="stack" style={{ marginTop: 12 }}>
+              <div className="stack" style={{ marginTop: 12 }}>
                 {steps.map((step) => (
-                  <div key={step.key} style={{ marginBottom: 12 }}>
-                    <dt style={{ fontWeight: 600 }}>{step.title}</dt>
-                    <dd style={{ margin: '4px 0 0 0' }}>{form[step.key]}</dd>
+                  <div key={step.key} style={{ marginBottom: 16 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                      }}
+                    >
+                      <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={() => handleEditInitialStep(step.key)}
+                        aria-label={`Edit “${step.title}”`}
+                        disabled={loading}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                    <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
                   </div>
                 ))}
-              </dl>
+              </div>
             </div>
 
             <div className="card" style={{ padding: 16, marginTop: 16 }}>
@@ -741,7 +851,25 @@ export default function WritingDeskClient() {
                 <ol style={{ marginTop: 8, paddingLeft: 20 }}>
                   {followUps.map((q, idx) => (
                     <li key={idx} style={{ marginBottom: 12 }}>
-                      <p style={{ marginBottom: 4 }}>{q}</p>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: 12,
+                        }}
+                      >
+                        <p style={{ marginBottom: 4 }}>{q}</p>
+                        <button
+                          type="button"
+                          className="btn-link"
+                          onClick={() => handleEditFollowUpQuestion(idx)}
+                          aria-label={`Edit answer for follow-up question ${idx + 1}`}
+                          disabled={loading}
+                        >
+                          Edit answer
+                        </button>
+                      </div>
                       <p style={{ margin: 0, fontWeight: 600 }}>Your answer:</p>
                       <p style={{ margin: '4px 0 0 0' }}>{followUpAnswers[idx]}</p>
                     </li>
@@ -750,14 +878,47 @@ export default function WritingDeskClient() {
               ) : (
                 <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
               )}
+              {followUps.length > 0 && (
+                <div className="actions" style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="btn-link"
+                    onClick={handleRegenerateFollowUps}
+                    disabled={loading}
+                  >
+                    Ask for new follow-up questions (costs {formatCredits(followUpCreditCost)} credits)
+                  </button>
+                </div>
+              )}
               {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
               {responseId && (
                 <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
               )}
             </div>
 
-            <div className="actions" style={{ marginTop: 16, display: 'flex', gap: 12 }}>
-              <button type="button" className="btn-primary" onClick={handleStartOver}>
+            <div
+              className="actions"
+              style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}
+            >
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => handleEditInitialStep('issueDetail')}
+                disabled={loading}
+              >
+                Edit intake answers
+              </button>
+              {followUps.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handleEditFollowUpQuestion(0)}
+                  disabled={loading}
+                >
+                  Review follow-up answers
+                </button>
+              )}
+              <button type="button" className="btn-primary" onClick={handleStartOver} disabled={loading}>
                 Start again
               </button>
             </div>
