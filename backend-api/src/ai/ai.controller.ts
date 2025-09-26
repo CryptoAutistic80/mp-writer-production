@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AiService } from './ai.service';
 import { GenerateDto } from './dto/generate.dto';
@@ -16,8 +16,9 @@ export class AiController {
   }
 
   @Post('writing-desk/follow-up')
-  async writingDeskFollowUp(@Body() body: WritingDeskIntakeDto) {
-    return this.ai.generateWritingDeskFollowUps(body);
+  async writingDeskFollowUp(@Req() req: any, @Body() body: WritingDeskIntakeDto) {
+    const userId = req?.user?.id ?? req?.user?._id ?? null;
+    return this.ai.generateWritingDeskFollowUps(userId, body);
   }
 
   @Post('writing-desk/follow-up/answers')

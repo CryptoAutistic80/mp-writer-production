@@ -1,8 +1,7 @@
-import { IsInt, Min } from 'class-validator';
+import { IsNumber, Min } from 'class-validator';
 
 export class UpsertUserCreditsDto {
-  @IsInt()
+  @IsNumber({ allowInfinity: false, allowNaN: false, maxDecimalPlaces: 2 })
   @Min(0)
   credits!: number;
 }
-

@@ -2,13 +2,19 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
+import { UserCreditsService } from '../user-credits/user-credits.service';
+
+const FOLLOW_UP_CREDIT_COST = 0.1;
 
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private openaiClient: any | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly userCredits: UserCreditsService,
+  ) {}
 
   private async getOpenAiClient(apiKey: string) {
     if (this.openaiClient) return this.openaiClient;
@@ -34,115 +40,128 @@ export class AiService {
     return { content };
   }
 
-  async generateWritingDeskFollowUps(input: WritingDeskIntakeDto) {
+  async generateWritingDeskFollowUps(userId: string | null | undefined, input: WritingDeskIntakeDto) {
+    if (!userId) {
+      throw new BadRequestException('User account required');
+    }
+
+    const { credits: remainingAfterCharge } = await this.userCredits.deductFromMine(userId, FOLLOW_UP_CREDIT_COST);
     const apiKey = this.config.get<string>('OPENAI_API_KEY');
     const model = this.config.get<string>('OPENAI_FOLLOW_UP_MODEL')?.trim() || 'gpt-5-mini';
 
-    if (!apiKey) {
-      const stubQuestions = this.buildStubFollowUps(input);
-      this.logger.log(
-        `[writing-desk step1] DEV-STUB ${JSON.stringify({
+    try {
+      if (!apiKey) {
+        const stubQuestions = this.buildStubFollowUps(input);
+        this.logger.log(
+          `[writing-desk step1] DEV-STUB ${JSON.stringify({
+            model: 'dev-stub',
+            input,
+            followUpQuestions: stubQuestions,
+          })}`,
+        );
+        return {
           model: 'dev-stub',
-          input,
+          responseId: 'dev-stub',
           followUpQuestions: stubQuestions,
-        })}`,
-      );
-      return {
-        model: 'dev-stub',
-        responseId: 'dev-stub',
-        followUpQuestions: stubQuestions,
-      };
-    }
+          notes: null,
+          remainingCredits: remainingAfterCharge,
+        };
+      }
 
-    const client = await this.getOpenAiClient(apiKey);
+      const client = await this.getOpenAiClient(apiKey);
 
-    const instructions = `You help constituents prepare to write letters to their Members of Parliament.
+      const instructions = `You help constituents prepare to write letters to their Members of Parliament.
 From the provided information, identify up to three missing details that would materially strengthen the letter.
 Ask at most three concise follow-up questions. If everything is already clear, return an empty list.
 Focus on understanding the core issue better - ask about the nature of the problem, its impact, timeline, or context.
 Do NOT ask for documents, permissions, names, addresses, or personal details. Only ask about the issue itself.`;
 
-    const userSummary = `Issue detail:\n${input.issueDetail}\n\nAffected parties:\n${input.affectedDetail}\n\nSupporting background:\n${input.backgroundDetail}\n\nDesired outcome:\n${input.desiredOutcome}`;
+      const userSummary = `Issue detail:\n${input.issueDetail}\n\nAffected parties:\n${input.affectedDetail}\n\nSupporting background:\n${input.backgroundDetail}\n\nDesired outcome:\n${input.desiredOutcome}`;
 
-    const response = await client.responses.create({
-      model,
-      input: [
-        {
-          role: 'system',
-          content: [{ type: 'input_text', text: instructions }],
-        },
-        {
-          role: 'user',
-          content: [{ type: 'input_text', text: userSummary }],
-        },
-      ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'writing_desk_follow_up',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              questions: {
-                type: 'array',
-                description: 'Up to three clarifying follow-up questions for the user.',
-                maxItems: 3,
-                items: {
+      const response = await client.responses.create({
+        model,
+        input: [
+          {
+            role: 'system',
+            content: [{ type: 'input_text', text: instructions }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'input_text', text: userSummary }],
+          },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'writing_desk_follow_up',
+            strict: true,
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                questions: {
+                  type: 'array',
+                  description: 'Up to three clarifying follow-up questions for the user.',
+                  maxItems: 3,
+                  items: {
+                    type: 'string',
+                    description: 'A succinct question phrased conversationally.',
+                  },
+                },
+                notes: {
                   type: 'string',
-                  description: 'A succinct question phrased conversationally.',
+                  description: 'Optional short justification of why these questions matter.',
+                  default: '',
                 },
               },
-              notes: {
-                type: 'string',
-                description: 'Optional short justification of why these questions matter.',
-                default: '',
-              },
+              required: ['questions', 'notes'],
             },
-            required: ['questions', 'notes'],
           },
+          verbosity: 'low',
         },
-        verbosity: 'low',
-      },
-      reasoning: {
-        effort: 'low',
-        summary: null,
-      },
-      tools: [],
-      store: true,
-      include: ['reasoning.encrypted_content', 'web_search_call.action.sources'],
-    });
+        reasoning: {
+          effort: 'low',
+          summary: null,
+        },
+        tools: [],
+        store: true,
+        include: ['reasoning.encrypted_content', 'web_search_call.action.sources'],
+      });
 
-    let parsed: { questions?: string[]; notes?: string } = {};
-    const outputText = this.extractFirstText(response);
-    if (outputText) {
-      try {
-        parsed = JSON.parse(outputText);
-      } catch (err) {
-        this.logger.warn(`Failed to parse follow-up response JSON: ${(err as Error).message}`);
+      let parsed: { questions?: string[]; notes?: string } = {};
+      const outputText = this.extractFirstText(response);
+      if (outputText) {
+        try {
+          parsed = JSON.parse(outputText);
+        } catch (err) {
+          this.logger.warn(`Failed to parse follow-up response JSON: ${(err as Error).message}`);
+        }
       }
+
+      const followUpQuestions = Array.isArray(parsed.questions)
+        ? parsed.questions.filter((q) => typeof q === 'string' && q.trim().length > 0)
+        : [];
+
+      const bundle = {
+        model,
+        responseId: (response as any)?.id ?? null,
+        input,
+        followUpQuestions,
+        notes: parsed.notes,
+      };
+      this.logger.log(`[writing-desk step1] ${JSON.stringify(bundle)}`);
+
+      return {
+        model,
+        responseId: (response as any)?.id ?? null,
+        followUpQuestions,
+        notes: parsed.notes ?? null,
+        remainingCredits: remainingAfterCharge,
+      };
+    } catch (error) {
+      await this.refundCredits(userId, FOLLOW_UP_CREDIT_COST);
+      throw error;
     }
-
-    const followUpQuestions = Array.isArray(parsed.questions)
-      ? parsed.questions.filter((q) => typeof q === 'string' && q.trim().length > 0)
-      : [];
-
-    const bundle = {
-      model,
-      responseId: (response as any)?.id ?? null,
-      input,
-      followUpQuestions,
-      notes: parsed.notes,
-    };
-    this.logger.log(`[writing-desk step1] ${JSON.stringify(bundle)}`);
-
-    return {
-      model,
-      responseId: (response as any)?.id ?? null,
-      followUpQuestions,
-      notes: parsed.notes ?? null,
-    };
   }
 
   async recordWritingDeskFollowUps(input: WritingDeskFollowUpDto) {
@@ -192,6 +211,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
     }
     return null;
+  }
+
+  private async refundCredits(userId: string, amount: number) {
+    try {
+      await this.userCredits.addToMine(userId, amount);
+    } catch (err) {
+      this.logger.error(`Failed to refund credits for user ${userId}: ${(err as Error).message}`);
+    }
   }
 
   private buildStubFollowUps(input: WritingDeskIntakeDto) {

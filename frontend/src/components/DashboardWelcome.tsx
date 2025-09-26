@@ -11,6 +11,10 @@ export default function DashboardWelcome({ firstName, credits, onAddCredit, demo
   const pricePence = Number(process.env.NEXT_PUBLIC_CREDIT_PRICE_PENCE ?? '500');
   const priceText = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format((pricePence || 500) / 100);
   const showPurchase = (demoPurchasesEnabled ?? true) && typeof onAddCredit === 'function';
+  const formatCredits = (value: number) => {
+    const rounded = Math.round(value * 100) / 100;
+    return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+  };
   return (
     <section className="card">
       <div className="container dashboard-welcome">
@@ -26,7 +30,7 @@ export default function DashboardWelcome({ firstName, credits, onAddCredit, demo
               Buy 1 credit ({priceText})
             </button>
           )}
-          <span className="credits-count">{credits} credits</span>
+          <span className="credits-count">{formatCredits(credits)} credits</span>
         </div>
       </div>
     </section>

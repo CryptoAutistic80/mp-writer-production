@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type StepKey = 'issueDetail' | 'affectedDetail' | 'backgroundDetail' | 'desiredOutcome';
 
@@ -58,8 +58,27 @@ export default function WritingDeskClient() {
   const [notes, setNotes] = useState<string | null>(null);
   const [responseId, setResponseId] = useState<string | null>(null);
   const [ellipsisCount, setEllipsisCount] = useState(0);
+  const [availableCredits, setAvailableCredits] = useState<number | null>(null);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
+  const followUpCreditCost = 0.1;
+  const formatCredits = (value: number) => {
+    const rounded = Math.round(value * 100) / 100;
+    return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+  };
+  const refreshCredits = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/me', { cache: 'no-store' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (typeof data?.credits === 'number') {
+        return Math.round(data.credits * 100) / 100;
+      }
+    } catch {
+      // Ignore transient failures, caller can decide how to handle null
+    }
+    return null;
+  }, []);
 
   const totalFollowUpSteps = followUps.length > 0 ? followUps.length : 1;
   const totalSteps = steps.length + totalFollowUpSteps;
@@ -69,7 +88,13 @@ export default function WritingDeskClient() {
     if (phase === 'followup') return steps.length + followUpIndex + 1;
     return steps.length + totalFollowUpSteps;
   }, [phase, stepIndex, followUpIndex, totalFollowUpSteps]);
-  const progress = useMemo(() => (currentStepNumber / totalSteps) * 100, [currentStepNumber, totalSteps]);
+  const completedSteps = useMemo(() => {
+    if (phase === 'initial') return stepIndex;
+    if (phase === 'generating') return steps.length;
+    if (phase === 'followup') return steps.length + followUpIndex;
+    return steps.length + totalFollowUpSteps;
+  }, [phase, stepIndex, followUpIndex, totalFollowUpSteps]);
+  const progress = useMemo(() => (completedSteps / totalSteps) * 100, [completedSteps, totalSteps]);
   const isGeneratingFollowUps = phase === 'generating';
 
   useEffect(() => {
@@ -85,6 +110,19 @@ export default function WritingDeskClient() {
       window.clearInterval(interval);
     };
   }, [isGeneratingFollowUps]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const latest = await refreshCredits();
+      if (!cancelled && typeof latest === 'number') {
+        setAvailableCredits(latest);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshCredits]);
 
   const generatingMessage = `Generating follow-up questions${'.'.repeat((ellipsisCount % 5) + 1)}`;
 
@@ -159,6 +197,11 @@ export default function WritingDeskClient() {
       return;
     }
 
+    if (availableCredits !== null && availableCredits < followUpCreditCost) {
+      setError(`You need at least ${formatCredits(followUpCreditCost)} credits to generate follow-up questions.`);
+      return;
+    }
+
     // Final initial step – ask for follow-up questions
     setPhase('generating');
     setLoading(true);
@@ -186,6 +229,14 @@ export default function WritingDeskClient() {
       setFollowUps(questions);
       setNotes(json?.notes ?? null);
       setResponseId(json?.responseId ?? null);
+      if (typeof json?.remainingCredits === 'number') {
+        setAvailableCredits(Math.round(json.remainingCredits * 100) / 100);
+      } else {
+        const latestCredits = await refreshCredits();
+        if (typeof latestCredits === 'number') {
+          setAvailableCredits(latestCredits);
+        }
+      }
 
       if (questions.length === 0) {
         setFollowUpAnswers([]);
@@ -199,6 +250,10 @@ export default function WritingDeskClient() {
     } catch (err: any) {
       setServerError(err?.message || 'Something went wrong. Please try again.');
       setPhase('initial');
+      const latestCredits = await refreshCredits();
+      if (typeof latestCredits === 'number') {
+        setAvailableCredits(latestCredits);
+      }
     } finally {
       setLoading(false);
     }
@@ -215,7 +270,11 @@ export default function WritingDeskClient() {
   const handleFollowUpBack = () => {
     setServerError(null);
     setError(null);
-    if (followUpIndex === 0) return;
+    if (followUpIndex === 0) {
+      setPhase('initial');
+      setStepIndex(steps.length - 1);
+      return;
+    }
     setFollowUpIndex((prev) => Math.max(prev - 1, 0));
   };
 
@@ -261,6 +320,11 @@ export default function WritingDeskClient() {
             </div>
             <div className="header-actions" aria-hidden>
               <span className="badge">Step {Math.min(currentStepNumber, totalSteps)} of {totalSteps}</span>
+              {availableCredits !== null && (
+                <span className="badge" style={{ background: '#0f172a' }}>
+                  Credits: {formatCredits(availableCredits)}
+                </span>
+              )}
             </div>
           </div>
           <div aria-hidden style={{ marginTop: 8, height: 6, background: '#e5e7eb', borderRadius: 999 }}>
@@ -297,23 +361,43 @@ export default function WritingDeskClient() {
               </div>
             )}
 
-            <div className="actions" style={{ marginTop: 12, display: 'flex', gap: 12 }}>
-              <button
-                type="button"
-                className="btn-link"
-                onClick={handleInitialBack}
-                disabled={loading || stepIndex === 0}
-              >
-                Back
-              </button>
+            <div
+              className="actions"
+              style={{
+                marginTop: 12,
+                display: 'flex',
+                gap: 12,
+                justifyContent: stepIndex === 0 ? 'flex-end' : undefined,
+              }}
+            >
+              {stepIndex > 0 && (
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={handleInitialBack}
+                  disabled={loading}
+                >
+                  Back
+                </button>
+              )}
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={loading}
+                disabled={
+                  loading
+                  || (stepIndex === steps.length - 1 && availableCredits !== null && availableCredits < followUpCreditCost)
+                }
               >
                 {loading ? 'Thinking…' : stepIndex === steps.length - 1 ? 'Generate follow-up questions' : 'Next'}
               </button>
             </div>
+            {stepIndex === steps.length - 1 && availableCredits !== null && availableCredits < followUpCreditCost && (
+              <div className="status" aria-live="polite" style={{ marginTop: 8 }}>
+                <p style={{ color: '#2563eb' }}>
+                  Generating follow-up questions costs {formatCredits(followUpCreditCost)} credits. Please top up to continue.
+                </p>
+              </div>
+            )}
           </form>
         )}
 
@@ -376,7 +460,7 @@ export default function WritingDeskClient() {
                 type="button"
                 className="btn-link"
                 onClick={handleFollowUpBack}
-                disabled={loading || followUpIndex === 0}
+                disabled={loading}
               >
                 Back
               </button>
