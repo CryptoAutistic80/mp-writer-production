@@ -39,8 +39,6 @@ export type WritingDeskJobDocument = WritingDeskJob & Document;
 
 export const WritingDeskJobSchema = SchemaFactory.createForClass(WritingDeskJob);
 
-WritingDeskJobSchema.index({ userId: 1 }, { unique: true });
-
 WritingDeskJobSchema.set('toJSON', {
   virtuals: true,
   versionKey: false,

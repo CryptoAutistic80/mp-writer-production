@@ -15,5 +15,3 @@ export class UserCredits {
 }
 
 export const UserCreditsSchema = SchemaFactory.createForClass(UserCredits);
-UserCreditsSchema.index({ user: 1 }, { unique: true });
-

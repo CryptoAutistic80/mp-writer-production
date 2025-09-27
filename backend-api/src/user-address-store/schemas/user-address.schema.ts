@@ -15,5 +15,3 @@ export class UserAddress {
 }
 
 export const UserAddressSchema = SchemaFactory.createForClass(UserAddress);
-UserAddressSchema.index({ user: 1 }, { unique: true });
-

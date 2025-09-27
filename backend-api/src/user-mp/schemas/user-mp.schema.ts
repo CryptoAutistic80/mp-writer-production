@@ -28,5 +28,3 @@ export class UserMp {
 }
 
 export const UserMpSchema = SchemaFactory.createForClass(UserMp);
-UserMpSchema.index({ user: 1 }, { unique: true });
-
