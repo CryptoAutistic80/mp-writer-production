@@ -65,4 +65,13 @@ export class UpsertActiveWritingDeskJobDto {
   @IsString()
   @IsNotEmpty()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  researchContent?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  researchResponseId?: string;
 }

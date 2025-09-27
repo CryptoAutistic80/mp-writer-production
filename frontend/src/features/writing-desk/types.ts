@@ -19,6 +19,8 @@ export interface ActiveWritingDeskJob {
   followUpAnswers: string[];
   notes: string | null;
   responseId: string | null;
+  researchContent: string | null;
+  researchResponseId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,4 +35,6 @@ export interface UpsertActiveWritingDeskJobPayload {
   followUpAnswers: string[];
   notes?: string | null;
   responseId?: string | null;
+  researchContent?: string | null;
+  researchResponseId?: string | null;
 }

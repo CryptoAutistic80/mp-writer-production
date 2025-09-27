@@ -41,6 +41,8 @@ export class WritingDeskJobsService {
       followUpAnswersCiphertext: this.encryption.encryptObject(sanitized.followUpAnswers),
       notes: sanitized.notes,
       responseId: sanitized.responseId,
+      researchContent: sanitized.researchContent,
+      researchResponseId: sanitized.researchResponseId,
     };
 
     const saved = await this.repository.upsertActiveJob(userId, payload);
@@ -68,6 +70,11 @@ export class WritingDeskJobsService {
       if (typeof value !== 'string') return null;
       const trimmed = value.trim();
       return trimmed.length > 0 ? trimmed : null;
+    };
+    const normaliseMultiline = (value: string | undefined) => {
+      if (typeof value !== 'string') return null;
+      const normalised = value.replace(/\r\n/g, '\n');
+      return normalised.trim().length > 0 ? normalised : null;
     };
 
     const form: WritingDeskJobFormSnapshot = {
@@ -105,6 +112,8 @@ export class WritingDeskJobsService {
       followUpAnswers: alignedAnswers,
       notes: trimNullable(input.notes),
       responseId: trimNullable(input.responseId),
+      researchContent: normaliseMultiline(input.researchContent),
+      researchResponseId: trimNullable(input.researchResponseId),
     };
   }
 
@@ -126,6 +135,8 @@ export class WritingDeskJobsService {
       followUpAnswers,
       notes: record.notes ?? null,
       responseId: record.responseId ?? null,
+      researchContent: record.researchContent ?? null,
+      researchResponseId: record.researchResponseId ?? null,
       createdAt,
       updatedAt,
     };
@@ -187,6 +198,8 @@ export class WritingDeskJobsService {
       followUpAnswers: snapshot.followUpAnswers,
       notes: snapshot.notes ?? null,
       responseId: snapshot.responseId ?? null,
+      researchContent: snapshot.researchContent ?? null,
+      researchResponseId: snapshot.researchResponseId ?? null,
       createdAt: snapshot.createdAt?.toISOString?.() ?? new Date().toISOString(),
       updatedAt: snapshot.updatedAt?.toISOString?.() ?? new Date().toISOString(),
     };

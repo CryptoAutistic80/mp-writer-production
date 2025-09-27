@@ -20,6 +20,8 @@ export interface WritingDeskJobSnapshot {
   followUpAnswers: string[];
   notes: string | null;
   responseId: string | null;
+  researchContent: string | null;
+  researchResponseId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,6 +39,8 @@ export interface WritingDeskJobRecord {
   followUpAnswers?: string[];
   notes: string | null;
   responseId: string | null;
+  researchContent: string | null;
+  researchResponseId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,6 +55,8 @@ export interface ActiveWritingDeskJobResource {
   followUpAnswers: string[];
   notes: string | null;
   responseId: string | null;
+  researchContent: string | null;
+  researchResponseId: string | null;
   createdAt: string;
   updatedAt: string;
 }

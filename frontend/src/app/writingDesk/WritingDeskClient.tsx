@@ -50,6 +50,51 @@ const initialFormState: FormState = {
   desiredOutcome: '',
 };
 
+type ResearchStatus = 'idle' | 'running' | 'completed' | 'error';
+
+type DeepResearchStreamMessage =
+  | { type: 'status'; status: string; remainingCredits?: number | null }
+  | { type: 'delta'; text: string }
+  | {
+      type: 'complete';
+      content: string;
+      responseId: string | null;
+      remainingCredits: number | null;
+      usage?: Record<string, unknown> | null;
+    }
+  | { type: 'event'; event: { type?: string; [key: string]: any } }
+  | { type: 'error'; message: string; remainingCredits?: number | null };
+
+const MAX_RESEARCH_ACTIVITY_ITEMS = 5;
+
+const describeResearchEvent = (event: { type?: string; [key: string]: any }): string | null => {
+  if (!event || typeof event.type !== 'string') return null;
+  switch (event.type) {
+    case 'response.web_search_call.searching':
+      return 'Searching the web for relevant sources…';
+    case 'response.web_search_call.in_progress':
+      return 'Reviewing a web result…';
+    case 'response.web_search_call.completed':
+      return 'Finished reviewing a web result.';
+    case 'response.file_search_call.searching':
+      return 'Searching private documents for supporting evidence…';
+    case 'response.file_search_call.completed':
+      return 'Finished reviewing private documents.';
+    case 'response.code_interpreter_call.in_progress':
+      return 'Analysing data with the code interpreter…';
+    case 'response.code_interpreter_call.completed':
+      return 'Completed data analysis via code interpreter.';
+    case 'response.reasoning.delta': {
+      const summary = typeof event.delta === 'string' ? event.delta.trim() : '';
+      return summary.length > 0 ? summary : null;
+    }
+    case 'response.reasoning.done':
+      return 'Reasoning summary updated.';
+    default:
+      return null;
+  }
+};
+
 export default function WritingDeskClient() {
   const [form, setForm] = useState<FormState>(initialFormState);
   const [phase, setPhase] = useState<'initial' | 'generating' | 'followup' | 'summary'>('initial');
@@ -82,9 +127,16 @@ export default function WritingDeskClient() {
   const [jobSaveError, setJobSaveError] = useState<string | null>(null);
   const [editIntakeModalOpen, setEditIntakeModalOpen] = useState(false);
   const [startOverConfirmOpen, setStartOverConfirmOpen] = useState(false);
+  const [researchContent, setResearchContent] = useState<string>('');
+  const [researchResponseId, setResearchResponseId] = useState<string | null>(null);
+  const [researchStatus, setResearchStatus] = useState<ResearchStatus>('idle');
+  const [researchActivities, setResearchActivities] = useState<Array<{ id: string; text: string }>>([]);
+  const [researchError, setResearchError] = useState<string | null>(null);
+  const researchSourceRef = useRef<EventSource | null>(null);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
+  const deepResearchCreditCost = 0.7;
   const formatCredits = (value: number) => {
     const rounded = Math.round(value * 100) / 100;
     return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -101,6 +153,36 @@ export default function WritingDeskClient() {
       // Ignore transient failures, caller can decide how to handle null
     }
     return null;
+  }, []);
+
+  const closeResearchStream = useCallback(() => {
+    if (researchSourceRef.current) {
+      researchSourceRef.current.close();
+      researchSourceRef.current = null;
+    }
+  }, []);
+
+  const resetResearch = useCallback(() => {
+    closeResearchStream();
+    setResearchContent('');
+    setResearchResponseId(null);
+    setResearchStatus('idle');
+    setResearchActivities([]);
+    setResearchError(null);
+  }, [closeResearchStream]);
+
+  const appendResearchActivity = useCallback((text: string) => {
+    setResearchActivities((prev) => {
+      const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text };
+      const next = [entry, ...prev];
+      return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
+    });
+  }, []);
+
+  const updateCreditsFromStream = useCallback((value: number | null | undefined) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      setAvailableCredits(Math.round(value * 100) / 100);
+    }
   }, []);
 
   const totalFollowUpSteps = followUps.length > 0 ? followUps.length : 1;
@@ -135,6 +217,20 @@ export default function WritingDeskClient() {
       ? 'Checking available credits'
       : `You have ${formatCredits(availableCredits)} credits available`;
 
+  const researchCreditState = useMemo<'loading' | 'low' | 'ok'>(() => {
+    if (availableCredits === null) return 'loading';
+    return availableCredits < deepResearchCreditCost ? 'low' : 'ok';
+  }, [availableCredits, deepResearchCreditCost]);
+  const hasResearchContent = researchContent.trim().length > 0;
+  const researchButtonDisabled =
+    researchStatus === 'running' || researchCreditState === 'loading' || researchCreditState === 'low';
+  const researchButtonLabel =
+    researchStatus === 'running'
+      ? 'Deep research in progress…'
+      : `${hasResearchContent ? 'Run deep research again' : 'Start deep research'} (costs ${formatCredits(
+          deepResearchCreditCost,
+        )} credits)`;
+
   useEffect(() => {
     if (!isGeneratingFollowUps) {
       setEllipsisCount(0);
@@ -162,6 +258,12 @@ export default function WritingDeskClient() {
     };
   }, [refreshCredits]);
 
+  useEffect(() => {
+    return () => {
+      closeResearchStream();
+    };
+  }, [closeResearchStream]);
+
   const generatingMessage = `Generating follow-up questions${'.'.repeat((ellipsisCount % 5) + 1)}`;
 
   const resetFollowUps = useCallback(() => {
@@ -170,7 +272,8 @@ export default function WritingDeskClient() {
     setFollowUpIndex(0);
     setNotes(null);
     setResponseId(null);
-  }, []);
+    resetResearch();
+  }, [resetResearch]);
 
   const resetLocalState = useCallback(() => {
     setForm({ ...initialFormState });
@@ -183,8 +286,82 @@ export default function WritingDeskClient() {
     resetFollowUps();
   }, [resetFollowUps]);
 
+  const startDeepResearch = useCallback(() => {
+    if (researchStatus === 'running') return;
+    closeResearchStream();
+    setResearchStatus('running');
+    setResearchContent('');
+    setResearchResponseId(null);
+    setResearchError(null);
+    setResearchActivities([]);
+
+    try {
+      const endpoint = new URL('/api/ai/writing-desk/deep-research', window.location.origin);
+      if (jobId) {
+        endpoint.searchParams.set('jobId', jobId);
+      }
+      const source = new EventSource(endpoint.toString(), { withCredentials: true });
+      researchSourceRef.current = source;
+
+      source.onmessage = (event) => {
+        let payload: DeepResearchStreamMessage | null = null;
+        try {
+          payload = JSON.parse(event.data) as DeepResearchStreamMessage;
+        } catch {
+          return;
+        }
+        if (!payload) return;
+
+        if (payload.type === 'status') {
+          updateCreditsFromStream(payload.remainingCredits);
+          const statusMessage: Record<string, string> = {
+            starting: 'Preparing the research brief…',
+            charged: 'Credits deducted. Research is starting…',
+            queued: 'Deep research queued…',
+            in_progress: 'Gathering evidence…',
+          };
+          const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
+          if (descriptor) appendResearchActivity(descriptor);
+        } else if (payload.type === 'delta') {
+          if (typeof payload.text === 'string') {
+            setResearchContent((prev) => prev + payload.text);
+          }
+        } else if (payload.type === 'event') {
+          const descriptor = describeResearchEvent(payload.event);
+          if (descriptor) appendResearchActivity(descriptor);
+        } else if (payload.type === 'complete') {
+          closeResearchStream();
+          setResearchStatus('completed');
+          setResearchContent(payload.content ?? '');
+          setResearchResponseId(payload.responseId ?? null);
+          updateCreditsFromStream(payload.remainingCredits);
+          appendResearchActivity('Deep research completed.');
+        } else if (payload.type === 'error') {
+          closeResearchStream();
+          setResearchStatus('error');
+          setResearchError(payload.message || 'Deep research failed. Please try again.');
+          updateCreditsFromStream(payload.remainingCredits);
+          appendResearchActivity('Deep research encountered an error.');
+        }
+      };
+
+      source.onerror = () => {
+        closeResearchStream();
+        setResearchStatus('error');
+        setResearchError('The research stream was interrupted. Please try again.');
+        appendResearchActivity('Connection lost during deep research.');
+      };
+    } catch {
+      closeResearchStream();
+      setResearchStatus('error');
+      setResearchError('We could not start deep research. Please try again.');
+      appendResearchActivity('Unable to start deep research.');
+    }
+  }, [appendResearchActivity, closeResearchStream, jobId, researchStatus, updateCreditsFromStream]);
+
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {
+      closeResearchStream();
       setForm({
         issueDetail: job.form?.issueDetail ?? '',
         affectedDetail: job.form?.affectedDetail ?? '',
@@ -202,12 +379,18 @@ export default function WritingDeskClient() {
       setFollowUpIndex(nextFollowUpIndex);
       setNotes(job.notes ?? null);
       setResponseId(job.responseId ?? null);
+      const existingResearch = job.researchContent ?? '';
+      setResearchContent(existingResearch);
+      setResearchResponseId(job.researchResponseId ?? null);
+      setResearchStatus(existingResearch.trim().length > 0 ? 'completed' : 'idle');
+      setResearchActivities([]);
+      setResearchError(null);
       setError(null);
       setServerError(null);
       setLoading(false);
       setJobSaveError(null);
     },
-    [resetFollowUps],
+    [closeResearchStream, resetFollowUps],
   );
 
   const resourceToPayload = useCallback(
@@ -226,6 +409,8 @@ export default function WritingDeskClient() {
       followUpAnswers: Array.isArray(job.followUpAnswers) ? [...job.followUpAnswers] : [],
       notes: job.notes ?? null,
       responseId: job.responseId ?? null,
+      researchContent: job.researchContent ?? null,
+      researchResponseId: job.researchResponseId ?? null,
     }),
     [],
   );
@@ -241,8 +426,22 @@ export default function WritingDeskClient() {
       followUpAnswers: [...followUpAnswers],
       notes: notes ?? null,
       responseId: responseId ?? null,
+      researchContent,
+      researchResponseId: researchResponseId ?? null,
     }),
-    [followUpAnswers, followUpIndex, followUps, form, jobId, notes, phase, responseId, stepIndex],
+    [
+      followUpAnswers,
+      followUpIndex,
+      followUps,
+      form,
+      jobId,
+      notes,
+      phase,
+      researchContent,
+      researchResponseId,
+      responseId,
+      stepIndex,
+    ],
   );
 
   const signatureForPayload = useCallback(
@@ -928,6 +1127,82 @@ export default function WritingDeskClient() {
               {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
               {responseId && (
                 <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
+              )}
+            </div>
+
+            <div className="card" style={{ padding: 16, marginTop: 16 }}>
+              <h4 className="section-title" style={{ fontSize: '1rem' }}>Deep research evidence pack</h4>
+              {!hasResearchContent && researchStatus !== 'running' && (
+                <p style={{ marginTop: 8 }}>
+                  Run deep research to gather cited evidence that supports your letter. We&apos;ll provide a structured
+                  summary with sources you can reference directly.
+                </p>
+              )}
+              {researchStatus === 'error' && researchError && (
+                <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
+                  <p style={{ color: '#b91c1c' }}>{researchError}</p>
+                </div>
+              )}
+              <div style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={startDeepResearch}
+                  disabled={researchButtonDisabled}
+                >
+                  {researchButtonLabel}
+                </button>
+                {researchCreditState === 'low' && (
+                  <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                    You need at least {formatCredits(deepResearchCreditCost)} credits to run deep research.
+                  </p>
+                )}
+                {researchCreditState === 'loading' && (
+                  <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
+                )}
+              </div>
+              {researchStatus === 'running' && (
+                <div style={{ marginTop: 12 }}>
+                  <p style={{ color: '#2563eb', fontStyle: 'italic' }}>
+                    Gathering evidence — this may take a couple of minutes.
+                  </p>
+                </div>
+              )}
+              {researchActivities.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Latest activity</h5>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {researchActivities.map((activity) => (
+                      <li key={activity.id} style={{ marginBottom: 4 }}>
+                        {activity.text}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(hasResearchContent || researchStatus === 'running') && (
+                <div style={{ marginTop: 12 }}>
+                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Research notes</h5>
+                  <pre
+                    style={{
+                      whiteSpace: 'pre-wrap',
+                      backgroundColor: '#f9fafb',
+                      padding: 12,
+                      borderRadius: 8,
+                      maxHeight: 320,
+                      overflowY: 'auto',
+                      fontFamily: 'inherit',
+                      fontSize: '0.95rem',
+                    }}
+                  >
+                    {researchContent || 'Collecting evidence…'}
+                  </pre>
+                </div>
+              )}
+              {researchResponseId && (
+                <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>
+                  Research reference ID: {researchResponseId}
+                </p>
               )}
             </div>
 

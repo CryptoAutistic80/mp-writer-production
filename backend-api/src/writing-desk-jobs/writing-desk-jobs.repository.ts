@@ -28,6 +28,8 @@ export class WritingDeskJobsRepository {
       followUpAnswersCiphertext: string;
       notes: string | null;
       responseId: string | null;
+      researchContent: string | null;
+      researchResponseId: string | null;
     },
   ): Promise<WritingDeskJobRecord> {
     const doc = await this.model
