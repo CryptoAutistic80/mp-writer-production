@@ -137,6 +137,7 @@ export default function WritingDeskClient() {
   const [researchStatus, setResearchStatus] = useState<ResearchStatus>('idle');
   const [researchActivities, setResearchActivities] = useState<Array<{ id: string; text: string }>>([]);
   const [researchError, setResearchError] = useState<string | null>(null);
+  const [pendingAutoResume, setPendingAutoResume] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
@@ -174,6 +175,7 @@ export default function WritingDeskClient() {
     setResearchStatus('idle');
     setResearchActivities([]);
     setResearchError(null);
+    setPendingAutoResume(false);
   }, [closeResearchStream]);
 
   const appendResearchActivity = useCallback((text: string) => {
@@ -291,123 +293,152 @@ export default function WritingDeskClient() {
     resetFollowUps();
   }, [resetFollowUps]);
 
-  const startDeepResearch = useCallback(async () => {
-    if (researchStatus === 'running') return;
-    closeResearchStream();
-    setResearchStatus('running');
-    setResearchContent('');
-    setResearchResponseId(null);
-    setResearchError(null);
-    setResearchActivities([]);
+  const startDeepResearch = useCallback(
+    async (options?: { resume?: boolean }) => {
+      const resume = options?.resume === true;
+      if (!resume && researchStatus === 'running') return;
 
-    try {
-      const payload = jobId ? { jobId } : {};
-      const response = await fetch('/api/writing-desk/jobs/active/research/start', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const rawBody = await response.text();
-      if (!response.ok) {
-        let message = 'We could not start deep research. Please try again.';
+      closeResearchStream();
+      setPendingAutoResume(false);
+      setResearchStatus('running');
+      setResearchContent('');
+      setResearchResponseId(null);
+      setResearchError(null);
+      setResearchActivities([]);
+
+      try {
+        const payload: Record<string, unknown> = {};
+        if (jobId) payload.jobId = jobId;
+        if (resume) payload.resume = true;
+
+        const response = await fetch('/api/writing-desk/jobs/active/research/start', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const rawBody = await response.text();
+        if (!response.ok) {
+          let message = 'We could not start deep research. Please try again.';
+          if (rawBody) {
+            try {
+              const parsed = JSON.parse(rawBody) as { message?: string };
+              if (parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
+                message = parsed.message.trim();
+              }
+            } catch {
+              const trimmed = rawBody.trim();
+              if (trimmed.length > 0) {
+                message = trimmed;
+              }
+            }
+          }
+          throw new Error(message);
+        }
+
+        let handshake: DeepResearchHandshakeResponse | null = null;
         if (rawBody) {
           try {
-            const parsed = JSON.parse(rawBody) as { message?: string };
-            if (parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
-              message = parsed.message.trim();
-            }
+            handshake = JSON.parse(rawBody) as DeepResearchHandshakeResponse;
           } catch {
-            const trimmed = rawBody.trim();
-            if (trimmed.length > 0) {
-              message = trimmed;
+            // If parsing fails, fall back to defaults below.
+          }
+        }
+
+        const streamPath =
+          handshake && typeof handshake.streamPath === 'string' && handshake.streamPath.trim().length > 0
+            ? handshake.streamPath.trim()
+            : '/api/ai/writing-desk/deep-research';
+        const endpoint = new URL(streamPath, window.location.origin);
+        const resolvedJobId =
+          handshake && typeof handshake.jobId === 'string' && handshake.jobId.trim().length > 0
+            ? handshake.jobId.trim()
+            : jobId;
+        if (resolvedJobId && !endpoint.searchParams.has('jobId')) {
+          endpoint.searchParams.set('jobId', resolvedJobId);
+        }
+
+        if (resolvedJobId && resolvedJobId !== jobId) {
+          setJobId(resolvedJobId);
+        }
+
+        const source = new EventSource(endpoint.toString(), { withCredentials: true });
+        researchSourceRef.current = source;
+
+        source.onmessage = (event) => {
+          let payload: DeepResearchStreamMessage | null = null;
+          try {
+            payload = JSON.parse(event.data) as DeepResearchStreamMessage;
+          } catch {
+            return;
+          }
+          if (!payload) return;
+
+          if (payload.type === 'status') {
+            updateCreditsFromStream(payload.remainingCredits);
+            const statusMessage: Record<string, string> = {
+              starting: 'Preparing the research brief…',
+              charged: 'Credits deducted. Research is starting…',
+              queued: 'Deep research queued…',
+              in_progress: 'Gathering evidence…',
+            };
+            const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
+            if (descriptor) appendResearchActivity(descriptor);
+          } else if (payload.type === 'delta') {
+            if (typeof payload.text === 'string') {
+              setResearchContent((prev) => prev + payload.text);
             }
+          } else if (payload.type === 'event') {
+            const descriptor = describeResearchEvent(payload.event);
+            if (descriptor) appendResearchActivity(descriptor);
+          } else if (payload.type === 'complete') {
+            closeResearchStream();
+            setResearchStatus('completed');
+            setResearchContent(payload.content ?? '');
+            setResearchResponseId(payload.responseId ?? null);
+            updateCreditsFromStream(payload.remainingCredits);
+            appendResearchActivity('Deep research completed.');
+            setPendingAutoResume(false);
+          } else if (payload.type === 'error') {
+            closeResearchStream();
+            setResearchStatus('error');
+            setResearchError(payload.message || 'Deep research failed. Please try again.');
+            updateCreditsFromStream(payload.remainingCredits);
+            appendResearchActivity('Deep research encountered an error.');
+            setPendingAutoResume(false);
           }
-        }
-        throw new Error(message);
-      }
+        };
 
-      let handshake: DeepResearchHandshakeResponse | null = null;
-      if (rawBody) {
-        try {
-          handshake = JSON.parse(rawBody) as DeepResearchHandshakeResponse;
-        } catch {
-          // If parsing fails, fall back to defaults below.
-        }
-      }
-
-      const streamPath =
-        handshake && typeof handshake.streamPath === 'string' && handshake.streamPath.trim().length > 0
-          ? handshake.streamPath.trim()
-          : '/api/ai/writing-desk/deep-research';
-      const endpoint = new URL(streamPath, window.location.origin);
-      const resolvedJobId =
-        handshake && typeof handshake.jobId === 'string' && handshake.jobId.trim().length > 0
-          ? handshake.jobId.trim()
-          : jobId;
-      if (resolvedJobId && !endpoint.searchParams.has('jobId')) {
-        endpoint.searchParams.set('jobId', resolvedJobId);
-      }
-
-      const source = new EventSource(endpoint.toString(), { withCredentials: true });
-      researchSourceRef.current = source;
-
-      source.onmessage = (event) => {
-        let payload: DeepResearchStreamMessage | null = null;
-        try {
-          payload = JSON.parse(event.data) as DeepResearchStreamMessage;
-        } catch {
-          return;
-        }
-        if (!payload) return;
-
-        if (payload.type === 'status') {
-          updateCreditsFromStream(payload.remainingCredits);
-          const statusMessage: Record<string, string> = {
-            starting: 'Preparing the research brief…',
-            charged: 'Credits deducted. Research is starting…',
-            queued: 'Deep research queued…',
-            in_progress: 'Gathering evidence…',
-          };
-          const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
-          if (descriptor) appendResearchActivity(descriptor);
-        } else if (payload.type === 'delta') {
-          if (typeof payload.text === 'string') {
-            setResearchContent((prev) => prev + payload.text);
-          }
-        } else if (payload.type === 'event') {
-          const descriptor = describeResearchEvent(payload.event);
-          if (descriptor) appendResearchActivity(descriptor);
-        } else if (payload.type === 'complete') {
-          closeResearchStream();
-          setResearchStatus('completed');
-          setResearchContent(payload.content ?? '');
-          setResearchResponseId(payload.responseId ?? null);
-          updateCreditsFromStream(payload.remainingCredits);
-          appendResearchActivity('Deep research completed.');
-        } else if (payload.type === 'error') {
+        source.onerror = () => {
           closeResearchStream();
           setResearchStatus('error');
-          setResearchError(payload.message || 'Deep research failed. Please try again.');
-          updateCreditsFromStream(payload.remainingCredits);
-          appendResearchActivity('Deep research encountered an error.');
-        }
-      };
-
-      source.onerror = () => {
+          setResearchError('The research stream was interrupted. Please try again.');
+          appendResearchActivity('Connection lost during deep research.');
+          setPendingAutoResume(false);
+        };
+      } catch (err) {
         closeResearchStream();
         setResearchStatus('error');
-        setResearchError('The research stream was interrupted. Please try again.');
-        appendResearchActivity('Connection lost during deep research.');
-      };
-    } catch (err) {
-      closeResearchStream();
-      setResearchStatus('error');
-      const message = err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
-      setResearchError(message);
-      appendResearchActivity('Unable to start deep research.');
+        const message =
+          err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
+        setResearchError(message);
+        appendResearchActivity('Unable to start deep research.');
+        setPendingAutoResume(false);
+      }
+    },
+    [appendResearchActivity, closeResearchStream, jobId, researchStatus, updateCreditsFromStream],
+  );
+
+  useEffect(() => {
+    if (!pendingAutoResume) return;
+    if (!hasHandledInitialJob) return;
+    if (researchSourceRef.current) {
+      setPendingAutoResume(false);
+      return;
     }
-  }, [appendResearchActivity, closeResearchStream, jobId, researchStatus, updateCreditsFromStream]);
+    setPendingAutoResume(false);
+    void startDeepResearch({ resume: true });
+  }, [hasHandledInitialJob, pendingAutoResume, startDeepResearch]);
 
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {
@@ -432,7 +463,9 @@ export default function WritingDeskClient() {
       const existingResearch = job.researchContent ?? '';
       setResearchContent(existingResearch);
       setResearchResponseId(job.researchResponseId ?? null);
-      setResearchStatus(existingResearch.trim().length > 0 ? 'completed' : 'idle');
+      const nextStatus = job.researchStatus ?? (existingResearch.trim().length > 0 ? 'completed' : 'idle');
+      setResearchStatus(nextStatus === 'running' ? 'running' : nextStatus);
+      setPendingAutoResume(nextStatus === 'running');
       setResearchActivities([]);
       setResearchError(null);
       setError(null);
@@ -461,6 +494,7 @@ export default function WritingDeskClient() {
       responseId: job.responseId ?? null,
       researchContent: job.researchContent ?? null,
       researchResponseId: job.researchResponseId ?? null,
+      researchStatus: job.researchStatus ?? 'idle',
     }),
     [],
   );
@@ -478,6 +512,7 @@ export default function WritingDeskClient() {
       responseId: responseId ?? null,
       researchContent,
       researchResponseId: researchResponseId ?? null,
+      researchStatus,
     }),
     [
       followUpAnswers,
@@ -489,6 +524,7 @@ export default function WritingDeskClient() {
       phase,
       researchContent,
       researchResponseId,
+      researchStatus,
       responseId,
       stepIndex,
     ],

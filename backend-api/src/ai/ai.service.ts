@@ -4,9 +4,9 @@ import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
 import { UserCreditsService } from '../user-credits/user-credits.service';
 import { WritingDeskJobsService } from '../writing-desk-jobs/writing-desk-jobs.service';
-import { ActiveWritingDeskJobResource } from '../writing-desk-jobs/writing-desk-jobs.types';
+import { ActiveWritingDeskJobResource, WritingDeskResearchStatus } from '../writing-desk-jobs/writing-desk-jobs.types';
 import { UpsertActiveWritingDeskJobDto } from '../writing-desk-jobs/dto/upsert-active-writing-desk-job.dto';
-import { Observable } from 'rxjs';
+import { Observable, ReplaySubject, Subscription } from 'rxjs';
 import type { Stream } from 'openai/streaming';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 
@@ -18,10 +18,40 @@ type DeepResearchRequestExtras = {
   max_tool_calls?: number;
 };
 
+type DeepResearchStreamPayload =
+  | { type: 'status'; status: string; remainingCredits?: number | null }
+  | { type: 'delta'; text: string }
+  | { type: 'event'; event: Record<string, unknown> }
+  | {
+      type: 'complete';
+      content: string;
+      responseId: string | null;
+      remainingCredits: number | null;
+      usage?: Record<string, unknown> | null;
+    }
+  | { type: 'error'; message: string; remainingCredits?: number | null };
+
+type DeepResearchRunStatus = 'running' | 'completed' | 'error';
+
+interface DeepResearchRun {
+  key: string;
+  userId: string;
+  jobId: string;
+  subject: ReplaySubject<DeepResearchStreamPayload>;
+  status: DeepResearchRunStatus;
+  startedAt: number;
+  cleanupTimer: NodeJS.Timeout | null;
+  promise: Promise<void> | null;
+}
+
+const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
+const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private openaiClient: any | null = null;
+  private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
 
   constructor(
     private readonly config: ConfigService,
@@ -214,187 +244,354 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
 
     return new Observable<MessageEvent>((subscriber) => {
-      let deductionApplied = false;
+      let subscription: Subscription | null = null;
       let settled = false;
-      let remainingCredits: number | null = null;
-      let openAiStream: Stream<ResponseStreamEvent> | null = null;
-      let aggregatedText = '';
-      let baselineJob: ActiveWritingDeskJobResource | null = null;
 
-      const send = (payload: Record<string, unknown>) => {
-        if (subscriber.closed) return;
-        subscriber.next({ data: JSON.stringify(payload) });
-      };
-
-      const run = async () => {
+      const attach = async () => {
         try {
-          baselineJob = await this.resolveActiveWritingDeskJob(userId, options?.jobId ?? null);
-          const prompt = this.buildDeepResearchPrompt(baselineJob);
-
-          send({ type: 'status', status: 'starting' });
-
-          const { credits } = await this.userCredits.deductFromMine(userId, DEEP_RESEARCH_CREDIT_COST);
-          deductionApplied = true;
-          remainingCredits = credits;
-          send({ type: 'status', status: 'charged', remainingCredits: credits });
-
-          const apiKey = this.config.get<string>('OPENAI_API_KEY');
-          const model = this.config.get<string>('OPENAI_DEEP_RESEARCH_MODEL')?.trim() || 'o4-mini-deep-research';
-
-          if (!apiKey) {
-            const stub = this.buildDeepResearchStub(baselineJob);
-            for (const chunk of stub.chunks) {
-              send({ type: 'delta', text: chunk });
-              await this.delay(180);
-            }
-            await this.persistDeepResearchResult(userId, baselineJob, {
-              content: stub.content,
-              responseId: 'dev-stub',
-            });
-            settled = true;
-            send({
-              type: 'complete',
-              content: stub.content,
-              responseId: 'dev-stub',
-              remainingCredits,
+          const run = await this.beginDeepResearchRun(userId, options?.jobId ?? null);
+          subscription = run.subject.subscribe({
+            next: (payload) => {
+              if (!subscriber.closed) {
+                subscriber.next({ data: JSON.stringify(payload) });
+              }
+            },
+            error: (error) => {
+              if (!subscriber.closed) {
+                subscriber.error(error);
+              }
+            },
+            complete: () => {
+              settled = true;
+              if (!subscriber.closed) {
+                subscriber.complete();
+              }
+            },
+          });
+        } catch (error) {
+          settled = true;
+          if (error instanceof BadRequestException) {
+            subscriber.next({
+              data: JSON.stringify({ type: 'error', message: error.message }),
             });
             subscriber.complete();
             return;
           }
-
-          const client = await this.getOpenAiClient(apiKey);
-          const requestExtras = this.buildDeepResearchRequestExtras();
-
-          this.logger.log(
-            `[writing-desk research] start ${JSON.stringify({ userId, jobId: baselineJob.jobId, model, tools: requestExtras.tools?.length ?? 0 })}`,
-          );
-
-          openAiStream = (await client.responses.create({
-            model,
-            input: prompt,
-            background: true,
-            store: true,
-            stream: true,
-            ...requestExtras,
-          })) as Stream<ResponseStreamEvent>;
-
-          for await (const event of openAiStream) {
-            if (!event) continue;
-
-            switch (event.type) {
-              case 'response.created':
-                send({ type: 'status', status: 'queued' });
-                break;
-              case 'response.queued':
-                send({ type: 'status', status: 'queued' });
-                break;
-              case 'response.in_progress':
-                send({ type: 'status', status: 'in_progress' });
-                break;
-              case 'response.output_text.delta':
-                if (typeof event.delta === 'string' && event.delta.length > 0) {
-                  aggregatedText += event.delta;
-                  send({ type: 'delta', text: event.delta });
-                }
-                break;
-              case 'response.output_text.done':
-                if (!aggregatedText && typeof event.text === 'string') {
-                  aggregatedText = event.text;
-                }
-                break;
-              case 'response.web_search_call.searching':
-              case 'response.web_search_call.in_progress':
-              case 'response.web_search_call.completed':
-              case 'response.file_search_call.searching':
-              case 'response.file_search_call.in_progress':
-              case 'response.file_search_call.completed':
-              case 'response.code_interpreter_call.in_progress':
-              case 'response.code_interpreter_call.completed':
-              case 'response.reasoning.delta':
-              case 'response.reasoning.done':
-                send({ type: 'event', event });
-                break;
-              case 'response.failed':
-              case 'response.incomplete': {
-                const errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
-                throw new Error(errorMessage);
-              }
-              case 'response.completed': {
-                const finalResponse = event.response;
-                const responseId = (finalResponse as any)?.id ?? null;
-                const finalText = this.extractFirstText(finalResponse) ?? aggregatedText;
-                await this.persistDeepResearchResult(userId, baselineJob, {
-                  content: finalText,
-                  responseId,
-                });
-                settled = true;
-                send({
-                  type: 'complete',
-                  content: finalText,
-                  responseId,
-                  remainingCredits,
-                  usage: (finalResponse as any)?.usage ?? null,
-                });
-                subscriber.complete();
-                return;
-              }
-              default:
-                send({ type: 'event', event });
-            }
-          }
-
-          if (!settled) {
-            throw new Error('Deep research stream ended unexpectedly');
-          }
-        } catch (error) {
-          this.logger.error(
-            `[writing-desk research] failure ${
-              error instanceof Error ? error.message : 'unknown'
-            }`,
-          );
-
-          if (deductionApplied && !settled) {
-            await this.refundCredits(userId, DEEP_RESEARCH_CREDIT_COST);
-            remainingCredits =
-              typeof remainingCredits === 'number'
-                ? Math.round((remainingCredits + DEEP_RESEARCH_CREDIT_COST) * 100) / 100
-                : null;
-          }
-
-          settled = true;
-
-          const message =
-            error instanceof BadRequestException
-              ? error.message
-              : 'Deep research failed. Please try again in a few moments.';
-
-          send({
-            type: 'error',
-            message,
-            remainingCredits,
-          });
-          subscriber.complete();
+          subscriber.error(error);
         }
       };
 
-      void run();
+      void attach();
 
       return () => {
-        if (openAiStream?.controller) {
-          try {
-            openAiStream.controller.abort();
-          } catch (err) {
-            this.logger.warn(
-              `Failed to abort deep research stream: ${(err as Error)?.message ?? 'unknown error'}`,
-            );
-          }
-        }
-
-        if (deductionApplied && !settled) {
-          void this.refundCredits(userId, DEEP_RESEARCH_CREDIT_COST);
-        }
+        subscription?.unsubscribe();
+        subscription = null;
+        settled = true;
       };
     });
+  }
+
+  async ensureDeepResearchRun(
+    userId: string,
+    requestedJobId: string | null,
+    options?: { restart?: boolean; createIfMissing?: boolean },
+  ): Promise<{ jobId: string; status: DeepResearchRunStatus }> {
+    const run = await this.beginDeepResearchRun(userId, requestedJobId, options);
+    return { jobId: run.jobId, status: run.status };
+  }
+
+  private async beginDeepResearchRun(
+    userId: string,
+    requestedJobId: string | null,
+    options?: { restart?: boolean; createIfMissing?: boolean },
+  ): Promise<DeepResearchRun> {
+    const baselineJob = await this.resolveActiveWritingDeskJob(userId, requestedJobId);
+    const key = this.getDeepResearchRunKey(userId, baselineJob.jobId);
+    const existing = this.deepResearchRuns.get(key);
+
+    if (existing) {
+      if (options?.restart) {
+        if (existing.status === 'running') {
+          throw new BadRequestException('Deep research is already running. Please wait for it to finish.');
+        }
+        if (existing.cleanupTimer) {
+          clearTimeout(existing.cleanupTimer);
+        }
+        existing.subject.complete();
+        this.deepResearchRuns.delete(key);
+      } else {
+        return existing;
+      }
+    } else if (options?.createIfMissing === false) {
+      throw new BadRequestException('We could not resume deep research. Please start a new run.');
+    }
+
+    const subject = new ReplaySubject<DeepResearchStreamPayload>(DEEP_RESEARCH_RUN_BUFFER_SIZE);
+    const run: DeepResearchRun = {
+      key,
+      userId,
+      jobId: baselineJob.jobId,
+      subject,
+      status: 'running',
+      startedAt: Date.now(),
+      cleanupTimer: null,
+      promise: null,
+    };
+
+    this.deepResearchRuns.set(key, run);
+
+    run.promise = this.executeDeepResearchRun({ run, userId, baselineJob, subject }).catch((error) => {
+      this.logger.error(`Deep research run encountered an unhandled error: ${(error as Error)?.message ?? error}`);
+      subject.error(error);
+    });
+
+    return run;
+  }
+
+  private async executeDeepResearchRun(params: {
+    run: DeepResearchRun;
+    userId: string;
+    baselineJob: ActiveWritingDeskJobResource;
+    subject: ReplaySubject<DeepResearchStreamPayload>;
+  }) {
+    const { run, userId, baselineJob, subject } = params;
+    let deductionApplied = false;
+    let remainingCredits: number | null = null;
+    let aggregatedText = '';
+    let settled = false;
+    let openAiStream: Stream<ResponseStreamEvent> | null = null;
+
+    const send = (payload: DeepResearchStreamPayload) => {
+      subject.next(payload);
+    };
+
+    const pushDelta = (next: string | null | undefined) => {
+      if (typeof next !== 'string') return;
+      if (next.length <= aggregatedText.length) {
+        aggregatedText = next;
+        return;
+      }
+      const incremental = next.slice(aggregatedText.length);
+      aggregatedText = next;
+      if (incremental.length > 0) {
+        send({ type: 'delta', text: incremental });
+      }
+    };
+
+    try {
+      await this.persistDeepResearchStatus(userId, baselineJob, 'running');
+    } catch (error) {
+      this.logger.warn(
+        `Failed to persist deep research status for user ${userId}: ${(error as Error)?.message ?? error}`,
+      );
+    }
+
+    send({ type: 'status', status: 'starting' });
+
+    try {
+      const { credits } = await this.userCredits.deductFromMine(userId, DEEP_RESEARCH_CREDIT_COST);
+      deductionApplied = true;
+      remainingCredits = credits;
+      send({ type: 'status', status: 'charged', remainingCredits: credits });
+
+      const apiKey = this.config.get<string>('OPENAI_API_KEY');
+      const model = this.config.get<string>('OPENAI_DEEP_RESEARCH_MODEL')?.trim() || 'o4-mini-deep-research';
+
+      if (!apiKey) {
+        const stub = this.buildDeepResearchStub(baselineJob);
+        for (const chunk of stub.chunks) {
+          send({ type: 'delta', text: chunk });
+          await this.delay(180);
+        }
+        await this.persistDeepResearchResult(userId, baselineJob, {
+          content: stub.content,
+          responseId: 'dev-stub',
+          status: 'completed',
+        });
+        run.status = 'completed';
+        settled = true;
+        send({
+          type: 'complete',
+          content: stub.content,
+          responseId: 'dev-stub',
+          remainingCredits,
+        });
+        subject.complete();
+        return;
+      }
+
+      const prompt = this.buildDeepResearchPrompt(baselineJob);
+      const client = await this.getOpenAiClient(apiKey);
+      const requestExtras = this.buildDeepResearchRequestExtras();
+
+      this.logger.log(
+        `[writing-desk research] start ${JSON.stringify({
+          userId,
+          jobId: baselineJob.jobId,
+          model,
+          tools: requestExtras.tools?.length ?? 0,
+        })}`,
+      );
+
+      openAiStream = (await client.responses.create({
+        model,
+        input: prompt,
+        background: true,
+        store: true,
+        stream: true,
+        ...requestExtras,
+      })) as Stream<ResponseStreamEvent>;
+
+      for await (const event of openAiStream) {
+        if (!event) continue;
+
+        switch (event.type) {
+          case 'response.created':
+            send({ type: 'status', status: 'queued' });
+            break;
+          case 'response.queued':
+            send({ type: 'status', status: 'queued' });
+            break;
+          case 'response.in_progress':
+            send({ type: 'status', status: 'in_progress' });
+            break;
+          case 'response.output_text.delta': {
+            const snapshot = (event as any)?.snapshot;
+            if (typeof snapshot === 'string' && snapshot.length > aggregatedText.length) {
+              pushDelta(snapshot);
+              break;
+            }
+            if (typeof event.delta === 'string' && event.delta.length > 0) {
+              pushDelta(aggregatedText + event.delta);
+            }
+            break;
+          }
+          case 'response.output_text.done':
+            if (typeof event.text === 'string' && event.text.length > 0) {
+              pushDelta(event.text);
+            }
+            break;
+          case 'response.web_search_call.searching':
+          case 'response.web_search_call.in_progress':
+          case 'response.web_search_call.completed':
+          case 'response.file_search_call.searching':
+          case 'response.file_search_call.in_progress':
+          case 'response.file_search_call.completed':
+          case 'response.code_interpreter_call.in_progress':
+          case 'response.code_interpreter_call.completed':
+          case 'response.reasoning.delta':
+          case 'response.reasoning.done':
+            send({ type: 'event', event: this.normaliseStreamEvent(event) });
+            break;
+          case 'response.failed':
+          case 'response.incomplete': {
+            const errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
+            throw new Error(errorMessage);
+          }
+          case 'response.completed': {
+            const finalResponse = event.response;
+            const responseId = (finalResponse as any)?.id ?? null;
+            const finalText = this.extractFirstText(finalResponse) ?? aggregatedText;
+            await this.persistDeepResearchResult(userId, baselineJob, {
+              content: finalText,
+              responseId,
+              status: 'completed',
+            });
+            run.status = 'completed';
+            settled = true;
+            send({
+              type: 'complete',
+              content: finalText,
+              responseId,
+              remainingCredits,
+              usage: (finalResponse as any)?.usage ?? null,
+            });
+            subject.complete();
+            return;
+          }
+          default:
+            send({ type: 'event', event: this.normaliseStreamEvent(event) });
+        }
+      }
+
+      if (!settled) {
+        throw new Error('Deep research stream ended unexpectedly');
+      }
+    } catch (error) {
+      this.logger.error(
+        `[writing-desk research] failure ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+
+      if (deductionApplied && !settled) {
+        await this.refundCredits(userId, DEEP_RESEARCH_CREDIT_COST);
+        remainingCredits =
+          typeof remainingCredits === 'number'
+            ? Math.round((remainingCredits + DEEP_RESEARCH_CREDIT_COST) * 100) / 100
+            : null;
+      }
+
+      run.status = 'error';
+
+      try {
+        await this.persistDeepResearchStatus(userId, baselineJob, 'error');
+      } catch (persistError) {
+        this.logger.warn(
+          `Failed to persist deep research error state for user ${userId}: ${(persistError as Error)?.message ?? persistError}`,
+        );
+      }
+
+      const message =
+        error instanceof BadRequestException
+          ? error.message
+          : 'Deep research failed. Please try again in a few moments.';
+
+      send({
+        type: 'error',
+        message,
+        remainingCredits,
+      });
+      subject.complete();
+    } finally {
+      if (!settled && openAiStream?.controller) {
+        try {
+          openAiStream.controller.abort();
+        } catch (err) {
+          this.logger.warn(
+            `Failed to abort deep research stream: ${(err as Error)?.message ?? 'unknown error'}`,
+          );
+        }
+      }
+
+      this.scheduleRunCleanup(run);
+    }
+  }
+
+  private getDeepResearchRunKey(userId: string, jobId: string): string {
+    return `${userId}::${jobId}`;
+  }
+
+  private scheduleRunCleanup(run: DeepResearchRun) {
+    if (run.cleanupTimer) {
+      clearTimeout(run.cleanupTimer);
+    }
+    const timer = setTimeout(() => {
+      this.deepResearchRuns.delete(run.key);
+    }, DEEP_RESEARCH_RUN_TTL_MS);
+    if (typeof (timer as any)?.unref === 'function') {
+      (timer as any).unref();
+    }
+    run.cleanupTimer = timer as NodeJS.Timeout;
+  }
+
+  private async persistDeepResearchStatus(
+    userId: string,
+    fallback: ActiveWritingDeskJobResource,
+    status: WritingDeskResearchStatus,
+  ) {
+    const latest = await this.writingDeskJobs.getActiveJobForUser(userId);
+    const job = latest ?? fallback;
+    const payload = this.buildResearchUpsertPayload(job, { status });
+    await this.writingDeskJobs.upsertActiveJob(userId, payload);
   }
 
   private async resolveActiveWritingDeskJob(
@@ -510,7 +707,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         .get<string>('OPENAI_DEEP_RESEARCH_WEB_SEARCH_CONTEXT_SIZE')
         ?.trim();
       if (contextSize) {
-        tool.context_size = contextSize;
+        const normalisedSize = contextSize.toLowerCase();
+        if (['low', 'medium', 'high'].includes(normalisedSize)) {
+          tool.search_context_size = normalisedSize;
+        }
       }
       tools.push(tool);
     }
@@ -567,7 +767,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
   private async persistDeepResearchResult(
     userId: string,
     fallback: ActiveWritingDeskJobResource,
-    result: { content: string | null | undefined; responseId: string | null | undefined },
+    result: {
+      content?: string | null | undefined;
+      responseId?: string | null | undefined;
+      status?: WritingDeskResearchStatus | null | undefined;
+    },
   ) {
     const latest = await this.writingDeskJobs.getActiveJobForUser(userId);
     const job = latest ?? fallback;
@@ -577,7 +781,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
   private buildResearchUpsertPayload(
     job: ActiveWritingDeskJobResource,
-    result: { content: string | null | undefined; responseId: string | null | undefined },
+    result: {
+      content?: string | null | undefined;
+      responseId?: string | null | undefined;
+      status?: WritingDeskResearchStatus | null | undefined;
+    },
   ): UpsertActiveWritingDeskJobDto {
     const payload: UpsertActiveWritingDeskJobDto = {
       jobId: job.jobId,
@@ -594,16 +802,33 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       followUpAnswers: Array.isArray(job.followUpAnswers) ? [...job.followUpAnswers] : [],
       notes: job.notes ?? undefined,
       responseId: job.responseId ?? undefined,
+      researchStatus: job.researchStatus ?? 'idle',
     };
 
-    const researchContent = this.normaliseResearchContent(result.content);
-    if (researchContent !== null) {
-      payload.researchContent = researchContent;
+    const existingContent = this.normaliseResearchContent(job.researchContent ?? null);
+    if (existingContent !== null) {
+      payload.researchContent = existingContent;
+    }
+
+    const nextContent = this.normaliseResearchContent(result.content ?? null);
+    if (nextContent !== null) {
+      payload.researchContent = nextContent;
+    } else if (!payload.researchContent) {
+      payload.researchContent = undefined;
+    }
+
+    const existingResponseId = job.researchResponseId?.toString?.().trim?.();
+    if (existingResponseId) {
+      payload.researchResponseId = existingResponseId;
     }
 
     const researchResponseId = result.responseId?.toString?.().trim?.();
     if (researchResponseId) {
       payload.researchResponseId = researchResponseId;
+    }
+
+    if (result.status) {
+      payload.researchStatus = result.status;
     }
 
     return payload;
@@ -613,6 +838,28 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     if (typeof value !== 'string') return null;
     const normalised = value.replace(/\r\n/g, '\n');
     return normalised.trim().length > 0 ? normalised : null;
+  }
+
+  private normaliseStreamEvent(event: ResponseStreamEvent): Record<string, unknown> {
+    if (!event || typeof event !== 'object') {
+      return { value: event ?? null };
+    }
+
+    try {
+      return JSON.parse(JSON.stringify(event)) as Record<string, unknown>;
+    } catch (error) {
+      const plain: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(event as unknown as Record<string, unknown>)) {
+        plain[key] = value as unknown;
+      }
+      if (Object.prototype.hasOwnProperty.call(event, 'type') && !plain.type) {
+        plain.type = (event as any).type;
+      }
+      if (Object.keys(plain).length === 0) {
+        plain.serialised = String(event);
+      }
+      return plain;
+    }
   }
 
   private async delay(ms: number) {

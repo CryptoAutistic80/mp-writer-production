@@ -5,20 +5,26 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   Post,
   Put,
   Req,
   UseGuards,
+  forwardRef,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { WritingDeskJobsService } from './writing-desk-jobs.service';
 import { UpsertActiveWritingDeskJobDto } from './dto/upsert-active-writing-desk-job.dto';
 import { StartDeepResearchDto } from './dto/start-deep-research.dto';
+import { AiService } from '../ai/ai.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('writing-desk/jobs/active')
 export class WritingDeskJobsController {
-  constructor(private readonly jobs: WritingDeskJobsService) {}
+  constructor(
+    private readonly jobs: WritingDeskJobsService,
+    @Inject(forwardRef(() => AiService)) private readonly ai: AiService,
+  ) {}
 
   @Get()
   async getActiveJob(@Req() req: any) {
@@ -45,6 +51,13 @@ export class WritingDeskJobsController {
 
     if (body?.jobId && body.jobId !== activeJob.jobId) {
       throw new ConflictException('Your saved letter changed. Refresh the page before running deep research again.');
+    }
+
+    const resume = body?.resume === true;
+    if (resume) {
+      await this.ai.ensureDeepResearchRun(req.user.id, activeJob.jobId, { createIfMissing: false });
+    } else {
+      await this.ai.ensureDeepResearchRun(req.user.id, activeJob.jobId, { restart: true });
     }
 
     const params = new URLSearchParams();

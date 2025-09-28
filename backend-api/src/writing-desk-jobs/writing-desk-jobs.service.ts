@@ -7,6 +7,8 @@ import {
   WritingDeskJobSnapshot,
   WritingDeskJobFormSnapshot,
   WritingDeskJobRecord,
+  WRITING_DESK_RESEARCH_STATUSES,
+  WritingDeskResearchStatus,
 } from './writing-desk-jobs.types';
 import { EncryptionService } from '../crypto/encryption.service';
 
@@ -43,6 +45,7 @@ export class WritingDeskJobsService {
       responseId: sanitized.responseId,
       researchContent: sanitized.researchContent,
       researchResponseId: sanitized.researchResponseId,
+      researchStatus: sanitized.researchStatus,
     };
 
     const saved = await this.repository.upsertActiveJob(userId, payload);
@@ -103,6 +106,11 @@ export class WritingDeskJobsService {
       ? Math.min(Math.floor(input.followUpIndex), Math.max(maxFollowUps - 1, 0))
       : 0;
 
+    const rawStatus = typeof input.researchStatus === 'string' ? input.researchStatus.trim() : '';
+    const researchStatus = (WRITING_DESK_RESEARCH_STATUSES as readonly string[]).includes(rawStatus)
+      ? (rawStatus as WritingDeskResearchStatus)
+      : 'idle';
+
     return {
       phase: input.phase,
       stepIndex,
@@ -114,6 +122,7 @@ export class WritingDeskJobsService {
       responseId: trimNullable(input.responseId),
       researchContent: normaliseMultiline(input.researchContent),
       researchResponseId: trimNullable(input.researchResponseId),
+      researchStatus,
     };
   }
 
@@ -137,6 +146,7 @@ export class WritingDeskJobsService {
       responseId: record.responseId ?? null,
       researchContent: record.researchContent ?? null,
       researchResponseId: record.researchResponseId ?? null,
+      researchStatus: (record as any)?.researchStatus ?? 'idle',
       createdAt,
       updatedAt,
     };
@@ -200,6 +210,7 @@ export class WritingDeskJobsService {
       responseId: snapshot.responseId ?? null,
       researchContent: snapshot.researchContent ?? null,
       researchResponseId: snapshot.researchResponseId ?? null,
+      researchStatus: snapshot.researchStatus,
       createdAt: snapshot.createdAt?.toISOString?.() ?? new Date().toISOString(),
       updatedAt: snapshot.updatedAt?.toISOString?.() ?? new Date().toISOString(),
     };

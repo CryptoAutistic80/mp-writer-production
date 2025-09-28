@@ -10,7 +10,12 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { WRITING_DESK_JOB_PHASES, WritingDeskJobPhase } from '../writing-desk-jobs.types';
+import {
+  WRITING_DESK_JOB_PHASES,
+  WRITING_DESK_RESEARCH_STATUSES,
+  WritingDeskJobPhase,
+  WritingDeskResearchStatus,
+} from '../writing-desk-jobs.types';
 
 class WritingDeskJobFormDto {
   @IsString()
@@ -74,4 +79,8 @@ export class UpsertActiveWritingDeskJobDto {
   @IsString()
   @IsNotEmpty()
   researchResponseId?: string;
+
+  @IsOptional()
+  @IsEnum(WRITING_DESK_RESEARCH_STATUSES)
+  researchStatus?: WritingDeskResearchStatus;
 }

@@ -2,6 +2,10 @@ export const WRITING_DESK_JOB_PHASES = ['initial', 'generating', 'followup', 'su
 
 export type WritingDeskJobPhase = (typeof WRITING_DESK_JOB_PHASES)[number];
 
+export const WRITING_DESK_RESEARCH_STATUSES = ['idle', 'running', 'completed', 'error'] as const;
+
+export type WritingDeskResearchStatus = (typeof WRITING_DESK_RESEARCH_STATUSES)[number];
+
 export interface WritingDeskJobFormSnapshot {
   issueDetail: string;
   affectedDetail: string;
@@ -21,6 +25,7 @@ export interface ActiveWritingDeskJob {
   responseId: string | null;
   researchContent: string | null;
   researchResponseId: string | null;
+  researchStatus: WritingDeskResearchStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -37,4 +42,5 @@ export interface UpsertActiveWritingDeskJobPayload {
   responseId?: string | null;
   researchContent?: string | null;
   researchResponseId?: string | null;
+  researchStatus?: WritingDeskResearchStatus;
 }

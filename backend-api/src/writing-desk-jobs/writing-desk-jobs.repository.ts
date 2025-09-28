@@ -30,6 +30,7 @@ export class WritingDeskJobsRepository {
       responseId: string | null;
       researchContent: string | null;
       researchResponseId: string | null;
+      researchStatus: string;
     },
   ): Promise<WritingDeskJobRecord> {
     const doc = await this.model
