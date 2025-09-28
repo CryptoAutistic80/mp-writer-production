@@ -834,6 +834,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
   ): string {
     const sections: string[] = [
       'Research the issue described below and gather supporting facts, quotes, and statistics from credible, up-to-date sources.',
+      "Before analysing the constituent's issue, confirm today's date and summarise the current composition of the UK Parliament, including who holds power, major opposition parties, and any recent leadership changes, citing authoritative sources.",
       'Provide a structured evidence report with inline citations for every key fact. Cite URLs or publication titles for each data point.',
       '',
       `Constituent description: ${this.normalisePromptField(job.form?.issueDescription, 'Not provided.')}`,
