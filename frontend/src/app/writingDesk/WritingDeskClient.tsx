@@ -1020,7 +1020,7 @@ export default function WritingDeskClient() {
           <div className="section-header">
             <div>
               <h2 className="section-title">Tell us about the issue</h2>
-              <p className="section-sub">We’ll use your answers to draft clarifying questions before the deep research step.</p>
+              <p className="section-sub">We’ll use your answers to draft clarifying questions before the fact-finding research step.</p>
             </div>
             <div className="header-actions">
               <span className="badge">Step {Math.min(currentStepNumber, totalSteps)} of {totalSteps}</span>
@@ -1222,7 +1222,7 @@ export default function WritingDeskClient() {
         {phase === 'summary' && (
           <div className="result" aria-live="polite">
             <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
-            <p className="section-sub">Thanks for all the information. When you’re ready, start the deep research and I’ll dig into the evidence.</p>
+            <p className="section-sub">Thanks for all the information. When you’re ready, click the research button and I’ll dig into the evidence.</p>
 
             {serverError && (
               <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
@@ -1231,11 +1231,10 @@ export default function WritingDeskClient() {
             )}
 
             <div className="card" style={{ padding: 16, marginTop: 16 }}>
-              <h4 className="section-title" style={{ fontSize: '1rem' }}>Deep research evidence pack</h4>
+              <h4 className="section-title" style={{ fontSize: '1rem' }}>Research evidence</h4>
               {!hasResearchContent && researchStatus !== 'running' && (
                 <p style={{ marginTop: 8 }}>
-                  Run deep research to gather cited evidence that supports your letter. We&apos;ll provide a structured
-                  summary with sources you can reference directly.
+                  Run research to gather cited evidence that supports your letter. We&apos;ll use the research to craft the perfect impactful letter.
                 </p>
               )}
               {researchStatus === 'error' && researchError && (
@@ -1264,7 +1263,7 @@ export default function WritingDeskClient() {
               {researchStatus === 'running' && (
                 <div style={{ marginTop: 12 }}>
                   <p style={{ color: '#2563eb', fontStyle: 'italic' }}>
-                    Gathering evidence — this may take a couple of minutes.
+                    Gathering evidence — this may take several minutes, please be patient and have a cup of tea.
                   </p>
                 </div>
               )}
