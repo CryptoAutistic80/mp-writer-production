@@ -76,22 +76,11 @@ describe('WritingDeskClient', () => {
   };
 
   const answerInitialQuestions = async () => {
-    const steps = [
-      { label: 'Describe the issue in detail', answer: 'Issue description' },
-      { label: 'Tell me who is affected and how', answer: 'Everyone is affected' },
-      { label: 'Other supporting background', answer: 'Background context' },
-      { label: 'What do you want to happen?', answer: 'Desired outcome' },
-    ];
-
-    for (let idx = 0; idx < steps.length; idx += 1) {
-      const step = steps[idx];
-      const textarea = await screen.findByLabelText(step.label);
-      fireEvent.change(textarea, { target: { value: step.answer } });
-      const buttonLabel = idx === steps.length - 1 ? 'Generate follow-up questions' : 'Next';
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: buttonLabel }));
-      });
-    }
+    const textarea = await screen.findByLabelText('Describe your issue in as much detail as you can');
+    fireEvent.change(textarea, { target: { value: 'Issue description' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Generate follow-up questions' }));
+    });
   };
 
   const answerFollowUpQuestions = async (answers: string[]) => {
@@ -217,7 +206,7 @@ describe('WritingDeskClient', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Yes, edit intake' }));
     });
 
-    await screen.findByLabelText('Describe the issue in detail');
+    await screen.findByLabelText('Describe your issue in as much detail as you can');
 
     await answerInitialQuestions();
 

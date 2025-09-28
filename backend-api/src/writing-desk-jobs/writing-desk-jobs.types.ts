@@ -7,10 +7,7 @@ export const WRITING_DESK_RESEARCH_STATUSES = ['idle', 'running', 'completed', '
 export type WritingDeskResearchStatus = (typeof WRITING_DESK_RESEARCH_STATUSES)[number];
 
 export interface WritingDeskJobFormSnapshot {
-  issueDetail: string;
-  affectedDetail: string;
-  backgroundDetail: string;
-  desiredOutcome: string;
+  issueDescription: string;
 }
 
 export interface WritingDeskJobSnapshot {
@@ -40,7 +37,12 @@ export interface WritingDeskJobRecord {
   followUpQuestions: string[];
   formCiphertext?: string;
   followUpAnswersCiphertext?: string;
-  form?: WritingDeskJobFormSnapshot;
+  form?: WritingDeskJobFormSnapshot & {
+    issueDetail?: string;
+    affectedDetail?: string;
+    backgroundDetail?: string;
+    desiredOutcome?: string;
+  };
   followUpAnswers?: string[];
   notes: string | null;
   responseId: string | null;

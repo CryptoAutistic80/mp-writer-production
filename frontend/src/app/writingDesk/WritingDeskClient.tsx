@@ -8,7 +8,7 @@ import StartOverConfirmModal from '../../features/writing-desk/components/StartO
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import { ActiveWritingDeskJob, UpsertActiveWritingDeskJobPayload } from '../../features/writing-desk/types';
 
-type StepKey = 'issueDetail' | 'affectedDetail' | 'backgroundDetail' | 'desiredOutcome';
+type StepKey = 'issueDescription';
 
 type FormState = Record<StepKey, string>;
 
@@ -19,36 +19,17 @@ const steps: Array<{
   placeholder: string;
 }> = [
   {
-    key: 'issueDetail',
-    title: 'Describe the issue in detail',
-    description: 'Explain the situation as clearly as you can so the letter can state the facts.',
-    placeholder: 'E.g. The heating in my flat has been broken since December and…',
-  },
-  {
-    key: 'affectedDetail',
-    title: 'Tell me who is affected and how',
-    description: 'Share who is impacted – you, your family, neighbours, or the wider community.',
-    placeholder: 'E.g. My young children are getting ill from the cold and elderly neighbours are…',
-  },
-  {
-    key: 'backgroundDetail',
-    title: 'Other supporting background',
-    description: 'Mention any history, evidence, or previous actions taken so far.',
-    placeholder: 'E.g. I have reported this to the council twice (ref 12345) and attached photos…',
-  },
-  {
-    key: 'desiredOutcome',
-    title: 'What do you want to happen?',
-    description: 'State the outcome you hope to achieve so the MP knows what to push for.',
-    placeholder: 'E.g. I want the housing association to replace the boiler within two weeks…',
+    key: 'issueDescription',
+    title: 'Describe your issue in as much detail as you can',
+    description:
+      'Share the full story, including who is affected, what has happened so far, and what you hope your MP can help achieve.',
+    placeholder:
+      'E.g. The heating in my flat has been broken since December. My children are getting sick, I have reported it twice, and I need the housing association to replace the boiler within two weeks…',
   },
 ];
 
 const initialFormState: FormState = {
-  issueDetail: '',
-  affectedDetail: '',
-  backgroundDetail: '',
-  desiredOutcome: '',
+  issueDescription: '',
 };
 
 type ResearchStatus = 'idle' | 'running' | 'completed' | 'error';
@@ -553,10 +534,7 @@ export default function WritingDeskClient() {
     (job: ActiveWritingDeskJob) => {
       closeResearchStream();
       setForm({
-        issueDetail: job.form?.issueDetail ?? '',
-        affectedDetail: job.form?.affectedDetail ?? '',
-        backgroundDetail: job.form?.backgroundDetail ?? '',
-        desiredOutcome: job.form?.desiredOutcome ?? '',
+        issueDescription: job.form?.issueDescription ?? '',
       });
       setPhase(job.phase);
       setStepIndex(Math.max(0, job.stepIndex ?? 0));
@@ -593,10 +571,7 @@ export default function WritingDeskClient() {
       stepIndex: job.stepIndex,
       followUpIndex: job.followUpIndex,
       form: {
-        issueDetail: job.form?.issueDetail ?? '',
-        affectedDetail: job.form?.affectedDetail ?? '',
-        backgroundDetail: job.form?.backgroundDetail ?? '',
-        desiredOutcome: job.form?.desiredOutcome ?? '',
+        issueDescription: job.form?.issueDescription ?? '',
       },
       followUpQuestions: Array.isArray(job.followUpQuestions) ? [...job.followUpQuestions] : [],
       followUpAnswers: Array.isArray(job.followUpAnswers) ? [...job.followUpAnswers] : [],
@@ -753,10 +728,7 @@ export default function WritingDeskClient() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          issueDetail: form.issueDetail.trim(),
-          affectedDetail: form.affectedDetail.trim(),
-          backgroundDetail: form.backgroundDetail.trim(),
-          desiredOutcome: form.desiredOutcome.trim(),
+          issueDescription: form.issueDescription.trim(),
           followUpQuestions: questions,
           followUpAnswers: answers.map((answer) => answer.trim()),
           notes: (context?.notes ?? notes) ?? undefined,
@@ -843,10 +815,7 @@ export default function WritingDeskClient() {
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({
-            issueDetail: form.issueDetail.trim(),
-            affectedDetail: form.affectedDetail.trim(),
-            backgroundDetail: form.backgroundDetail.trim(),
-            desiredOutcome: form.desiredOutcome.trim(),
+            issueDescription: form.issueDescription.trim(),
           }),
         });
         if (!res.ok) {
@@ -1004,7 +973,7 @@ export default function WritingDeskClient() {
   const handleConfirmEditIntake = useCallback(() => {
     resetFollowUps();
     setEditIntakeModalOpen(false);
-    handleEditInitialStep('issueDetail');
+    handleEditInitialStep('issueDescription');
   }, [handleEditInitialStep, resetFollowUps]);
 
   const handleCancelEditIntake = useCallback(() => {
@@ -1354,7 +1323,7 @@ export default function WritingDeskClient() {
                 onClick={() => setShowSummaryDetails((prev) => !prev)}
                 disabled={loading}
               >
-                {showSummaryDetails ? 'Hide previous steps' : 'Show previous steps'}
+                {showSummaryDetails ? 'Hide intake details' : 'Show intake details'}
               </button>
               {responseId && !showSummaryDetails && (
                 <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</span>
