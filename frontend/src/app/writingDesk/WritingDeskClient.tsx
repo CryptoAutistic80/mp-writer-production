@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
@@ -1215,20 +1216,23 @@ export default function WritingDeskClient() {
               {(hasResearchContent || researchStatus === 'running') && (
                 <div style={{ marginTop: 12 }}>
                   <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Research notes</h5>
-                  <pre
-                    style={{
-                      whiteSpace: 'pre-wrap',
-                      backgroundColor: '#f9fafb',
-                      padding: 12,
-                      borderRadius: 8,
-                      maxHeight: 320,
-                      overflowY: 'auto',
-                      fontFamily: 'inherit',
-                      fontSize: '0.95rem',
-                    }}
-                  >
-                    {researchContent || 'Collecting evidence…'}
-                  </pre>
+                  <div className="research-notes">
+                    {researchContent ? (
+                      <ReactMarkdown
+                        linkTarget="_blank"
+                        skipHtml
+                        components={{
+                          a: ({ node, ...props }) => (
+                            <a {...props} target="_blank" rel="noreferrer noopener" />
+                          ),
+                        }}
+                      >
+                        {researchContent}
+                      </ReactMarkdown>
+                    ) : (
+                      <p className="research-notes__placeholder">Collecting evidence…</p>
+                    )}
+                  </div>
                 </div>
               )}
               {researchResponseId && (
