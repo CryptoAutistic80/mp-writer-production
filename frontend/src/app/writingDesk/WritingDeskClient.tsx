@@ -65,6 +65,11 @@ type DeepResearchStreamMessage =
   | { type: 'event'; event: { type?: string; [key: string]: any } }
   | { type: 'error'; message: string; remainingCredits?: number | null };
 
+type DeepResearchHandshakeResponse = {
+  jobId?: string | null;
+  streamPath?: string | null;
+};
+
 const MAX_RESEARCH_ACTIVITY_ITEMS = 5;
 
 const describeResearchEvent = (event: { type?: string; [key: string]: any }): string | null => {
@@ -286,7 +291,7 @@ export default function WritingDeskClient() {
     resetFollowUps();
   }, [resetFollowUps]);
 
-  const startDeepResearch = useCallback(() => {
+  const startDeepResearch = useCallback(async () => {
     if (researchStatus === 'running') return;
     closeResearchStream();
     setResearchStatus('running');
@@ -296,10 +301,54 @@ export default function WritingDeskClient() {
     setResearchActivities([]);
 
     try {
-      const endpoint = new URL('/api/ai/writing-desk/deep-research', window.location.origin);
-      if (jobId) {
-        endpoint.searchParams.set('jobId', jobId);
+      const payload = jobId ? { jobId } : {};
+      const response = await fetch('/api/writing-desk/jobs/active/research/start', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const rawBody = await response.text();
+      if (!response.ok) {
+        let message = 'We could not start deep research. Please try again.';
+        if (rawBody) {
+          try {
+            const parsed = JSON.parse(rawBody) as { message?: string };
+            if (parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
+              message = parsed.message.trim();
+            }
+          } catch {
+            const trimmed = rawBody.trim();
+            if (trimmed.length > 0) {
+              message = trimmed;
+            }
+          }
+        }
+        throw new Error(message);
       }
+
+      let handshake: DeepResearchHandshakeResponse | null = null;
+      if (rawBody) {
+        try {
+          handshake = JSON.parse(rawBody) as DeepResearchHandshakeResponse;
+        } catch {
+          // If parsing fails, fall back to defaults below.
+        }
+      }
+
+      const streamPath =
+        handshake && typeof handshake.streamPath === 'string' && handshake.streamPath.trim().length > 0
+          ? handshake.streamPath.trim()
+          : '/api/ai/writing-desk/deep-research';
+      const endpoint = new URL(streamPath, window.location.origin);
+      const resolvedJobId =
+        handshake && typeof handshake.jobId === 'string' && handshake.jobId.trim().length > 0
+          ? handshake.jobId.trim()
+          : jobId;
+      if (resolvedJobId && !endpoint.searchParams.has('jobId')) {
+        endpoint.searchParams.set('jobId', resolvedJobId);
+      }
+
       const source = new EventSource(endpoint.toString(), { withCredentials: true });
       researchSourceRef.current = source;
 
@@ -351,10 +400,11 @@ export default function WritingDeskClient() {
         setResearchError('The research stream was interrupted. Please try again.');
         appendResearchActivity('Connection lost during deep research.');
       };
-    } catch {
+    } catch (err) {
       closeResearchStream();
       setResearchStatus('error');
-      setResearchError('We could not start deep research. Please try again.');
+      const message = err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
+      setResearchError(message);
       appendResearchActivity('Unable to start deep research.');
     }
   }, [appendResearchActivity, closeResearchStream, jobId, researchStatus, updateCreditsFromStream]);

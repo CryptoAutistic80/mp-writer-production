@@ -13,6 +13,11 @@ import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 const FOLLOW_UP_CREDIT_COST = 0.1;
 const DEEP_RESEARCH_CREDIT_COST = 0.7;
 
+type DeepResearchRequestExtras = {
+  tools?: Array<Record<string, unknown>>;
+  max_tool_calls?: number;
+};
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -492,7 +497,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return `${trimmed.slice(0, 157)}…`;
   }
 
-  private buildDeepResearchRequestExtras(): Record<string, unknown> {
+  private buildDeepResearchRequestExtras(): DeepResearchRequestExtras {
     const tools: Array<Record<string, unknown>> = [];
 
     const enableWebSearch = this.parseBooleanEnv(
@@ -529,7 +534,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       tools.push({ type: 'code_interpreter', container: { type: 'auto' } });
     }
 
-    const extras: Record<string, unknown> = {};
+    const extras: DeepResearchRequestExtras = {};
     if (tools.length > 0) {
       extras.tools = tools;
     }
@@ -543,6 +548,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     return extras;
   }
+
 
   private parseBooleanEnv(raw: string | undefined, fallback: boolean): boolean {
     if (typeof raw !== 'string') return fallback;

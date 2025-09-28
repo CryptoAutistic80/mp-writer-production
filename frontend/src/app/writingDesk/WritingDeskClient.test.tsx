@@ -35,6 +35,7 @@ describe('WritingDeskClient', () => {
   const originalFetch = global.fetch;
   const saveJobMock = jest.fn();
   const clearJobMock = jest.fn();
+  const refetchMock = jest.fn(async () => null);
   const followUpQueue: FollowUpResponse[] = [];
   let fetchMock: jest.Mock<Promise<ResponseLike>, FetchArgs>;
 
@@ -58,6 +59,12 @@ describe('WritingDeskClient', () => {
       }
       if (url === '/api/ai/writing-desk/follow-up/answers') {
         return createJsonResponse({ status: 'ok' });
+      }
+      if (url === '/api/writing-desk/jobs/active/research/start') {
+        return createJsonResponse({
+          jobId: 'job-123',
+          streamPath: '/api/ai/writing-desk/deep-research?jobId=job-123',
+        });
       }
       throw new Error(`Unexpected fetch call: ${url}`);
     }) as unknown as jest.Mock<Promise<ResponseLike>, FetchArgs>;
@@ -104,15 +111,17 @@ describe('WritingDeskClient', () => {
     clearJobMock.mockResolvedValue(undefined);
     followUpQueue.length = 0;
     setupFetchMock();
+    refetchMock.mockClear();
     mockUseActiveWritingDeskJob.mockReturnValue({
       activeJob: null,
       isLoading: false,
+      refetch: refetchMock,
       saveJob: saveJobMock,
       isSaving: false,
       clearJob: clearJobMock,
       isClearing: false,
       error: null,
-    });
+    } as any);
   });
 
   afterEach(() => {
