@@ -17,6 +17,10 @@ const DEEP_RESEARCH_CREDIT_COST = 0.7;
 type DeepResearchRequestExtras = {
   tools?: Array<Record<string, unknown>>;
   max_tool_calls?: number;
+  reasoning?: {
+    summary?: 'auto' | 'disabled' | null;
+    effort?: 'low' | 'medium' | 'high';
+  };
 };
 
 type DeepResearchStreamPayload =
@@ -771,6 +775,34 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     if (typeof maxToolCalls === 'number' && maxToolCalls > 0) {
       extras.max_tool_calls = maxToolCalls;
     }
+
+    const reasoningSummaryRaw = this.config
+      .get<string>('OPENAI_DEEP_RESEARCH_REASONING_SUMMARY')
+      ?.trim()
+      .toLowerCase();
+    const reasoningEffortRaw = this.config
+      .get<string>('OPENAI_DEEP_RESEARCH_REASONING_EFFORT')
+      ?.trim()
+      .toLowerCase();
+
+    let reasoningSummary: 'auto' | 'disabled' | null = 'auto';
+    if (reasoningSummaryRaw === 'disabled') {
+      reasoningSummary = 'disabled';
+    } else if (reasoningSummaryRaw === 'auto') {
+      reasoningSummary = 'auto';
+    }
+
+    let reasoningEffort: 'low' | 'medium' | 'high' = 'medium';
+    if (reasoningEffortRaw === 'low' || reasoningEffortRaw === 'high') {
+      reasoningEffort = reasoningEffortRaw;
+    } else if (reasoningEffortRaw === 'medium') {
+      reasoningEffort = 'medium';
+    }
+
+    extras.reasoning = {
+      summary: reasoningSummary,
+      effort: reasoningEffort,
+    };
 
     return extras;
   }

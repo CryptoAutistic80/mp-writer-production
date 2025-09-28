@@ -15,6 +15,8 @@ Environment
 - `APP_ORIGIN`: frontend origin for CORS (e.g., `http://localhost:3000`)
 - Google OAuth: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
 - OpenAI: `OPENAI_API_KEY` (optional in dev), `OPENAI_MODEL` (default `gpt-4o-mini`)
+  - Deep research extras: `OPENAI_DEEP_RESEARCH_REASONING_SUMMARY` (default `auto`),
+    `OPENAI_DEEP_RESEARCH_REASONING_EFFORT` (default `medium`)
 
 Notes
 - Backend uses `ConfigModule` and `MongooseModule.forRootAsync` with global `ValidationPipe`.
