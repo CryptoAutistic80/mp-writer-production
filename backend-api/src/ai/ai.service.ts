@@ -8,7 +8,6 @@ import { UserMpService } from '../user-mp/user-mp.service';
 import { ActiveWritingDeskJobResource, WritingDeskResearchStatus } from '../writing-desk-jobs/writing-desk-jobs.types';
 import { UpsertActiveWritingDeskJobDto } from '../writing-desk-jobs/dto/upsert-active-writing-desk-job.dto';
 import { Observable, ReplaySubject, Subscription } from 'rxjs';
-import type { Stream } from 'openai/streaming';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 
 const FOLLOW_UP_CREDIT_COST = 0.1;
@@ -49,6 +48,10 @@ interface DeepResearchRun {
   promise: Promise<void> | null;
   responseId: string | null;
 }
+
+type ResponseStreamLike = AsyncIterable<ResponseStreamEvent> & {
+  controller?: { abort: () => void };
+};
 
 const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
 const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
@@ -366,7 +369,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     let remainingCredits: number | null = null;
     let aggregatedText = '';
     let settled = false;
-    let openAiStream: Stream<ResponseStreamEvent> | null = null;
+    let openAiStream: ResponseStreamLike | null = null;
     let responseId: string | null = run.responseId ?? null;
 
     const captureResponseId = async (candidate: unknown) => {
@@ -470,10 +473,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         store: true,
         stream: true,
         ...requestExtras,
-      })) as Stream<ResponseStreamEvent>;
+      })) as ResponseStreamLike;
 
       let lastSequenceNumber: number | null = null;
-      let currentStream: Stream<ResponseStreamEvent> | null = openAiStream;
+      let currentStream: ResponseStreamLike | null = openAiStream;
       let resumeAttempts = 0;
 
       while (currentStream) {
@@ -605,9 +608,20 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         );
 
         try {
-          currentStream = (await client.responses.stream(responseId, {
+          const resumeParams: {
+            response_id: string;
+            starting_after?: number;
+            tools?: Array<Record<string, unknown>>;
+          } = {
+            response_id: responseId,
             starting_after: resumeCursor ?? undefined,
-          })) as Stream<ResponseStreamEvent>;
+          };
+
+          if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
+            resumeParams.tools = requestExtras.tools;
+          }
+
+          currentStream = client.responses.stream(resumeParams) as ResponseStreamLike;
           openAiStream = currentStream;
           this.logger.log(
             `[writing-desk research] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
