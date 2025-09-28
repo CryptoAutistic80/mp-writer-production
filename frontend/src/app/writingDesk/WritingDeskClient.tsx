@@ -112,6 +112,7 @@ export default function WritingDeskClient() {
   const [followUpAnswers, setFollowUpAnswers] = useState<string[]>([]);
   const [notes, setNotes] = useState<string | null>(null);
   const [responseId, setResponseId] = useState<string | null>(null);
+  const [showSummaryDetails, setShowSummaryDetails] = useState(false);
   const [ellipsisCount, setEllipsisCount] = useState(0);
   const [availableCredits, setAvailableCredits] = useState<number | null>(null);
   const {
@@ -139,6 +140,7 @@ export default function WritingDeskClient() {
   const [researchError, setResearchError] = useState<string | null>(null);
   const [pendingAutoResume, setPendingAutoResume] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
+  const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary'>();
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -253,6 +255,13 @@ export default function WritingDeskClient() {
   }, [isGeneratingFollowUps]);
 
   useEffect(() => {
+    if (phase === 'summary' && previousPhaseRef.current !== 'summary') {
+      setShowSummaryDetails(false);
+    }
+    previousPhaseRef.current = phase;
+  }, [phase]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       const latest = await refreshCredits();
@@ -290,6 +299,7 @@ export default function WritingDeskClient() {
     setError(null);
     setServerError(null);
     setLoading(false);
+    setShowSummaryDetails(false);
     resetFollowUps();
   }, [resetFollowUps]);
 
@@ -470,6 +480,7 @@ export default function WritingDeskClient() {
       setResearchError(null);
       setError(null);
       setServerError(null);
+      setShowSummaryDetails(false);
       setLoading(false);
       setJobSaveError(null);
     },
@@ -1152,71 +1163,6 @@ export default function WritingDeskClient() {
             )}
 
             <div className="card" style={{ padding: 16, marginTop: 16 }}>
-              <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
-              <div className="stack" style={{ marginTop: 12 }}>
-                {steps.map((step) => (
-                  <div key={step.key} style={{ marginBottom: 16 }}>
-                    <div>
-                      <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
-                    </div>
-                    <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="card" style={{ padding: 16, marginTop: 16 }}>
-              <h4 className="section-title" style={{ fontSize: '1rem' }}>Follow-up questions</h4>
-              {followUps.length > 0 ? (
-                <ol style={{ marginTop: 8, paddingLeft: 20 }}>
-                  {followUps.map((q, idx) => (
-                    <li key={idx} style={{ marginBottom: 12 }}>
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'flex-start',
-                          gap: 12,
-                        }}
-                      >
-                        <p style={{ marginBottom: 4 }}>{q}</p>
-                        <button
-                          type="button"
-                          className="btn-link"
-                          onClick={() => handleEditFollowUpQuestion(idx)}
-                          aria-label={`Edit answer for follow-up question ${idx + 1}`}
-                          disabled={loading}
-                        >
-                          Edit answer
-                        </button>
-                      </div>
-                      <p style={{ margin: 0, fontWeight: 600 }}>Your answer:</p>
-                      <p style={{ margin: '4px 0 0 0' }}>{followUpAnswers[idx]}</p>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
-              )}
-              {followUps.length > 0 && (
-                <div className="actions" style={{ marginTop: 12 }}>
-                  <button
-                    type="button"
-                    className="btn-link"
-                    onClick={handleRegenerateFollowUps}
-                    disabled={loading}
-                  >
-                    Ask for new follow-up questions (costs {formatCredits(followUpCreditCost)} credits)
-                  </button>
-                </div>
-              )}
-              {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
-              {responseId && (
-                <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
-              )}
-            </div>
-
-            <div className="card" style={{ padding: 16, marginTop: 16 }}>
               <h4 className="section-title" style={{ fontSize: '1rem' }}>Deep research evidence pack</h4>
               {!hasResearchContent && researchStatus !== 'running' && (
                 <p style={{ marginTop: 8 }}>
@@ -1291,6 +1237,97 @@ export default function WritingDeskClient() {
                 </p>
               )}
             </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 12,
+              }}
+            >
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => setShowSummaryDetails((prev) => !prev)}
+                disabled={loading}
+              >
+                {showSummaryDetails ? 'Hide previous steps' : 'Show previous steps'}
+              </button>
+              {responseId && !showSummaryDetails && (
+                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</span>
+              )}
+            </div>
+
+            {showSummaryDetails && (
+              <>
+                <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                  <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
+                  <div className="stack" style={{ marginTop: 12 }}>
+                    {steps.map((step) => (
+                      <div key={step.key} style={{ marginBottom: 16 }}>
+                        <div>
+                          <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
+                        </div>
+                        <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                  <h4 className="section-title" style={{ fontSize: '1rem' }}>Follow-up questions</h4>
+                  {followUps.length > 0 ? (
+                    <ol style={{ marginTop: 8, paddingLeft: 20 }}>
+                      {followUps.map((q, idx) => (
+                        <li key={idx} style={{ marginBottom: 12 }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-start',
+                              gap: 12,
+                            }}
+                          >
+                            <p style={{ marginBottom: 4 }}>{q}</p>
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={() => handleEditFollowUpQuestion(idx)}
+                              aria-label={`Edit answer for follow-up question ${idx + 1}`}
+                              disabled={loading}
+                            >
+                              Edit answer
+                            </button>
+                          </div>
+                          <p style={{ margin: 0, fontWeight: 600 }}>Your answer:</p>
+                          <p style={{ margin: '4px 0 0 0' }}>{followUpAnswers[idx]}</p>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
+                  )}
+                  {followUps.length > 0 && (
+                    <div className="actions" style={{ marginTop: 12 }}>
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={handleRegenerateFollowUps}
+                        disabled={loading}
+                      >
+                        Ask for new follow-up questions (costs {formatCredits(followUpCreditCost)} credits)
+                      </button>
+                    </div>
+                  )}
+                  {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
+                  {responseId && (
+                    <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
+                  )}
+                </div>
+              </>
+            )}
 
             <div
               className="actions"
