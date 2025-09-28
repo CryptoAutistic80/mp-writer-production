@@ -1254,7 +1254,7 @@ export default function WritingDeskClient() {
                   </p>
                 </div>
               )}
-              {researchActivities.length > 0 && (
+              {researchStatus === 'running' && researchActivities.length > 0 && (
                 <div style={{ marginTop: 12 }}>
                   <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Latest activity</h5>
                   <ul style={{ paddingLeft: 18, margin: 0 }}>

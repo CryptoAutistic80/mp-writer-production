@@ -4,6 +4,7 @@ import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
 import { UserCreditsService } from '../user-credits/user-credits.service';
 import { WritingDeskJobsService } from '../writing-desk-jobs/writing-desk-jobs.service';
+import { UserMpService } from '../user-mp/user-mp.service';
 import { ActiveWritingDeskJobResource, WritingDeskResearchStatus } from '../writing-desk-jobs/writing-desk-jobs.types';
 import { UpsertActiveWritingDeskJobDto } from '../writing-desk-jobs/dto/upsert-active-writing-desk-job.dto';
 import { Observable, ReplaySubject, Subscription } from 'rxjs';
@@ -57,6 +58,7 @@ export class AiService {
     private readonly config: ConfigService,
     private readonly userCredits: UserCreditsService,
     private readonly writingDeskJobs: WritingDeskJobsService,
+    private readonly userMp: UserMpService,
   ) {}
 
   private async getOpenAiClient(apiKey: string) {
@@ -378,6 +380,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
     };
 
+    const mpName = await this.resolveUserMpName(userId);
+
     try {
       await this.persistDeepResearchStatus(userId, baselineJob, 'running');
     } catch (error) {
@@ -398,7 +402,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       const model = this.config.get<string>('OPENAI_DEEP_RESEARCH_MODEL')?.trim() || 'o4-mini-deep-research';
 
       if (!apiKey) {
-        const stub = this.buildDeepResearchStub(baselineJob);
+        const stub = this.buildDeepResearchStub(baselineJob, { mpName });
         for (const chunk of stub.chunks) {
           send({ type: 'delta', text: chunk });
           await this.delay(180);
@@ -420,7 +424,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         return;
       }
 
-      const prompt = this.buildDeepResearchPrompt(baselineJob);
+      const prompt = this.buildDeepResearchPrompt(baselineJob, { mpName });
       const client = await this.getOpenAiClient(apiKey);
       const requestExtras = this.buildDeepResearchRequestExtras();
 
@@ -612,7 +616,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return job;
   }
 
-  private buildDeepResearchPrompt(job: ActiveWritingDeskJobResource): string {
+  private buildDeepResearchPrompt(
+    job: ActiveWritingDeskJobResource,
+    options?: { mpName?: string | null },
+  ): string {
     const sections: string[] = [
       'Research the issue described below and gather supporting facts, quotes, and statistics from credible, up-to-date sources.',
       'Provide a structured evidence report with inline citations for every key fact. Cite URLs or publication titles for each data point.',
@@ -622,6 +629,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       `Background: ${this.normalisePromptField(job.form?.backgroundDetail, 'Not provided.')}`,
       `Desired Outcome: ${this.normalisePromptField(job.form?.desiredOutcome, 'Not provided.')}`,
     ];
+
+    const mpName = typeof options?.mpName === 'string' ? options.mpName.trim() : '';
+    if (mpName) {
+      sections.push(
+        '',
+        `Target MP: ${mpName}`,
+        `Include a brief profile of ${mpName}, covering their background, priorities, and recent parliamentary activity relevant to this issue.`,
+        `Identify persuasive angles that could help ${mpName} empathise with the constituent's situation (shared priorities, constituency impact, past statements, or committee work).`,
+      );
+    }
 
     if (Array.isArray(job.followUpQuestions) && job.followUpQuestions.length > 0) {
       sections.push('', 'Additional Context from Q&A:');
@@ -657,7 +674,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return trimmed.length > 0 ? trimmed : fallback;
   }
 
-  private buildDeepResearchStub(job: ActiveWritingDeskJobResource) {
+  private buildDeepResearchStub(
+    job: ActiveWritingDeskJobResource,
+    options?: { mpName?: string | null },
+  ) {
+    const mpName = typeof options?.mpName === 'string' ? options.mpName.trim() : '';
     const lines = [
       'DEV-STUB deep research summary (no external research was performed).',
       '',
@@ -670,6 +691,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       '2. Quotes from reputable organisations, MPs, or investigative journalism covering the topic.',
       '3. Current policy commitments or funding schemes that relate to the requested outcome.',
       '',
+      mpName
+        ? `Target MP (${mpName}): Research their background, interests, and public statements to find empathy hooks.`
+        : 'Target MP: Add notes about your MP to tailor the evidence and empathy angles.',
+      '',
       'Sources to consider:',
       '- GOV.UK and departmental research portals (latest releases).',
       '- Office for National Statistics datasets relevant to the subject.',
@@ -680,8 +705,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const chunks = [
       `${lines[0]}\n\n`,
       `${lines[2]}\n${lines[3]}\n${lines[4]}\n\n`,
-      `${lines[5]}\n${lines[6]}\n${lines[7]}\n${lines[8]}\n\n`,
-      `${lines[9]}\n${lines[10]}\n${lines[11]}`,
+      `${lines[6]}\n${lines[7]}\n${lines[8]}\n${lines[9]}\n\n`,
+      `${lines[11]}\n\n`,
+      `${lines[13]}\n${lines[14]}\n${lines[15]}\n${lines[16]}`,
     ];
 
     return { content, chunks };
@@ -749,6 +775,21 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return extras;
   }
 
+  private async resolveUserMpName(userId: string): Promise<string | null> {
+    try {
+      const record = await this.userMp.getMine(userId);
+      const rawName = (record as any)?.mp?.name;
+      if (typeof rawName === 'string') {
+        const trimmed = rawName.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `[writing-desk research] failed to resolve MP name for user ${userId}: ${(error as Error)?.message ?? error}`,
+      );
+    }
+    return null;
+  }
 
   private parseBooleanEnv(raw: string | undefined, fallback: boolean): boolean {
     if (typeof raw !== 'string') return fallback;
