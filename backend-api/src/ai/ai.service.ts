@@ -430,7 +430,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       const prompt = this.buildDeepResearchPrompt(baselineJob, { mpName });
       const client = await this.getOpenAiClient(apiKey);
-      const requestExtras = this.buildDeepResearchRequestExtras();
+      const requestExtras = this.buildDeepResearchRequestExtras(model);
 
       this.logger.log(
         `[writing-desk research] start ${JSON.stringify({
@@ -724,7 +724,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return `${trimmed.slice(0, 157)}…`;
   }
 
-  private buildDeepResearchRequestExtras(): DeepResearchRequestExtras {
+  private buildDeepResearchRequestExtras(model?: string | null): DeepResearchRequestExtras {
     const tools: Array<Record<string, unknown>> = [];
 
     const enableWebSearch = this.parseBooleanEnv(
@@ -792,11 +792,23 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       reasoningSummary = 'auto';
     }
 
-    let reasoningEffort: 'low' | 'medium' | 'high' = 'medium';
-    if (reasoningEffortRaw === 'low' || reasoningEffortRaw === 'high') {
-      reasoningEffort = reasoningEffortRaw;
-    } else if (reasoningEffortRaw === 'medium') {
-      reasoningEffort = 'medium';
+    const requestedEffort: 'low' | 'medium' | 'high' =
+      reasoningEffortRaw === 'low' || reasoningEffortRaw === 'high'
+        ? (reasoningEffortRaw as 'low' | 'high')
+        : 'medium';
+
+    const supportedEfforts = this.getSupportedReasoningEfforts(model);
+    const fallbackEffort = supportedEfforts.includes('medium') ? 'medium' : supportedEfforts[0];
+    const reasoningEffort = supportedEfforts.includes(requestedEffort)
+      ? requestedEffort
+      : fallbackEffort;
+
+    if (requestedEffort !== reasoningEffort) {
+      this.logger.warn(
+        `[writing-desk research] reasoning effort "${requestedEffort}" is not supported for model "${
+          model ?? 'unknown'
+        }" – falling back to "${reasoningEffort}"`,
+      );
     }
 
     extras.reasoning = {
@@ -805,6 +817,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     };
 
     return extras;
+  }
+
+  private getSupportedReasoningEfforts(model?: string | null): Array<'low' | 'medium' | 'high'> {
+    if (!model) {
+      return ['medium'];
+    }
+
+    const normalisedModel = model.trim().toLowerCase();
+    if (normalisedModel === 'o4-mini-deep-research' || normalisedModel.startsWith('o4-mini-deep-research@')) {
+      return ['medium'];
+    }
+
+    return ['low', 'medium', 'high'];
   }
 
   private async resolveUserMpName(userId: string): Promise<string | null> {

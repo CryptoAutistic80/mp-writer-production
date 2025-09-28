@@ -16,7 +16,9 @@ Environment
 - Google OAuth: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
 - OpenAI: `OPENAI_API_KEY` (optional in dev), `OPENAI_MODEL` (default `gpt-4o-mini`)
   - Deep research extras: `OPENAI_DEEP_RESEARCH_REASONING_SUMMARY` (default `auto`),
-    `OPENAI_DEEP_RESEARCH_REASONING_EFFORT` (default `medium`)
+    `OPENAI_DEEP_RESEARCH_REASONING_EFFORT` (default `medium`). The default
+    `o4-mini-deep-research` model only accepts `medium`; other values will fall back
+    automatically.
 
 Notes
 - Backend uses `ConfigModule` and `MongooseModule.forRootAsync` with global `ValidationPipe`.
