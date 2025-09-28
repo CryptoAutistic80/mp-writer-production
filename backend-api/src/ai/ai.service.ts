@@ -472,88 +472,153 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         ...requestExtras,
       })) as Stream<ResponseStreamEvent>;
 
-      for await (const event of openAiStream) {
-        if (!event) continue;
+      let lastSequenceNumber: number | null = null;
+      let currentStream: Stream<ResponseStreamEvent> | null = openAiStream;
+      let resumeAttempts = 0;
 
-        if ((event as any)?.response) {
-          await captureResponseId((event as any).response);
+      while (currentStream) {
+        let streamError: unknown = null;
+
+        try {
+          for await (const event of currentStream) {
+            if (!event) continue;
+
+            const sequenceNumber = (event as any)?.sequence_number;
+            if (Number.isFinite(sequenceNumber)) {
+              lastSequenceNumber = Number(sequenceNumber);
+            }
+
+            if ((event as any)?.response) {
+              await captureResponseId((event as any).response);
+            }
+
+            switch (event.type) {
+              case 'response.created':
+                send({ type: 'status', status: 'queued' });
+                break;
+              case 'response.queued':
+                send({ type: 'status', status: 'queued' });
+                break;
+              case 'response.in_progress':
+                send({ type: 'status', status: 'in_progress' });
+                break;
+              case 'response.output_text.delta': {
+                const snapshot = (event as any)?.snapshot;
+                if (typeof snapshot === 'string' && snapshot.length > aggregatedText.length) {
+                  pushDelta(snapshot);
+                  break;
+                }
+                if (typeof event.delta === 'string' && event.delta.length > 0) {
+                  pushDelta(aggregatedText + event.delta);
+                }
+                break;
+              }
+              case 'response.output_text.done':
+                if (typeof event.text === 'string' && event.text.length > 0) {
+                  pushDelta(event.text);
+                }
+                break;
+              case 'response.web_search_call.searching':
+              case 'response.web_search_call.in_progress':
+              case 'response.web_search_call.completed':
+              case 'response.file_search_call.searching':
+              case 'response.file_search_call.in_progress':
+              case 'response.file_search_call.completed':
+              case 'response.code_interpreter_call.in_progress':
+              case 'response.code_interpreter_call.completed':
+              case 'response.reasoning.delta':
+              case 'response.reasoning.done':
+              case 'response.reasoning_summary.delta':
+              case 'response.reasoning_summary.done':
+              case 'response.reasoning_summary_part.added':
+              case 'response.reasoning_summary_part.done':
+              case 'response.reasoning_summary_text.delta':
+              case 'response.reasoning_summary_text.done':
+                send({ type: 'event', event: this.normaliseStreamEvent(event) });
+                break;
+              case 'response.failed':
+              case 'response.incomplete': {
+                const errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
+                throw new Error(errorMessage);
+              }
+              case 'response.completed': {
+                const finalResponse = event.response;
+                const resolvedResponseId = (finalResponse as any)?.id ?? responseId ?? null;
+                if (resolvedResponseId && resolvedResponseId !== responseId) {
+                  await captureResponseId(finalResponse);
+                }
+                const finalText = this.extractFirstText(finalResponse) ?? aggregatedText;
+                await this.persistDeepResearchResult(userId, baselineJob, {
+                  content: finalText,
+                  responseId: resolvedResponseId,
+                  status: 'completed',
+                });
+                run.status = 'completed';
+                settled = true;
+                send({
+                  type: 'complete',
+                  content: finalText,
+                  responseId: resolvedResponseId,
+                  remainingCredits,
+                  usage: (finalResponse as any)?.usage ?? null,
+                });
+                subject.complete();
+                return;
+              }
+              default:
+                send({ type: 'event', event: this.normaliseStreamEvent(event) });
+            }
+          }
+          break;
+        } catch (error) {
+          streamError = error;
         }
 
-        switch (event.type) {
-          case 'response.created':
-            send({ type: 'status', status: 'queued' });
-            break;
-          case 'response.queued':
-            send({ type: 'status', status: 'queued' });
-            break;
-          case 'response.in_progress':
-            send({ type: 'status', status: 'in_progress' });
-            break;
-          case 'response.output_text.delta': {
-            const snapshot = (event as any)?.snapshot;
-            if (typeof snapshot === 'string' && snapshot.length > aggregatedText.length) {
-              pushDelta(snapshot);
-              break;
-            }
-            if (typeof event.delta === 'string' && event.delta.length > 0) {
-              pushDelta(aggregatedText + event.delta);
-            }
-            break;
-          }
-          case 'response.output_text.done':
-            if (typeof event.text === 'string' && event.text.length > 0) {
-              pushDelta(event.text);
-            }
-            break;
-          case 'response.web_search_call.searching':
-          case 'response.web_search_call.in_progress':
-          case 'response.web_search_call.completed':
-          case 'response.file_search_call.searching':
-          case 'response.file_search_call.in_progress':
-          case 'response.file_search_call.completed':
-          case 'response.code_interpreter_call.in_progress':
-          case 'response.code_interpreter_call.completed':
-          case 'response.reasoning.delta':
-          case 'response.reasoning.done':
-          case 'response.reasoning_summary.delta':
-          case 'response.reasoning_summary.done':
-          case 'response.reasoning_summary_part.added':
-          case 'response.reasoning_summary_part.done':
-          case 'response.reasoning_summary_text.delta':
-          case 'response.reasoning_summary_text.done':
-            send({ type: 'event', event: this.normaliseStreamEvent(event) });
-            break;
-          case 'response.failed':
-          case 'response.incomplete': {
-            const errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
-            throw new Error(errorMessage);
-          }
-          case 'response.completed': {
-            const finalResponse = event.response;
-            const resolvedResponseId = (finalResponse as any)?.id ?? responseId ?? null;
-            if (resolvedResponseId && resolvedResponseId !== responseId) {
-              await captureResponseId(finalResponse);
-            }
-            const finalText = this.extractFirstText(finalResponse) ?? aggregatedText;
-            await this.persistDeepResearchResult(userId, baselineJob, {
-              content: finalText,
-              responseId: resolvedResponseId,
-              status: 'completed',
-            });
-            run.status = 'completed';
-            settled = true;
-            send({
-              type: 'complete',
-              content: finalText,
-              responseId: resolvedResponseId,
-              remainingCredits,
-              usage: (finalResponse as any)?.usage ?? null,
-            });
-            subject.complete();
-            return;
-          }
-          default:
-            send({ type: 'event', event: this.normaliseStreamEvent(event) });
+        if (!streamError) {
+          break;
+        }
+
+        const isTransportFailure =
+          streamError instanceof Error && /premature close/i.test(streamError.message);
+
+        if (!isTransportFailure) {
+          throw streamError instanceof Error
+            ? streamError
+            : new Error('Deep research stream failed with an unknown error');
+        }
+
+        if (!responseId) {
+          this.logger.warn(
+            `[writing-desk research] transport failure before response id available: ${
+              streamError instanceof Error ? streamError.message : 'unknown error'
+            }`,
+          );
+          break;
+        }
+
+        resumeAttempts += 1;
+        const resumeCursor = lastSequenceNumber ?? null;
+        this.logger.warn(
+          `[writing-desk research] resume attempt ${resumeAttempts} for response ${responseId} starting after ${
+            resumeCursor ?? 'start'
+          }`,
+        );
+
+        try {
+          currentStream = (await client.responses.stream(responseId, {
+            starting_after: resumeCursor ?? undefined,
+          })) as Stream<ResponseStreamEvent>;
+          openAiStream = currentStream;
+          this.logger.log(
+            `[writing-desk research] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
+          );
+        } catch (resumeError) {
+          this.logger.error(
+            `[writing-desk research] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
+              resumeError instanceof Error ? resumeError.message : 'unknown error'
+            }`,
+          );
+          break;
         }
       }
 
