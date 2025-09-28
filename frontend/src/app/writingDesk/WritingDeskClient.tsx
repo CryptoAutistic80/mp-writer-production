@@ -71,7 +71,7 @@ type DeepResearchHandshakeResponse = {
   streamPath?: string | null;
 };
 
-const MAX_RESEARCH_ACTIVITY_ITEMS = 50;
+const MAX_RESEARCH_ACTIVITY_ITEMS = 10;
 
 const extractReasoningSummary = (value: unknown): string | null => {
   if (typeof value === 'string') {
