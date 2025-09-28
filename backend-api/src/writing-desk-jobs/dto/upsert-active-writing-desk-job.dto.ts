@@ -19,16 +19,7 @@ import {
 
 class WritingDeskJobFormDto {
   @IsString()
-  issueDetail!: string;
-
-  @IsString()
-  affectedDetail!: string;
-
-  @IsString()
-  backgroundDetail!: string;
-
-  @IsString()
-  desiredOutcome!: string;
+  issueDescription!: string;
 }
 
 export class UpsertActiveWritingDeskJobDto {

@@ -123,12 +123,12 @@ export class AiService {
       const client = await this.getOpenAiClient(apiKey);
 
       const instructions = `You help constituents prepare to write letters to their Members of Parliament.
-From the provided information, identify up to three missing details that would materially strengthen the letter.
-Ask at most three concise follow-up questions. If everything is already clear, return an empty list.
-Focus on understanding the core issue better - ask about the nature of the problem, its impact, timeline, or context.
+From the provided description, identify the most important gaps that stop you fully understanding the situation and what outcome the constituent wants.
+Ask at most five concise follow-up questions. If everything is already clear, return an empty list.
+Prioritise clarifying the specific problem, how it affects people, what has already happened, and what the constituent hopes their MP will achieve.
 Do NOT ask for documents, permissions, names, addresses, or personal details. Only ask about the issue itself.`;
 
-      const userSummary = `Issue detail:\n${input.issueDetail}\n\nAffected parties:\n${input.affectedDetail}\n\nSupporting background:\n${input.backgroundDetail}\n\nDesired outcome:\n${input.desiredOutcome}`;
+      const userSummary = `Constituent description:\n${input.issueDescription}`;
 
       const response = await client.responses.create({
         model,
@@ -153,8 +153,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               properties: {
                 questions: {
                   type: 'array',
-                  description: 'Up to three clarifying follow-up questions for the user.',
-                  maxItems: 3,
+                  description: 'Up to five clarifying follow-up questions for the user.',
+                  maxItems: 5,
                   items: {
                     type: 'string',
                     description: 'A succinct question phrased conversationally.',
@@ -228,10 +228,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
 
     const bundle = {
-      issueDetail: input.issueDetail.trim(),
-      affectedDetail: input.affectedDetail.trim(),
-      backgroundDetail: input.backgroundDetail.trim(),
-      desiredOutcome: input.desiredOutcome.trim(),
+      issueDescription: input.issueDescription.trim(),
       followUpQuestions: cleanedQuestions,
       followUpAnswers: cleanedAnswers,
       notes: input.notes?.trim?.() || null,
@@ -760,10 +757,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       'Research the issue described below and gather supporting facts, quotes, and statistics from credible, up-to-date sources.',
       'Provide a structured evidence report with inline citations for every key fact. Cite URLs or publication titles for each data point.',
       '',
-      `Issue Detail: ${this.normalisePromptField(job.form?.issueDetail, 'Not provided.')}`,
-      `Affected Parties: ${this.normalisePromptField(job.form?.affectedDetail, 'Not provided.')}`,
-      `Background: ${this.normalisePromptField(job.form?.backgroundDetail, 'Not provided.')}`,
-      `Desired Outcome: ${this.normalisePromptField(job.form?.desiredOutcome, 'Not provided.')}`,
+      `Constituent description: ${this.normalisePromptField(job.form?.issueDescription, 'Not provided.')}`,
     ];
 
     const mpName = typeof options?.mpName === 'string' ? options.mpName.trim() : '';
@@ -818,9 +812,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const lines = [
       'DEV-STUB deep research summary (no external research was performed).',
       '',
-      `• Issue focus: ${this.truncateForStub(job.form?.issueDetail)}`,
-      `• Impact summary: ${this.truncateForStub(job.form?.affectedDetail)}`,
-      `• Requested outcome: ${this.truncateForStub(job.form?.desiredOutcome)}`,
+      `• Issue summary: ${this.truncateForStub(job.form?.issueDescription)}`,
       '',
       'Suggested evidence to look for:',
       '1. Recent government or regulator statistics quantifying the scale of the issue.',
@@ -1023,10 +1015,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       stepIndex: job.stepIndex,
       followUpIndex: job.followUpIndex,
       form: {
-        issueDetail: job.form?.issueDetail ?? '',
-        affectedDetail: job.form?.affectedDetail ?? '',
-        backgroundDetail: job.form?.backgroundDetail ?? '',
-        desiredOutcome: job.form?.desiredOutcome ?? '',
+        issueDescription: job.form?.issueDescription ?? '',
       },
       followUpQuestions: Array.isArray(job.followUpQuestions) ? [...job.followUpQuestions] : [],
       followUpAnswers: Array.isArray(job.followUpAnswers) ? [...job.followUpAnswers] : [],
@@ -1126,23 +1115,25 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
   }
 
   private buildStubFollowUps(input: WritingDeskIntakeDto) {
+    const description = input.issueDescription?.trim?.() ?? '';
     const questions: string[] = [];
-    
-    // Check if issue detail is too brief or vague
-    if (input.issueDetail.length < 100 || !/\b(problem|issue|concern|matter)\b/i.test(input.issueDetail)) {
-      questions.push('Can you describe the specific problem or issue you\'re facing in more detail?');
+
+    if (description.length < 150) {
+      questions.push("Could you share a little more detail about what has happened so far?");
     }
-    
-    // Check if affected parties need more detail
-    if (input.affectedDetail.length < 50 || !/\b(people|residents|community|families|businesses)\b/i.test(input.affectedDetail)) {
-      questions.push('Who else is affected by this issue in your area?');
+
+    if (!/\b(want|hope|expect|should|ask|seeking|goal)\b/i.test(description)) {
+      questions.push('What action or outcome would you like your MP to push for?');
     }
-    
-    // Check if desired outcome is clear
-    if (input.desiredOutcome.length < 50 || !/\b(want|need|hope|expect|should|must)\b/i.test(input.desiredOutcome)) {
-      questions.push('What specific outcome or resolution are you hoping for?');
+
+    if (!/\b(family|neighbour|community|business|residents|my children|people)\b/i.test(description)) {
+      questions.push('Who is being affected by this issue and how are they impacted?');
     }
-    
-    return questions.slice(0, 3);
+
+    if (!/\b(since|for [0-9]+|weeks|months|years|when)\b/i.test(description)) {
+      questions.push('How long has this been going on or when did it start?');
+    }
+
+    return questions.slice(0, 5);
   }
 }

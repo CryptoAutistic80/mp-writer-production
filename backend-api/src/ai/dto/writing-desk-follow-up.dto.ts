@@ -3,31 +3,16 @@ import { ArrayMaxSize, IsArray, IsNotEmpty, IsOptional, IsString, MaxLength } fr
 export class WritingDeskFollowUpDto {
   @IsString()
   @IsNotEmpty()
-  @MaxLength(2000)
-  issueDetail!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(1200)
-  affectedDetail!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(2000)
-  backgroundDetail!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(1200)
-  desiredOutcome!: string;
+  @MaxLength(4000)
+  issueDescription!: string;
 
   @IsArray()
-  @ArrayMaxSize(3)
+  @ArrayMaxSize(5)
   @IsString({ each: true })
   followUpQuestions!: string[];
 
   @IsArray()
-  @ArrayMaxSize(3)
+  @ArrayMaxSize(5)
   @IsString({ each: true })
   followUpAnswers!: string[];
 

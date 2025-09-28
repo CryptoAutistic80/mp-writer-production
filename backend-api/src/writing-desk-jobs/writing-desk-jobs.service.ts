@@ -81,10 +81,7 @@ export class WritingDeskJobsService {
     };
 
     const form: WritingDeskJobFormSnapshot = {
-      issueDetail: trim(input.form?.issueDetail),
-      affectedDetail: trim(input.form?.affectedDetail),
-      backgroundDetail: trim(input.form?.backgroundDetail),
-      desiredOutcome: trim(input.form?.desiredOutcome),
+      issueDescription: trim(input.form?.issueDescription),
     };
 
     const followUpQuestions = Array.isArray(input.followUpQuestions)
@@ -162,19 +159,29 @@ export class WritingDeskJobsService {
     }
 
     if (record.form) {
+      if (typeof (record.form as any)?.issueDescription === 'string') {
+        return {
+          issueDescription: (record.form as any).issueDescription ?? '',
+        };
+      }
+
+      const legacyIssue = [
+        record.form.issueDetail ?? '',
+        record.form.affectedDetail ?? '',
+        record.form.backgroundDetail ?? '',
+        record.form.desiredOutcome ?? '',
+      ]
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter((value) => value.length > 0)
+        .join('\n\n');
+
       return {
-        issueDetail: record.form.issueDetail ?? '',
-        affectedDetail: record.form.affectedDetail ?? '',
-        backgroundDetail: record.form.backgroundDetail ?? '',
-        desiredOutcome: record.form.desiredOutcome ?? '',
+        issueDescription: legacyIssue,
       };
     }
 
     return {
-      issueDetail: '',
-      affectedDetail: '',
-      backgroundDetail: '',
-      desiredOutcome: '',
+      issueDescription: '',
     };
   }
 
