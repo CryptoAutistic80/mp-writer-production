@@ -71,7 +71,49 @@ type DeepResearchHandshakeResponse = {
   streamPath?: string | null;
 };
 
-const MAX_RESEARCH_ACTIVITY_ITEMS = 5;
+const MAX_RESEARCH_ACTIVITY_ITEMS = 10;
+
+const extractReasoningSummary = (value: unknown): string | null => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const summary = extractReasoningSummary(item);
+      if (summary) return summary;
+    }
+    return null;
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const preferredKeys = [
+      'summary',
+      'text',
+      'message',
+      'content',
+      'output_text',
+      'value',
+      'delta',
+    ];
+
+    for (const key of preferredKeys) {
+      if (key in record) {
+        const summary = extractReasoningSummary(record[key]);
+        if (summary) return summary;
+      }
+    }
+
+    for (const item of Object.values(record)) {
+      const summary = extractReasoningSummary(item);
+      if (summary) return summary;
+    }
+  }
+
+  return null;
+};
 
 const describeResearchEvent = (event: { type?: string; [key: string]: any }): string | null => {
   if (!event || typeof event.type !== 'string') return null;
@@ -91,11 +133,30 @@ const describeResearchEvent = (event: { type?: string; [key: string]: any }): st
     case 'response.code_interpreter_call.completed':
       return 'Completed data analysis via code interpreter.';
     case 'response.reasoning.delta': {
-      const summary = typeof event.delta === 'string' ? event.delta.trim() : '';
-      return summary.length > 0 ? summary : null;
+      const summary = extractReasoningSummary(event.delta ?? event);
+      return summary ?? null;
     }
-    case 'response.reasoning.done':
-      return 'Reasoning summary updated.';
+    case 'response.reasoning.done': {
+      const summary = extractReasoningSummary(event.reasoning ?? event.delta ?? event);
+      return summary ?? 'Reasoning summary updated.';
+    }
+    case 'response.reasoning_summary.delta':
+    case 'response.reasoning_summary_text.delta':
+    case 'response.reasoning_summary_part.added':
+      return null;
+    case 'response.reasoning_summary.done':
+    case 'response.reasoning_summary_text.done': {
+      const summary = extractReasoningSummary(event.text ?? event.summary ?? event.delta ?? event);
+      if (!summary) return null;
+      const trimmed = summary.trim();
+      return trimmed.length > 3 ? trimmed : null;
+    }
+    case 'response.reasoning_summary_part.done': {
+      const summary = extractReasoningSummary(event.part ?? event);
+      if (!summary) return null;
+      const trimmed = summary.trim();
+      return trimmed.length > 3 ? trimmed : null;
+    }
     default:
       return null;
   }
@@ -142,6 +203,8 @@ export default function WritingDeskClient() {
   const [pendingAutoResume, setPendingAutoResume] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
   const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary'>();
+  const lastResearchEventRef = useRef<number>(0);
+  const lastResearchResumeAttemptRef = useRef<number>(0);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -312,10 +375,12 @@ export default function WritingDeskClient() {
       closeResearchStream();
       setPendingAutoResume(false);
       setResearchStatus('running');
-      setResearchContent('');
-      setResearchResponseId(null);
       setResearchError(null);
-      setResearchActivities([]);
+      if (!resume) {
+        setResearchContent('');
+        setResearchResponseId(null);
+        setResearchActivities([]);
+      }
 
       try {
         const payload: Record<string, unknown> = {};
@@ -376,6 +441,10 @@ export default function WritingDeskClient() {
         const source = new EventSource(endpoint.toString(), { withCredentials: true });
         researchSourceRef.current = source;
 
+        const markResearchActivity = () => {
+          lastResearchEventRef.current = Date.now();
+        };
+
         source.onmessage = (event) => {
           let payload: DeepResearchStreamMessage | null = null;
           try {
@@ -384,6 +453,8 @@ export default function WritingDeskClient() {
             return;
           }
           if (!payload) return;
+
+          markResearchActivity();
 
           if (payload.type === 'status') {
             updateCreditsFromStream(payload.remainingCredits);
@@ -427,6 +498,8 @@ export default function WritingDeskClient() {
           appendResearchActivity('Connection lost during deep research.');
           setPendingAutoResume(false);
         };
+
+        lastResearchEventRef.current = Date.now();
       } catch (err) {
         closeResearchStream();
         setResearchStatus('error');
@@ -450,6 +523,31 @@ export default function WritingDeskClient() {
     setPendingAutoResume(false);
     void startDeepResearch({ resume: true });
   }, [hasHandledInitialJob, pendingAutoResume, startDeepResearch]);
+
+  useEffect(() => {
+    if (researchStatus !== 'running') return undefined;
+
+    const interval = window.setInterval(() => {
+      const source = researchSourceRef.current;
+      if (!source) return;
+
+      const now = Date.now();
+      const lastEventAt = lastResearchEventRef.current || 0;
+      if (now - lastEventAt < 45000) return;
+
+      const lastAttemptAt = lastResearchResumeAttemptRef.current || 0;
+      if (now - lastAttemptAt < 15000) return;
+
+      lastResearchResumeAttemptRef.current = now;
+      appendResearchActivity('Connection quiet — attempting to resume the research stream…');
+      closeResearchStream();
+      void startDeepResearch({ resume: true });
+    }, 10000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [appendResearchActivity, closeResearchStream, researchStatus, startDeepResearch]);
 
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {

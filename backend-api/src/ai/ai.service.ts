@@ -17,6 +17,10 @@ const DEEP_RESEARCH_CREDIT_COST = 0.7;
 type DeepResearchRequestExtras = {
   tools?: Array<Record<string, unknown>>;
   max_tool_calls?: number;
+  reasoning?: {
+    summary?: 'auto' | 'disabled' | null;
+    effort?: 'low' | 'medium' | 'high';
+  };
 };
 
 type DeepResearchStreamPayload =
@@ -43,10 +47,13 @@ interface DeepResearchRun {
   startedAt: number;
   cleanupTimer: NodeJS.Timeout | null;
   promise: Promise<void> | null;
+  responseId: string | null;
 }
 
 const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
 const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
+const BACKGROUND_POLL_INTERVAL_MS = 2000;
+const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 
 @Injectable()
 export class AiService {
@@ -338,6 +345,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       startedAt: Date.now(),
       cleanupTimer: null,
       promise: null,
+      responseId: null,
     };
 
     this.deepResearchRuns.set(key, run);
@@ -362,6 +370,27 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     let aggregatedText = '';
     let settled = false;
     let openAiStream: Stream<ResponseStreamEvent> | null = null;
+    let responseId: string | null = run.responseId ?? null;
+
+    const captureResponseId = async (candidate: unknown) => {
+      if (!candidate || typeof candidate !== 'object') return;
+      const id = (candidate as any)?.id;
+      if (typeof id !== 'string') return;
+      const trimmed = id.trim();
+      if (!trimmed || trimmed === responseId) return;
+      responseId = trimmed;
+      run.responseId = trimmed;
+      try {
+        await this.persistDeepResearchResult(userId, baselineJob, {
+          responseId: trimmed,
+          status: 'running',
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to persist deep research response id for user ${userId}: ${(error as Error)?.message ?? error}`,
+        );
+      }
+    };
 
     const send = (payload: DeepResearchStreamPayload) => {
       subject.next(payload);
@@ -426,7 +455,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       const prompt = this.buildDeepResearchPrompt(baselineJob, { mpName });
       const client = await this.getOpenAiClient(apiKey);
-      const requestExtras = this.buildDeepResearchRequestExtras();
+      const requestExtras = this.buildDeepResearchRequestExtras(model);
 
       this.logger.log(
         `[writing-desk research] start ${JSON.stringify({
@@ -448,6 +477,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       for await (const event of openAiStream) {
         if (!event) continue;
+
+        if ((event as any)?.response) {
+          await captureResponseId((event as any).response);
+        }
 
         switch (event.type) {
           case 'response.created':
@@ -485,6 +518,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           case 'response.code_interpreter_call.completed':
           case 'response.reasoning.delta':
           case 'response.reasoning.done':
+          case 'response.reasoning_summary.delta':
+          case 'response.reasoning_summary.done':
+          case 'response.reasoning_summary_part.added':
+          case 'response.reasoning_summary_part.done':
+          case 'response.reasoning_summary_text.delta':
+          case 'response.reasoning_summary_text.done':
             send({ type: 'event', event: this.normaliseStreamEvent(event) });
             break;
           case 'response.failed':
@@ -494,11 +533,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           }
           case 'response.completed': {
             const finalResponse = event.response;
-            const responseId = (finalResponse as any)?.id ?? null;
+            const resolvedResponseId = (finalResponse as any)?.id ?? responseId ?? null;
+            if (resolvedResponseId && resolvedResponseId !== responseId) {
+              await captureResponseId(finalResponse);
+            }
             const finalText = this.extractFirstText(finalResponse) ?? aggregatedText;
             await this.persistDeepResearchResult(userId, baselineJob, {
               content: finalText,
-              responseId,
+              responseId: resolvedResponseId,
               status: 'completed',
             });
             run.status = 'completed';
@@ -506,7 +548,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             send({
               type: 'complete',
               content: finalText,
-              responseId,
+              responseId: resolvedResponseId,
               remainingCredits,
               usage: (finalResponse as any)?.usage ?? null,
             });
@@ -519,7 +561,46 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       if (!settled) {
-        throw new Error('Deep research stream ended unexpectedly');
+        if (!responseId) {
+          throw new Error('Deep research stream ended before a response id was available');
+        }
+
+        this.logger.warn(
+          `[writing-desk research] stream ended early for response ${responseId}, polling for completion`,
+        );
+
+        const finalResponse = await this.waitForBackgroundResponseCompletion(client, responseId);
+        const finalStatus = (finalResponse as any)?.status ?? 'completed';
+
+        if (finalStatus === 'completed') {
+          const finalText = this.extractFirstText(finalResponse) ?? aggregatedText;
+          pushDelta(finalText);
+          await this.persistDeepResearchResult(userId, baselineJob, {
+            content: finalText,
+            responseId,
+            status: 'completed',
+          });
+          run.status = 'completed';
+          settled = true;
+          send({
+            type: 'complete',
+            content: finalText,
+            responseId,
+            remainingCredits,
+            usage: (finalResponse as any)?.usage ?? null,
+          });
+          subject.complete();
+        } else {
+          const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus);
+          await this.persistDeepResearchResult(userId, baselineJob, {
+            responseId,
+            status: 'error',
+          });
+          run.status = 'error';
+          settled = true;
+          send({ type: 'error', message, remainingCredits });
+          subject.complete();
+        }
       }
     } catch (error) {
       this.logger.error(
@@ -585,6 +666,61 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       (timer as any).unref();
     }
     run.cleanupTimer = timer as NodeJS.Timeout;
+  }
+
+  private async waitForBackgroundResponseCompletion(client: any, responseId: string) {
+    const startedAt = Date.now();
+
+    while (true) {
+      try {
+        const response = await client.responses.retrieve(responseId);
+        const status = (response as any)?.status ?? null;
+
+        if (!status || status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'incomplete') {
+          return response;
+        }
+
+        if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
+          throw new Error('Timed out waiting for deep research to finish');
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Timed out waiting')) {
+          throw error;
+        }
+        if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
+          throw new Error('Timed out waiting for deep research to finish');
+        }
+        this.logger.warn(
+          `[writing-desk research] failed to retrieve background response ${responseId}: ${
+            (error as Error)?.message ?? error
+          }`,
+        );
+      }
+
+      await this.delay(BACKGROUND_POLL_INTERVAL_MS);
+    }
+  }
+
+  private buildBackgroundFailureMessage(response: any, status: string | null | undefined): string {
+    const errorMessage = response?.error?.message;
+    if (typeof errorMessage === 'string' && errorMessage.trim().length > 0) {
+      return errorMessage.trim();
+    }
+
+    const incompleteReason = response?.incomplete_details?.reason;
+    if (typeof incompleteReason === 'string' && incompleteReason.trim().length > 0) {
+      return incompleteReason.trim();
+    }
+
+    switch (status) {
+      case 'cancelled':
+        return 'Deep research was cancelled.';
+      case 'failed':
+      case 'incomplete':
+        return 'Deep research failed. Please try again in a few moments.';
+      default:
+        return 'Deep research finished without a usable result. Please try again in a few moments.';
+    }
   }
 
   private async persistDeepResearchStatus(
@@ -720,7 +856,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return `${trimmed.slice(0, 157)}…`;
   }
 
-  private buildDeepResearchRequestExtras(): DeepResearchRequestExtras {
+  private buildDeepResearchRequestExtras(model?: string | null): DeepResearchRequestExtras {
     const tools: Array<Record<string, unknown>> = [];
 
     const enableWebSearch = this.parseBooleanEnv(
@@ -772,7 +908,60 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       extras.max_tool_calls = maxToolCalls;
     }
 
+    const reasoningSummaryRaw = this.config
+      .get<string>('OPENAI_DEEP_RESEARCH_REASONING_SUMMARY')
+      ?.trim()
+      .toLowerCase();
+    const reasoningEffortRaw = this.config
+      .get<string>('OPENAI_DEEP_RESEARCH_REASONING_EFFORT')
+      ?.trim()
+      .toLowerCase();
+
+    let reasoningSummary: 'auto' | 'disabled' | null = 'auto';
+    if (reasoningSummaryRaw === 'disabled') {
+      reasoningSummary = 'disabled';
+    } else if (reasoningSummaryRaw === 'auto') {
+      reasoningSummary = 'auto';
+    }
+
+    const requestedEffort: 'low' | 'medium' | 'high' =
+      reasoningEffortRaw === 'low' || reasoningEffortRaw === 'high'
+        ? (reasoningEffortRaw as 'low' | 'high')
+        : 'medium';
+
+    const supportedEfforts = this.getSupportedReasoningEfforts(model);
+    const fallbackEffort = supportedEfforts.includes('medium') ? 'medium' : supportedEfforts[0];
+    const reasoningEffort = supportedEfforts.includes(requestedEffort)
+      ? requestedEffort
+      : fallbackEffort;
+
+    if (requestedEffort !== reasoningEffort) {
+      this.logger.warn(
+        `[writing-desk research] reasoning effort "${requestedEffort}" is not supported for model "${
+          model ?? 'unknown'
+        }" – falling back to "${reasoningEffort}"`,
+      );
+    }
+
+    extras.reasoning = {
+      summary: reasoningSummary,
+      effort: reasoningEffort,
+    };
+
     return extras;
+  }
+
+  private getSupportedReasoningEfforts(model?: string | null): Array<'low' | 'medium' | 'high'> {
+    if (!model) {
+      return ['medium'];
+    }
+
+    const normalisedModel = model.trim().toLowerCase();
+    if (normalisedModel === 'o4-mini-deep-research' || normalisedModel.startsWith('o4-mini-deep-research@')) {
+      return ['medium'];
+    }
+
+    return ['low', 'medium', 'high'];
   }
 
   private async resolveUserMpName(userId: string): Promise<string | null> {
