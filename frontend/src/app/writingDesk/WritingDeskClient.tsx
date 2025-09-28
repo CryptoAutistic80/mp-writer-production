@@ -1155,7 +1155,7 @@ export default function WritingDeskClient() {
         {phase === 'summary' && (
           <div className="result" aria-live="polite">
             <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
-            <p className="section-sub">We’ve generated some clarifying questions before moving on to research.</p>
+            <p className="section-sub">Thanks for all the information. When you’re ready, start the deep research and I’ll dig into the evidence.</p>
 
             {serverError && (
               <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
@@ -1219,7 +1219,6 @@ export default function WritingDeskClient() {
                   <div className="research-notes">
                     {researchContent ? (
                       <ReactMarkdown
-                        linkTarget="_blank"
                         skipHtml
                         components={{
                           a: ({ node, ...props }) => (
