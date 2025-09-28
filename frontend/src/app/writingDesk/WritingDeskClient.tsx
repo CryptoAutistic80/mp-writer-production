@@ -71,7 +71,49 @@ type DeepResearchHandshakeResponse = {
   streamPath?: string | null;
 };
 
-const MAX_RESEARCH_ACTIVITY_ITEMS = 5;
+const MAX_RESEARCH_ACTIVITY_ITEMS = 50;
+
+const extractReasoningSummary = (value: unknown): string | null => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const summary = extractReasoningSummary(item);
+      if (summary) return summary;
+    }
+    return null;
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const preferredKeys = [
+      'summary',
+      'text',
+      'message',
+      'content',
+      'output_text',
+      'value',
+      'delta',
+    ];
+
+    for (const key of preferredKeys) {
+      if (key in record) {
+        const summary = extractReasoningSummary(record[key]);
+        if (summary) return summary;
+      }
+    }
+
+    for (const item of Object.values(record)) {
+      const summary = extractReasoningSummary(item);
+      if (summary) return summary;
+    }
+  }
+
+  return null;
+};
 
 const describeResearchEvent = (event: { type?: string; [key: string]: any }): string | null => {
   if (!event || typeof event.type !== 'string') return null;
@@ -91,11 +133,13 @@ const describeResearchEvent = (event: { type?: string; [key: string]: any }): st
     case 'response.code_interpreter_call.completed':
       return 'Completed data analysis via code interpreter.';
     case 'response.reasoning.delta': {
-      const summary = typeof event.delta === 'string' ? event.delta.trim() : '';
-      return summary.length > 0 ? summary : null;
+      const summary = extractReasoningSummary(event.delta ?? event);
+      return summary ?? null;
     }
-    case 'response.reasoning.done':
-      return 'Reasoning summary updated.';
+    case 'response.reasoning.done': {
+      const summary = extractReasoningSummary(event.reasoning ?? event.delta ?? event);
+      return summary ?? 'Reasoning summary updated.';
+    }
     default:
       return null;
   }
