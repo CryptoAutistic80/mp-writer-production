@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
@@ -1154,7 +1155,7 @@ export default function WritingDeskClient() {
         {phase === 'summary' && (
           <div className="result" aria-live="polite">
             <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
-            <p className="section-sub">We’ve generated some clarifying questions before moving on to research.</p>
+            <p className="section-sub">Thanks for all the information. When you’re ready, start the deep research and I’ll dig into the evidence.</p>
 
             {serverError && (
               <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
@@ -1215,20 +1216,22 @@ export default function WritingDeskClient() {
               {(hasResearchContent || researchStatus === 'running') && (
                 <div style={{ marginTop: 12 }}>
                   <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Research notes</h5>
-                  <pre
-                    style={{
-                      whiteSpace: 'pre-wrap',
-                      backgroundColor: '#f9fafb',
-                      padding: 12,
-                      borderRadius: 8,
-                      maxHeight: 320,
-                      overflowY: 'auto',
-                      fontFamily: 'inherit',
-                      fontSize: '0.95rem',
-                    }}
-                  >
-                    {researchContent || 'Collecting evidence…'}
-                  </pre>
+                  <div className="research-notes">
+                    {researchContent ? (
+                      <ReactMarkdown
+                        skipHtml
+                        components={{
+                          a: ({ node, ...props }) => (
+                            <a {...props} target="_blank" rel="noreferrer noopener" />
+                          ),
+                        }}
+                      >
+                        {researchContent}
+                      </ReactMarkdown>
+                    ) : (
+                      <p className="research-notes__placeholder">Collecting evidence…</p>
+                    )}
+                  </div>
                 </div>
               )}
               {researchResponseId && (
