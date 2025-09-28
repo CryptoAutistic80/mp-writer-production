@@ -7,6 +7,8 @@ import {
   WritingDeskJobSnapshot,
   WritingDeskJobFormSnapshot,
   WritingDeskJobRecord,
+  WRITING_DESK_RESEARCH_STATUSES,
+  WritingDeskResearchStatus,
 } from './writing-desk-jobs.types';
 import { EncryptionService } from '../crypto/encryption.service';
 
@@ -41,6 +43,9 @@ export class WritingDeskJobsService {
       followUpAnswersCiphertext: this.encryption.encryptObject(sanitized.followUpAnswers),
       notes: sanitized.notes,
       responseId: sanitized.responseId,
+      researchContent: sanitized.researchContent,
+      researchResponseId: sanitized.researchResponseId,
+      researchStatus: sanitized.researchStatus,
     };
 
     const saved = await this.repository.upsertActiveJob(userId, payload);
@@ -69,6 +74,11 @@ export class WritingDeskJobsService {
       const trimmed = value.trim();
       return trimmed.length > 0 ? trimmed : null;
     };
+    const normaliseMultiline = (value: string | undefined) => {
+      if (typeof value !== 'string') return null;
+      const normalised = value.replace(/\r\n/g, '\n');
+      return normalised.trim().length > 0 ? normalised : null;
+    };
 
     const form: WritingDeskJobFormSnapshot = {
       issueDetail: trim(input.form?.issueDetail),
@@ -96,6 +106,11 @@ export class WritingDeskJobsService {
       ? Math.min(Math.floor(input.followUpIndex), Math.max(maxFollowUps - 1, 0))
       : 0;
 
+    const rawStatus = typeof input.researchStatus === 'string' ? input.researchStatus.trim() : '';
+    const researchStatus = (WRITING_DESK_RESEARCH_STATUSES as readonly string[]).includes(rawStatus)
+      ? (rawStatus as WritingDeskResearchStatus)
+      : 'idle';
+
     return {
       phase: input.phase,
       stepIndex,
@@ -105,6 +120,9 @@ export class WritingDeskJobsService {
       followUpAnswers: alignedAnswers,
       notes: trimNullable(input.notes),
       responseId: trimNullable(input.responseId),
+      researchContent: normaliseMultiline(input.researchContent),
+      researchResponseId: trimNullable(input.researchResponseId),
+      researchStatus,
     };
   }
 
@@ -126,6 +144,9 @@ export class WritingDeskJobsService {
       followUpAnswers,
       notes: record.notes ?? null,
       responseId: record.responseId ?? null,
+      researchContent: record.researchContent ?? null,
+      researchResponseId: record.researchResponseId ?? null,
+      researchStatus: (record as any)?.researchStatus ?? 'idle',
       createdAt,
       updatedAt,
     };
@@ -187,6 +208,9 @@ export class WritingDeskJobsService {
       followUpAnswers: snapshot.followUpAnswers,
       notes: snapshot.notes ?? null,
       responseId: snapshot.responseId ?? null,
+      researchContent: snapshot.researchContent ?? null,
+      researchResponseId: snapshot.researchResponseId ?? null,
+      researchStatus: snapshot.researchStatus,
       createdAt: snapshot.createdAt?.toISOString?.() ?? new Date().toISOString(),
       updatedAt: snapshot.updatedAt?.toISOString?.() ?? new Date().toISOString(),
     };
