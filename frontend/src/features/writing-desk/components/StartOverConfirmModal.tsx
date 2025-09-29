@@ -37,8 +37,9 @@ export default function StartOverConfirmModal({ open, onConfirm, onCancel }: Sta
           Start over?
         </h2>
         <p style={{ marginBottom: 16, color: '#334155', lineHeight: 1.6 }}>
-          Starting over will erase your current answers, follow-up questions, and any saved progress for
-          this letter.
+          <strong style={{ color: '#b91c1c' }}>Warning:</strong> Starting over will erase your current answers, follow-up
+          questions, and any saved progress for this letter. You will also forfeit any credits already spent on this
+          session.
         </p>
         <p style={{ marginBottom: 20, color: '#475569' }}>Do you want to begin again?</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
