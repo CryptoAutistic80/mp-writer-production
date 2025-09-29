@@ -190,6 +190,7 @@ export default function WritingDeskClient() {
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
   const deepResearchCreditCost = 0.7;
+  const letterCreditCost = 0.2;
   const formatCredits = (value: number) => {
     const rounded = Math.round(value * 100) / 100;
     return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -1418,7 +1419,7 @@ export default function WritingDeskClient() {
                 type="button"
                 className="btn-secondary"
                 onClick={() => setEditIntakeModalOpen(true)}
-                disabled={loading}
+                disabled={loading || researchStatus === 'running'}
               >
                 Edit intake answers
               </button>
@@ -1427,19 +1428,51 @@ export default function WritingDeskClient() {
                   type="button"
                   className="btn-secondary"
                   onClick={() => handleEditFollowUpQuestion(0)}
-                  disabled={loading}
+                  disabled={loading || researchStatus === 'running'}
                 >
                   Review follow-up answers
                 </button>
               )}
-              <button type="button" className="btn-primary" disabled={loading}>
-                Create my letter
-              </button>
+              {researchStatus === 'completed' && (
+                <button
+                  type="button"
+                  className="btn-primary create-letter-button"
+                  disabled={loading}
+                >
+                  Create my letter (costs {formatCredits(letterCreditCost)} credits)
+                </button>
+              )}
             </div>
           </div>
         )}
       </div>
       </section>
+      <style jsx>{`
+        @keyframes create-letter-jiggle {
+          0%, 100% {
+            transform: translateX(0);
+          }
+          15% {
+            transform: translateX(-2px) rotate(-1deg);
+          }
+          30% {
+            transform: translateX(2px) rotate(1deg);
+          }
+          45% {
+            transform: translateX(-2px) rotate(-1deg);
+          }
+          60% {
+            transform: translateX(2px) rotate(1deg);
+          }
+          75% {
+            transform: translateX(-1px) rotate(-0.5deg);
+          }
+        }
+
+        .create-letter-button {
+          animation: create-letter-jiggle 1.6s ease-in-out infinite;
+        }
+      `}</style>
     </>
   );
 }
