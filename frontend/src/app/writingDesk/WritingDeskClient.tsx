@@ -1261,10 +1261,14 @@ export default function WritingDeskClient() {
                 )}
               </div>
               {researchStatus === 'running' && (
-                <div style={{ marginTop: 12 }}>
-                  <p style={{ color: '#2563eb', fontStyle: 'italic' }}>
-                    Gathering evidence — this may take several minutes, please be patient and have a cup of tea.
-                  </p>
+                <div className="research-progress" role="status" aria-live="polite">
+                  <span className="research-progress__spinner" aria-hidden="true" />
+                  <div className="research-progress__content">
+                    <p>
+                      Gathering evidence — this may take several minutes, please be patient and have a cup of tea.
+                    </p>
+                    <p>We&apos;ll keep posting updates in the activity feed below while the research continues.</p>
+                  </div>
                 </div>
               )}
               {researchStatus === 'running' && researchActivities.length > 0 && (

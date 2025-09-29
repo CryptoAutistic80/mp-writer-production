@@ -1332,6 +1332,52 @@ body {
   background-color: rgba(55, 65, 81, 0.45);
 }
 
+.research-progress {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.95rem;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+}
+
+.research-progress__spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  border: 3px solid rgba(59, 130, 246, 0.25);
+  border-top-color: #2563eb;
+  animation: research-progress-spin 0.85s linear infinite;
+  flex-shrink: 0;
+}
+
+.research-progress__content p {
+  margin: 0 0 4px;
+}
+
+.research-progress__content p:last-child {
+  margin-bottom: 0;
+  color: #1f2937;
+}
+
+.research-progress__content p:first-child {
+  font-style: italic;
+}
+
+@keyframes research-progress-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Start Writing button panel */
 .hero-section .card.card-compact {
   /* Extremely compact: just a touch above the button */
