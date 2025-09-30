@@ -120,6 +120,25 @@ interface LetterCompletePayload {
   rawJson: string;
 }
 
+interface LetterDocumentInput {
+  mpName?: string | null;
+  mpAddress1?: string | null;
+  mpAddress2?: string | null;
+  mpCity?: string | null;
+  mpCounty?: string | null;
+  mpPostcode?: string | null;
+  date?: string | null;
+  letterContentHtml?: string | null;
+  senderName?: string | null;
+  senderAddress1?: string | null;
+  senderAddress2?: string | null;
+  senderAddress3?: string | null;
+  senderCity?: string | null;
+  senderCounty?: string | null;
+  senderPostcode?: string | null;
+  references?: string[] | null;
+}
+
 interface LetterContext {
   mpName: string;
   mpAddress1: string;
@@ -620,23 +639,44 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
           if (!apiKey) {
             const stub = this.buildStubLetter({ job: baselineJob, tone, context, research });
+            const stubDocument = this.buildLetterDocumentHtml({
+              mpName: stub.mp_name,
+              mpAddress1: stub.mp_address_1,
+              mpAddress2: stub.mp_address_2,
+              mpCity: stub.mp_city,
+              mpCounty: stub.mp_county,
+              mpPostcode: stub.mp_postcode,
+              date: stub.date,
+              letterContentHtml: stub.letter_content,
+              senderName: stub.sender_name,
+              senderAddress1: stub.sender_address_1,
+              senderAddress2: stub.sender_address_2,
+              senderAddress3: stub.sender_address_3,
+              senderCity: stub.sender_city,
+              senderCounty: stub.sender_county,
+              senderPostcode: stub.sender_postcode,
+              references: stub.references,
+            });
             const rawJson = JSON.stringify(stub);
             await this.persistLetterResult(userId, baselineJob, {
               status: 'completed',
               tone,
               responseId: 'dev-stub',
-              content: stub.letter_content,
+              content: stubDocument,
               references: stub.references ?? [],
               json: rawJson,
             });
-            send({ type: 'letter_delta', html: stub.letter_content });
+            send({ type: 'letter_delta', html: stubDocument });
             send({
               type: 'complete',
-              letter: this.toLetterCompletePayload(stub, {
-                responseId: 'dev-stub',
-                tone,
-                rawJson,
-              }),
+              letter: this.toLetterCompletePayload(
+                { ...stub, letter_content: stubDocument },
+                {
+                  responseId: 'dev-stub',
+                  tone,
+                  rawJson,
+                },
+              ),
               remainingCredits,
             });
             complete();
@@ -689,7 +729,25 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 send({ type: 'delta', text: delta });
                 const preview = this.extractLetterPreview(jsonBuffer);
                 if (preview !== null) {
-                  send({ type: 'letter_delta', html: preview });
+                  const previewDocument = this.buildLetterDocumentHtml({
+                    mpName: context.mpName,
+                    mpAddress1: context.mpAddress1,
+                    mpAddress2: context.mpAddress2,
+                    mpCity: context.mpCity,
+                    mpCounty: context.mpCounty,
+                    mpPostcode: context.mpPostcode,
+                    date: context.today,
+                    letterContentHtml: preview,
+                    senderName: context.senderName,
+                    senderAddress1: context.senderAddress1,
+                    senderAddress2: context.senderAddress2,
+                    senderAddress3: context.senderAddress3,
+                    senderCity: context.senderCity,
+                    senderCounty: context.senderCounty,
+                    senderPostcode: context.senderPostcode,
+                    references: [],
+                  });
+                  send({ type: 'letter_delta', html: previewDocument });
                 }
               }
               continue;
@@ -698,7 +756,25 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             if (eventType === 'response.output_text.done') {
               const preview = this.extractLetterPreview(jsonBuffer);
               if (preview !== null) {
-                send({ type: 'letter_delta', html: preview });
+                const previewDocument = this.buildLetterDocumentHtml({
+                  mpName: context.mpName,
+                  mpAddress1: context.mpAddress1,
+                  mpAddress2: context.mpAddress2,
+                  mpCity: context.mpCity,
+                  mpCounty: context.mpCounty,
+                  mpPostcode: context.mpPostcode,
+                  date: context.today,
+                  letterContentHtml: preview,
+                  senderName: context.senderName,
+                  senderAddress1: context.senderAddress1,
+                  senderAddress2: context.senderAddress2,
+                  senderAddress3: context.senderAddress3,
+                  senderCity: context.senderCity,
+                  senderCounty: context.senderCounty,
+                  senderPostcode: context.senderPostcode,
+                  references: [],
+                });
+                send({ type: 'letter_delta', html: previewDocument });
               }
               continue;
             }
@@ -708,23 +784,46 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
               const parsed = this.parseLetterResult(finalText);
               const references = Array.isArray(parsed.references) ? parsed.references : [];
+              const finalDocument = this.buildLetterDocumentHtml({
+                mpName: parsed.mp_name,
+                mpAddress1: parsed.mp_address_1,
+                mpAddress2: parsed.mp_address_2,
+                mpCity: parsed.mp_city,
+                mpCounty: parsed.mp_county,
+                mpPostcode: parsed.mp_postcode,
+                date: parsed.date,
+                letterContentHtml: parsed.letter_content,
+                senderName: parsed.sender_name,
+                senderAddress1: parsed.sender_address_1,
+                senderAddress2: parsed.sender_address_2,
+                senderAddress3: parsed.sender_address_3,
+                senderCity: parsed.sender_city,
+                senderCounty: parsed.sender_county,
+                senderPostcode: parsed.sender_postcode,
+                references,
+              });
 
               await this.persistLetterResult(userId, baselineJob, {
                 status: 'completed',
                 tone,
                 responseId,
-                content: parsed.letter_content,
+                content: finalDocument,
                 references,
                 json: finalText,
               });
 
+              send({ type: 'letter_delta', html: finalDocument });
+
               send({
                 type: 'complete',
-                letter: this.toLetterCompletePayload(parsed, {
-                  responseId,
-                  tone,
-                  rawJson: finalText,
-                }),
+                letter: this.toLetterCompletePayload(
+                  { ...parsed, letter_content: finalDocument },
+                  {
+                    responseId,
+                    tone,
+                    rawJson: finalText,
+                  },
+                ),
                 remainingCredits,
               });
               complete();
@@ -1895,6 +1994,156 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       sender_postcode: context.senderPostcode || '',
       references: [],
     };
+  }
+
+  private buildLetterDocumentHtml(input: LetterDocumentInput): string {
+    const sections: string[] = [];
+    const mpLines = this.buildAddressLines({
+      name: input.mpName,
+      line1: input.mpAddress1,
+      line2: input.mpAddress2,
+      line3: null,
+      city: input.mpCity,
+      county: input.mpCounty,
+      postcode: input.mpPostcode,
+    });
+    if (mpLines.length > 0) {
+      sections.push(`<p>${mpLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
+    }
+
+    const formattedDate = this.formatLetterDisplayDate(input.date);
+    if (formattedDate) {
+      sections.push(`<p>${this.escapeLetterHtml(formattedDate)}</p>`);
+    }
+
+    if (input.letterContentHtml) {
+      sections.push(input.letterContentHtml);
+    }
+
+    const senderLines = this.buildAddressLines({
+      name: input.senderName,
+      line1: input.senderAddress1,
+      line2: input.senderAddress2,
+      line3: input.senderAddress3,
+      city: input.senderCity,
+      county: input.senderCounty,
+      postcode: input.senderPostcode,
+    });
+
+    const hasAddressDetail = senderLines.slice(1).some((line) => line.trim().length > 0);
+    if (hasAddressDetail && this.shouldAppendSenderAddress(input.letterContentHtml ?? '', senderLines)) {
+      sections.push(`<p>${senderLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
+    }
+
+    const references = Array.isArray(input.references)
+      ? input.references.filter((ref) => typeof ref === 'string' && ref.trim().length > 0)
+      : [];
+    if (references.length > 0) {
+      sections.push('<p><strong>References</strong></p>');
+      sections.push(
+        `<ul>${references
+          .map((ref) => {
+            const trimmed = ref.trim();
+            if (!trimmed) return '';
+            const escaped = this.escapeLetterHtml(trimmed);
+            return `<li><a href="${escaped}" target="_blank" rel="noreferrer noopener">${escaped}</a></li>`;
+          })
+          .filter((entry) => entry.length > 0)
+          .join('')}</ul>`,
+      );
+    }
+
+    return sections.join('');
+  }
+
+  private buildAddressLines(input: {
+    name?: string | null;
+    line1?: string | null;
+    line2?: string | null;
+    line3?: string | null;
+    city?: string | null;
+    county?: string | null;
+    postcode?: string | null;
+  }): string[] {
+    const lines: string[] = [];
+    const push = (value?: string | null) => {
+      if (typeof value !== 'string') return;
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        lines.push(trimmed);
+      }
+    };
+
+    push(input.name);
+    push(input.line1);
+    push(input.line2);
+    push(input.line3);
+
+    const city = typeof input.city === 'string' ? input.city.trim() : '';
+    const county = typeof input.county === 'string' ? input.county.trim() : '';
+    const postcode = typeof input.postcode === 'string' ? input.postcode.trim() : '';
+    const locality = [city, county].filter((part) => part.length > 0).join(', ');
+
+    if (locality && postcode) {
+      lines.push(`${locality} ${postcode}`.trim());
+    } else if (locality) {
+      lines.push(locality);
+    } else if (postcode) {
+      lines.push(postcode);
+    }
+
+    return lines;
+  }
+
+  private escapeLetterHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private formatLetterDisplayDate(value: string | null | undefined): string {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const isoMatch = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+    if (!isoMatch) {
+      return trimmed;
+    }
+    const [year, month, day] = trimmed.split('-');
+    if (!year || !month || !day) return trimmed;
+    return `${day}/${month}/${year}`;
+  }
+
+  private shouldAppendSenderAddress(letterHtml: string, senderLines: string[]): boolean {
+    if (senderLines.length === 0) return false;
+    const addressDetail = senderLines.slice(1).filter((line) => line.trim().length > 0);
+    if (addressDetail.length === 0) return false;
+    const text = this.normaliseLetterPlainText(letterHtml);
+    if (!text) return true;
+    const lower = text.toLowerCase();
+    const name = senderLines[0]?.trim()?.toLowerCase();
+    const hasName = name ? lower.includes(name) : false;
+    const hasAddress = addressDetail.some((line) => lower.includes(line.trim().toLowerCase()));
+    return !(hasName && hasAddress);
+  }
+
+  private normaliseLetterPlainText(value: string | null | undefined): string {
+    if (typeof value !== 'string') return '';
+    return value
+      .replace(/<br\s*\/?\s*>/gi, '\n')
+      .replace(/<\/(p|div|h\d)>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private toLetterCompletePayload(

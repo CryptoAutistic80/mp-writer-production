@@ -14,6 +14,7 @@ import {
   WRITING_DESK_LETTER_TONES,
 } from '../../features/writing-desk/types';
 import { startLetterComposition } from '../../features/writing-desk/api/letter';
+import { composeLetterHtml, letterHtmlToPlainText } from '../../features/writing-desk/utils/composeLetterHtml';
 
 type StepKey = 'issueDescription';
 
@@ -829,9 +830,29 @@ export default function WritingDeskClient() {
       setLetterResponseId(job.letterResponseId ?? null);
       setLetterRawJson(job.letterJson ?? null);
       letterJsonBufferRef.current = '';
+      let resumeLetterHtml: string | null = null;
       if (job.letterJson) {
         try {
           const parsed = JSON.parse(job.letterJson) as Record<string, any>;
+          const parsedReferences = Array.isArray(parsed.references) ? parsed.references : [];
+          resumeLetterHtml = composeLetterHtml({
+            mpName: parsed.mp_name ?? '',
+            mpAddress1: parsed.mp_address_1 ?? '',
+            mpAddress2: parsed.mp_address_2 ?? '',
+            mpCity: parsed.mp_city ?? '',
+            mpCounty: parsed.mp_county ?? '',
+            mpPostcode: parsed.mp_postcode ?? '',
+            date: parsed.date ?? '',
+            letterContentHtml: parsed.letter_content ?? '',
+            senderName: parsed.sender_name ?? '',
+            senderAddress1: parsed.sender_address_1 ?? '',
+            senderAddress2: parsed.sender_address_2 ?? '',
+            senderAddress3: parsed.sender_address_3 ?? '',
+            senderCity: parsed.sender_city ?? '',
+            senderCounty: parsed.sender_county ?? '',
+            senderPostcode: parsed.sender_postcode ?? '',
+            references: parsedReferences,
+          });
           setLetterMetadata({
             mpName: parsed.mp_name ?? '',
             mpAddress1: parsed.mp_address_1 ?? '',
@@ -840,7 +861,7 @@ export default function WritingDeskClient() {
             mpCounty: parsed.mp_county ?? '',
             mpPostcode: parsed.mp_postcode ?? '',
             date: parsed.date ?? '',
-            letterContent: parsed.letter_content ?? '',
+            letterContent: resumeLetterHtml ?? parsed.letter_content ?? '',
             senderName: parsed.sender_name ?? '',
             senderAddress1: parsed.sender_address_1 ?? '',
             senderAddress2: parsed.sender_address_2 ?? '',
@@ -848,7 +869,7 @@ export default function WritingDeskClient() {
             senderCity: parsed.sender_city ?? '',
             senderCounty: parsed.sender_county ?? '',
             senderPostcode: parsed.sender_postcode ?? '',
-            references: Array.isArray(parsed.references) ? parsed.references : [],
+            references: parsedReferences,
             responseId: job.letterResponseId ?? null,
             tone: job.letterTone ?? null,
             rawJson: job.letterJson ?? '',
@@ -859,8 +880,12 @@ export default function WritingDeskClient() {
       } else {
         setLetterMetadata(null);
       }
-      if (nextLetterStatus === 'completed' && typeof job.letterContent === 'string') {
-        setLetterContentHtml(job.letterContent);
+      const resolvedLetterContent =
+        typeof job.letterContent === 'string' && job.letterContent.trim().length > 0
+          ? job.letterContent
+          : resumeLetterHtml ?? '';
+      if (nextLetterStatus === 'completed') {
+        setLetterContentHtml(resolvedLetterContent);
         setLetterPhase('completed');
         setLetterError(null);
         setLetterStatusMessage(null);
@@ -873,13 +898,13 @@ export default function WritingDeskClient() {
         setLetterReasoningVisible(true);
         setLetterMetadata(null);
       } else if (nextLetterStatus === 'error') {
-        setLetterContentHtml(job.letterContent ?? '');
+        setLetterContentHtml(resolvedLetterContent);
         setLetterPhase('error');
         setLetterError('Letter drafting did not finish. Start again when ready.');
         setLetterReasoningVisible(true);
         setLetterMetadata(null);
       } else {
-        setLetterContentHtml(job.letterContent ?? '');
+        setLetterContentHtml(resolvedLetterContent);
         setLetterPhase('idle');
         setLetterError(null);
         setLetterStatusMessage(null);
@@ -1364,12 +1389,12 @@ export default function WritingDeskClient() {
     try {
       if (typeof window !== 'undefined' && 'ClipboardItem' in window && navigator.clipboard && 'write' in navigator.clipboard) {
         const htmlBlob = new Blob([letterContentHtml], { type: 'text/html' });
-        const plainText = letterContentHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const plainText = letterHtmlToPlainText(letterContentHtml);
         const textBlob = new Blob([plainText], { type: 'text/plain' });
         const item = new (window as any).ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob });
         await (navigator.clipboard as any).write([item]);
       } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(letterContentHtml);
+        await navigator.clipboard.writeText(letterHtmlToPlainText(letterContentHtml));
       } else {
         throw new Error('Clipboard API not available');
       }
@@ -1377,7 +1402,7 @@ export default function WritingDeskClient() {
     } catch (error) {
       try {
         if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(letterContentHtml);
+          await navigator.clipboard.writeText(letterHtmlToPlainText(letterContentHtml));
           setLetterCopyState('copied');
           return;
         }
@@ -1924,49 +1949,6 @@ export default function WritingDeskClient() {
                     Compose another letter
                   </button>
                 </div>
-                <div style={{ marginTop: 16 }}>
-                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Addresses</h5>
-                  <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-                    <div>
-                      <strong>MP</strong>
-                      <p style={{ margin: '4px 0 0 0' }}>
-                        {letterMetadata.mpName}
-                        <br />
-                        {[letterMetadata.mpAddress1, letterMetadata.mpAddress2, letterMetadata.mpCity, letterMetadata.mpCounty]
-                          .filter(Boolean)
-                          .join(', ')}
-                        <br />
-                        {letterMetadata.mpPostcode}
-                      </p>
-                    </div>
-                    <div>
-                      <strong>Sender</strong>
-                      <p style={{ margin: '4px 0 0 0' }}>
-                        {letterMetadata.senderName}
-                        <br />
-                        {[letterMetadata.senderAddress1, letterMetadata.senderAddress2, letterMetadata.senderAddress3, letterMetadata.senderCity, letterMetadata.senderCounty]
-                          .filter(Boolean)
-                          .join(', ')}
-                        <br />
-                        {letterMetadata.senderPostcode}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                {letterMetadata.references && letterMetadata.references.length > 0 && (
-                  <div style={{ marginTop: 16 }}>
-                    <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>References</h5>
-                    <ul style={{ paddingLeft: 18, margin: 0 }}>
-                      {letterMetadata.references.map((ref, index) => (
-                        <li key={`${ref}-${index}`} style={{ marginBottom: 4 }}>
-                          <a href={ref} target="_blank" rel="noreferrer noopener">
-                            {ref}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </div>
             )}
 
