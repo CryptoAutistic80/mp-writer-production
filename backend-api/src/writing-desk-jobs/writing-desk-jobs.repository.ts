@@ -31,6 +31,12 @@ export class WritingDeskJobsRepository {
       researchContent: string | null;
       researchResponseId: string | null;
       researchStatus: string;
+      letterStatus: string;
+      letterTone: string | null;
+      letterResponseId: string | null;
+      letterContent: string | null;
+      letterReferences: string[];
+      letterJson: string | null;
     },
   ): Promise<WritingDeskJobRecord> {
     const doc = await this.model

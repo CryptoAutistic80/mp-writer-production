@@ -7,7 +7,11 @@ import {
   WritingDeskJobSnapshot,
   WritingDeskJobFormSnapshot,
   WritingDeskJobRecord,
+  WRITING_DESK_LETTER_STATUSES,
+  WRITING_DESK_LETTER_TONES,
   WRITING_DESK_RESEARCH_STATUSES,
+  WritingDeskLetterStatus,
+  WritingDeskLetterTone,
   WritingDeskResearchStatus,
 } from './writing-desk-jobs.types';
 import { EncryptionService } from '../crypto/encryption.service';
@@ -46,6 +50,12 @@ export class WritingDeskJobsService {
       researchContent: sanitized.researchContent,
       researchResponseId: sanitized.researchResponseId,
       researchStatus: sanitized.researchStatus,
+      letterStatus: sanitized.letterStatus,
+      letterTone: sanitized.letterTone,
+      letterResponseId: sanitized.letterResponseId,
+      letterContent: sanitized.letterContent,
+      letterReferences: sanitized.letterReferences,
+      letterJson: sanitized.letterJson,
     };
 
     const saved = await this.repository.upsertActiveJob(userId, payload);
@@ -108,6 +118,22 @@ export class WritingDeskJobsService {
       ? (rawStatus as WritingDeskResearchStatus)
       : 'idle';
 
+    const rawLetterStatus = typeof input.letterStatus === 'string' ? input.letterStatus.trim() : '';
+    const letterStatus = (WRITING_DESK_LETTER_STATUSES as readonly string[]).includes(rawLetterStatus)
+      ? (rawLetterStatus as WritingDeskLetterStatus)
+      : 'idle';
+
+    const rawLetterTone = typeof input.letterTone === 'string' ? input.letterTone.trim() : '';
+    const letterTone = (WRITING_DESK_LETTER_TONES as readonly string[]).includes(rawLetterTone)
+      ? (rawLetterTone as WritingDeskLetterTone)
+      : null;
+
+    const letterReferences = Array.isArray(input.letterReferences)
+      ? input.letterReferences
+          .map((value) => trim(value))
+          .filter((value) => value.length > 0)
+      : [];
+
     return {
       phase: input.phase,
       stepIndex,
@@ -120,6 +146,12 @@ export class WritingDeskJobsService {
       researchContent: normaliseMultiline(input.researchContent),
       researchResponseId: trimNullable(input.researchResponseId),
       researchStatus,
+      letterStatus,
+      letterTone,
+      letterResponseId: trimNullable(input.letterResponseId),
+      letterContent: normaliseMultiline(input.letterContent),
+      letterReferences,
+      letterJson: normaliseMultiline(input.letterJson),
     };
   }
 
@@ -144,6 +176,14 @@ export class WritingDeskJobsService {
       researchContent: record.researchContent ?? null,
       researchResponseId: record.researchResponseId ?? null,
       researchStatus: (record as any)?.researchStatus ?? 'idle',
+      letterStatus: (record as any)?.letterStatus ?? 'idle',
+      letterTone: (record as any)?.letterTone ?? null,
+      letterResponseId: (record as any)?.letterResponseId ?? null,
+      letterContent: record.letterContent ?? null,
+      letterReferences: Array.isArray((record as any)?.letterReferences)
+        ? ((record as any).letterReferences as string[])
+        : [],
+      letterJson: (record as any)?.letterJson ?? null,
       createdAt,
       updatedAt,
     };
@@ -218,6 +258,12 @@ export class WritingDeskJobsService {
       researchContent: snapshot.researchContent ?? null,
       researchResponseId: snapshot.researchResponseId ?? null,
       researchStatus: snapshot.researchStatus,
+      letterStatus: snapshot.letterStatus,
+      letterTone: snapshot.letterTone ?? null,
+      letterResponseId: snapshot.letterResponseId ?? null,
+      letterContent: snapshot.letterContent ?? null,
+      letterReferences: Array.isArray(snapshot.letterReferences) ? snapshot.letterReferences : [],
+      letterJson: snapshot.letterJson ?? null,
       createdAt: snapshot.createdAt?.toISOString?.() ?? new Date().toISOString(),
       updatedAt: snapshot.updatedAt?.toISOString?.() ?? new Date().toISOString(),
     };

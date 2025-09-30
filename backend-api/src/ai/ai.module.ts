@@ -5,9 +5,18 @@ import { WritingDeskJobsModule } from '../writing-desk-jobs/writing-desk-jobs.mo
 import { UserMpModule } from '../user-mp/user-mp.module';
 import { AiService } from './ai.service';
 import { AiController } from './ai.controller';
+import { UsersModule } from '../users/users.module';
+import { UserAddressModule } from '../user-address-store/user-address.module';
 
 @Module({
-  imports: [ConfigModule, UserCreditsModule, forwardRef(() => WritingDeskJobsModule), UserMpModule],
+  imports: [
+    ConfigModule,
+    UserCreditsModule,
+    forwardRef(() => WritingDeskJobsModule),
+    UserMpModule,
+    UsersModule,
+    UserAddressModule,
+  ],
   controllers: [AiController],
   providers: [AiService],
   exports: [AiService],

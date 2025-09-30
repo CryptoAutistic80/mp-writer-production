@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { WritingDeskJobsService } from './writing-desk-jobs.service';
 import { UpsertActiveWritingDeskJobDto } from './dto/upsert-active-writing-desk-job.dto';
 import { StartDeepResearchDto } from './dto/start-deep-research.dto';
+import { StartLetterDto } from './dto/start-letter.dto';
 import { AiService } from '../ai/ai.service';
 
 @UseGuards(JwtAuthGuard)
@@ -66,6 +67,27 @@ export class WritingDeskJobsController {
     return {
       jobId: activeJob.jobId,
       streamPath: `/api/ai/writing-desk/deep-research?${params.toString()}`,
+    };
+  }
+
+  @Post('letter/start')
+  async startLetter(@Req() req: any, @Body() body: StartLetterDto) {
+    const activeJob = await this.jobs.getActiveJobForUser(req.user.id);
+    if (!activeJob) {
+      throw new BadRequestException('We could not find an active letter to compose. Save your answers and try again.');
+    }
+
+    if (body?.jobId && body.jobId !== activeJob.jobId) {
+      throw new ConflictException('Your saved letter changed. Refresh the page before composing the letter again.');
+    }
+
+    const params = new URLSearchParams();
+    params.set('jobId', activeJob.jobId);
+    params.set('tone', body.tone);
+
+    return {
+      jobId: activeJob.jobId,
+      streamPath: `/api/ai/writing-desk/letter?${params.toString()}`,
     };
   }
 }
