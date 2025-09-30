@@ -5,7 +5,10 @@ Project skeleton generated with Nx (Next.js + NestJS) following the instructions
 Quick Start
 - Install Node.js 20+ and Docker
 - From the workspace root `mp-writer/`:
-  - Dev: `npx nx serve backend-api` and `npx nx serve frontend`
+  - Dev: First start MongoDB, then run backend and frontend in separate terminals:
+    - Terminal 1 (MongoDB): `docker compose up mongo`
+    - Terminal 2 (Backend): `PORT=4000 npx nx serve backend-api`
+    - Terminal 3 (Frontend): `npx nx dev frontend` (runs on default port 3000)
   - Build: `npx nx build backend-api` and `npx nx build frontend`
   - Docker Compose (Mongo + API + Frontend): `docker compose up --build`
 
