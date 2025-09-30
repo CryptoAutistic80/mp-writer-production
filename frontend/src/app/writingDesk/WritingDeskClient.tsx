@@ -115,6 +115,13 @@ type LetterStreamMessage =
   | { type: 'complete'; letter: LetterStreamLetterPayload; remainingCredits: number | null }
   | { type: 'error'; message: string; remainingCredits?: number | null };
 
+const createLetterRunId = () => {
+  if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
 const extractReasoningSummary = (value: unknown): string | null => {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -668,8 +675,19 @@ export default function WritingDeskClient() {
       setLetterRemainingCredits(null);
       setLetterCopyState('idle');
       setLetterReasoningVisible(true);
+      setLetterMetadata(null);
       letterJsonBufferRef.current = '';
-      const source = new EventSource(streamPath, { withCredentials: true });
+      let resolvedPath = streamPath;
+      if (typeof window !== 'undefined') {
+        try {
+          const url = new URL(streamPath, window.location.origin);
+          url.searchParams.set('runId', createLetterRunId());
+          resolvedPath = url.toString();
+        } catch {
+          // ignore malformed paths and fall back to the provided value
+        }
+      }
+      const source = new EventSource(resolvedPath, { withCredentials: true });
       letterSourceRef.current = source;
 
       source.onmessage = (event) => {
@@ -757,7 +775,7 @@ export default function WritingDeskClient() {
       setLetterStatusMessage(null);
     };
   },
-  [appendLetterEvent, closeLetterStream, updateCreditsFromStream],
+  [appendLetterEvent, closeLetterStream, setLetterMetadata, updateCreditsFromStream],
   );
 
   const beginLetterComposition = useCallback(
