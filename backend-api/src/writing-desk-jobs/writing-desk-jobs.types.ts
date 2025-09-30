@@ -6,6 +6,20 @@ export const WRITING_DESK_RESEARCH_STATUSES = ['idle', 'running', 'completed', '
 
 export type WritingDeskResearchStatus = (typeof WRITING_DESK_RESEARCH_STATUSES)[number];
 
+export const WRITING_DESK_LETTER_STATUSES = ['idle', 'generating', 'completed', 'error'] as const;
+
+export type WritingDeskLetterStatus = (typeof WRITING_DESK_LETTER_STATUSES)[number];
+
+export const WRITING_DESK_LETTER_TONES = [
+  'formal',
+  'polite_but_firm',
+  'empathetic',
+  'urgent',
+  'neutral',
+] as const;
+
+export type WritingDeskLetterTone = (typeof WRITING_DESK_LETTER_TONES)[number];
+
 export interface WritingDeskJobFormSnapshot {
   issueDescription: string;
 }
@@ -24,6 +38,12 @@ export interface WritingDeskJobSnapshot {
   researchContent: string | null;
   researchResponseId: string | null;
   researchStatus: WritingDeskResearchStatus;
+  letterStatus: WritingDeskLetterStatus;
+  letterTone: WritingDeskLetterTone | null;
+  letterResponseId: string | null;
+  letterContent: string | null;
+  letterReferences: string[];
+  letterJson: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +69,12 @@ export interface WritingDeskJobRecord {
   researchContent: string | null;
   researchResponseId: string | null;
   researchStatus: WritingDeskResearchStatus;
+  letterStatus: WritingDeskLetterStatus;
+  letterTone: WritingDeskLetterTone | null;
+  letterResponseId: string | null;
+  letterContent: string | null;
+  letterReferences: string[];
+  letterJson: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -66,6 +92,12 @@ export interface ActiveWritingDeskJobResource {
   researchContent: string | null;
   researchResponseId: string | null;
   researchStatus: WritingDeskResearchStatus;
+  letterStatus: WritingDeskLetterStatus;
+  letterTone: WritingDeskLetterTone | null;
+  letterResponseId: string | null;
+  letterContent: string | null;
+  letterReferences: string[];
+  letterJson: string | null;
   createdAt: string;
   updatedAt: string;
 }

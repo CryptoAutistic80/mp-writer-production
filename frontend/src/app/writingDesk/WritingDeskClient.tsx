@@ -6,7 +6,15 @@ import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJ
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
-import { ActiveWritingDeskJob, UpsertActiveWritingDeskJobPayload } from '../../features/writing-desk/types';
+import {
+  ActiveWritingDeskJob,
+  UpsertActiveWritingDeskJobPayload,
+  WritingDeskLetterStatus,
+  WritingDeskLetterTone,
+  WRITING_DESK_LETTER_TONES,
+} from '../../features/writing-desk/types';
+import { startLetterComposition } from '../../features/writing-desk/api/letter';
+import { composeLetterHtml, letterHtmlToPlainText } from '../../features/writing-desk/utils/composeLetterHtml';
 
 type StepKey = 'issueDescription';
 
@@ -32,6 +40,29 @@ const initialFormState: FormState = {
   issueDescription: '',
 };
 
+const LETTER_TONE_LABELS: Record<WritingDeskLetterTone, { label: string; description: string }> = {
+  formal: {
+    label: 'Formal',
+    description: 'Traditional parliamentary tone: respectful, precise, and structured.',
+  },
+  polite_but_firm: {
+    label: 'Polite but firm',
+    description: 'Courteous but clear about expectations and urgency.',
+  },
+  empathetic: {
+    label: 'Empathetic',
+    description: 'Centres the human impact with warmth and compassion.',
+  },
+  urgent: {
+    label: 'Urgent',
+    description: 'Direct and time-sensitive while remaining respectful.',
+  },
+  neutral: {
+    label: 'Neutral',
+    description: 'Calm, factual tone that lets the evidence speak for itself.',
+  },
+};
+
 type ResearchStatus = 'idle' | 'running' | 'completed' | 'error';
 
 type DeepResearchStreamMessage =
@@ -53,6 +84,43 @@ type DeepResearchHandshakeResponse = {
 };
 
 const MAX_RESEARCH_ACTIVITY_ITEMS = 10;
+
+interface LetterStreamLetterPayload {
+  mpName: string;
+  mpAddress1: string;
+  mpAddress2: string;
+  mpCity: string;
+  mpCounty: string;
+  mpPostcode: string;
+  date: string;
+  letterContent: string;
+  senderName: string;
+  senderAddress1: string;
+  senderAddress2: string;
+  senderAddress3: string;
+  senderCity: string;
+  senderCounty: string;
+  senderPostcode: string;
+  references: string[];
+  responseId: string | null;
+  tone: WritingDeskLetterTone;
+  rawJson: string;
+}
+
+type LetterStreamMessage =
+  | { type: 'status'; status: string; remainingCredits?: number | null }
+  | { type: 'event'; event: { type?: string; [key: string]: any } }
+  | { type: 'delta'; text: string }
+  | { type: 'letter_delta'; html: string }
+  | { type: 'complete'; letter: LetterStreamLetterPayload; remainingCredits: number | null }
+  | { type: 'error'; message: string; remainingCredits?: number | null };
+
+const createLetterRunId = () => {
+  if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
 
 const extractReasoningSummary = (value: unknown): string | null => {
   if (typeof value === 'string') {
@@ -186,6 +254,22 @@ export default function WritingDeskClient() {
   const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary'>();
   const lastResearchEventRef = useRef<number>(0);
   const lastResearchResumeAttemptRef = useRef<number>(0);
+  const [letterStatus, setLetterStatus] = useState<WritingDeskLetterStatus>('idle');
+  const [letterPhase, setLetterPhase] = useState<'idle' | 'tone' | 'streaming' | 'completed' | 'error'>('idle');
+  const [selectedTone, setSelectedTone] = useState<WritingDeskLetterTone | null>(null);
+  const [letterContentHtml, setLetterContentHtml] = useState<string>('');
+  const [letterReferences, setLetterReferences] = useState<string[]>([]);
+  const [letterResponseId, setLetterResponseId] = useState<string | null>(null);
+  const [letterRawJson, setLetterRawJson] = useState<string | null>(null);
+  const [letterError, setLetterError] = useState<string | null>(null);
+  const [letterEvents, setLetterEvents] = useState<Array<{ id: string; text: string }>>([]);
+  const [letterStatusMessage, setLetterStatusMessage] = useState<string | null>(null);
+  const [letterCopyState, setLetterCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [letterRemainingCredits, setLetterRemainingCredits] = useState<number | null>(null);
+  const [letterReasoningVisible, setLetterReasoningVisible] = useState(true);
+  const [letterMetadata, setLetterMetadata] = useState<LetterStreamLetterPayload | null>(null);
+  const letterSourceRef = useRef<EventSource | null>(null);
+  const letterJsonBufferRef = useRef<string>('');
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -216,6 +300,32 @@ export default function WritingDeskClient() {
     }
   }, []);
 
+  const closeLetterStream = useCallback(() => {
+    if (letterSourceRef.current) {
+      letterSourceRef.current.close();
+      letterSourceRef.current = null;
+    }
+  }, []);
+
+  const resetLetter = useCallback(() => {
+    closeLetterStream();
+    setLetterStatus('idle');
+    setLetterPhase('idle');
+    setSelectedTone(null);
+    setLetterContentHtml('');
+    setLetterReferences([]);
+    setLetterResponseId(null);
+    setLetterRawJson(null);
+    setLetterError(null);
+    setLetterEvents([]);
+    setLetterStatusMessage(null);
+    setLetterCopyState('idle');
+    setLetterRemainingCredits(null);
+    setLetterReasoningVisible(true);
+    setLetterMetadata(null);
+    letterJsonBufferRef.current = '';
+  }, [closeLetterStream]);
+
   const resetResearch = useCallback(() => {
     closeResearchStream();
     setResearchContent('');
@@ -228,6 +338,14 @@ export default function WritingDeskClient() {
 
   const appendResearchActivity = useCallback((text: string) => {
     setResearchActivities((prev) => {
+      const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text };
+      const next = [entry, ...prev];
+      return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
+    });
+  }, []);
+
+  const appendLetterEvent = useCallback((text: string) => {
+    setLetterEvents((prev) => {
       const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text };
       const next = [entry, ...prev];
       return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
@@ -326,6 +444,16 @@ export default function WritingDeskClient() {
     };
   }, [closeResearchStream]);
 
+  useEffect(() => {
+    return () => {
+      closeLetterStream();
+    };
+  }, [closeLetterStream]);
+
+  useEffect(() => {
+    setLetterCopyState('idle');
+  }, [letterContentHtml]);
+
   const generatingMessage = `Generating follow-up questions${'.'.repeat((ellipsisCount % 5) + 1)}`;
 
   const resetFollowUps = useCallback(() => {
@@ -335,7 +463,8 @@ export default function WritingDeskClient() {
     setNotes(null);
     setResponseId(null);
     resetResearch();
-  }, [resetResearch]);
+    resetLetter();
+  }, [resetLetter, resetResearch]);
 
   const resetLocalState = useCallback(() => {
     setForm({ ...initialFormState });
@@ -347,7 +476,8 @@ export default function WritingDeskClient() {
     setLoading(false);
     setShowSummaryDetails(false);
     resetFollowUps();
-  }, [resetFollowUps]);
+    resetLetter();
+  }, [resetFollowUps, resetLetter]);
 
   const startDeepResearch = useCallback(
     async (options?: { resume?: boolean }) => {
@@ -531,6 +661,156 @@ export default function WritingDeskClient() {
     };
   }, [appendResearchActivity, closeResearchStream, researchStatus, startDeepResearch]);
 
+  const openLetterStream = useCallback(
+    (streamPath: string) => {
+      closeLetterStream();
+      setLetterStatus('generating');
+      setLetterPhase('streaming');
+      setLetterStatusMessage('Composing your letter…');
+      setLetterError(null);
+      setLetterContentHtml('');
+      setLetterReferences([]);
+      setLetterResponseId(null);
+      setLetterRawJson(null);
+      setLetterRemainingCredits(null);
+      setLetterCopyState('idle');
+      setLetterReasoningVisible(true);
+      setLetterMetadata(null);
+      letterJsonBufferRef.current = '';
+      let resolvedPath = streamPath;
+      if (typeof window !== 'undefined') {
+        try {
+          const url = new URL(streamPath, window.location.origin);
+          url.searchParams.set('runId', createLetterRunId());
+          resolvedPath = url.toString();
+        } catch {
+          // ignore malformed paths and fall back to the provided value
+        }
+      }
+      const source = new EventSource(resolvedPath, { withCredentials: true });
+      letterSourceRef.current = source;
+
+      source.onmessage = (event) => {
+        let payload: LetterStreamMessage | null = null;
+        try {
+          payload = JSON.parse(event.data) as LetterStreamMessage;
+        } catch {
+          return;
+        }
+        if (!payload) return;
+
+        if (payload.type === 'status') {
+          setLetterStatusMessage(payload.status);
+          updateCreditsFromStream(payload.remainingCredits);
+          if (typeof payload.remainingCredits === 'number') {
+            setLetterRemainingCredits(Math.round(payload.remainingCredits * 100) / 100);
+          }
+          return;
+        }
+
+        if (payload.type === 'event') {
+          const summary = describeResearchEvent(payload.event);
+          if (summary) {
+            appendLetterEvent(summary);
+          }
+          return;
+        }
+
+        if (payload.type === 'delta') {
+          if (typeof payload.text === 'string') {
+            letterJsonBufferRef.current += payload.text;
+            setLetterRawJson(letterJsonBufferRef.current);
+          }
+          return;
+        }
+
+        if (payload.type === 'letter_delta') {
+          if (typeof payload.html === 'string') {
+            setLetterContentHtml(payload.html);
+            setLetterReasoningVisible(false);
+          }
+          return;
+        }
+
+        if (payload.type === 'complete') {
+          updateCreditsFromStream(payload.remainingCredits);
+          if (typeof payload.remainingCredits === 'number') {
+            setLetterRemainingCredits(Math.round(payload.remainingCredits * 100) / 100);
+          }
+          setLetterReasoningVisible(false);
+          setLetterStatus('completed');
+          setLetterPhase('completed');
+          setLetterStatusMessage('Letter ready');
+          setLetterContentHtml(payload.letter.letterContent);
+          setLetterReferences(payload.letter.references ?? []);
+          setLetterResponseId(payload.letter.responseId ?? null);
+          setLetterRawJson(payload.letter.rawJson ?? null);
+          setSelectedTone(payload.letter.tone ?? null);
+          setLetterMetadata(payload.letter);
+          letterJsonBufferRef.current = payload.letter.rawJson ?? '';
+          setLetterError(null);
+          closeLetterStream();
+          return;
+        }
+
+        if (payload.type === 'error') {
+          updateCreditsFromStream(payload.remainingCredits);
+          if (typeof payload.remainingCredits === 'number') {
+            setLetterRemainingCredits(Math.round(payload.remainingCredits * 100) / 100);
+          }
+          setLetterStatus('error');
+          setLetterPhase('error');
+          setLetterError(payload.message);
+          setLetterStatusMessage(null);
+          setLetterMetadata(null);
+          closeLetterStream();
+        }
+      };
+
+      source.onerror = () => {
+        closeLetterStream();
+        setLetterStatus('error');
+      setLetterPhase('error');
+      setLetterError('The letter stream disconnected. Please try again.');
+      setLetterStatusMessage(null);
+    };
+  },
+  [appendLetterEvent, closeLetterStream, setLetterMetadata, updateCreditsFromStream],
+  );
+
+  const beginLetterComposition = useCallback(
+    async (tone: WritingDeskLetterTone) => {
+      setLetterStatus('generating');
+      setLetterPhase('streaming');
+      setLetterStatusMessage('Preparing your letter request…');
+      setLetterError(null);
+      setSelectedTone(tone);
+      setLetterEvents([]);
+      setLetterCopyState('idle');
+      setLetterRemainingCredits(null);
+      setLetterReasoningVisible(true);
+      letterJsonBufferRef.current = '';
+
+      try {
+        const handshake = await startLetterComposition({ jobId: jobId ?? undefined, tone });
+        if (handshake?.jobId) {
+          setJobId(handshake.jobId);
+        }
+        const url = new URL(handshake.streamPath, window.location.origin);
+        if (!url.searchParams.has('jobId') && (jobId ?? handshake?.jobId)) {
+          url.searchParams.set('jobId', (jobId ?? handshake.jobId) as string);
+        }
+        openLetterStream(url.toString());
+      } catch (error: any) {
+        setLetterStatus('error');
+        setLetterPhase('error');
+        setLetterError(error?.message || 'We could not start letter composition. Please try again.');
+        setLetterStatusMessage(null);
+      }
+    },
+    [jobId, openLetterStream, setJobId],
+  );
+
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {
       closeResearchStream();
@@ -561,6 +841,96 @@ export default function WritingDeskClient() {
       setShowSummaryDetails(false);
       setLoading(false);
       setJobSaveError(null);
+      const nextLetterStatus = job.letterStatus ?? 'idle';
+      setLetterStatus(nextLetterStatus);
+      setSelectedTone(job.letterTone ?? null);
+      setLetterReferences(Array.isArray(job.letterReferences) ? [...job.letterReferences] : []);
+      setLetterResponseId(job.letterResponseId ?? null);
+      setLetterRawJson(job.letterJson ?? null);
+      letterJsonBufferRef.current = '';
+      let resumeLetterHtml: string | null = null;
+      if (job.letterJson) {
+        try {
+          const parsed = JSON.parse(job.letterJson) as Record<string, any>;
+          const parsedReferences = Array.isArray(parsed.references) ? parsed.references : [];
+          resumeLetterHtml = composeLetterHtml({
+            mpName: parsed.mp_name ?? '',
+            mpAddress1: parsed.mp_address_1 ?? '',
+            mpAddress2: parsed.mp_address_2 ?? '',
+            mpCity: parsed.mp_city ?? '',
+            mpCounty: parsed.mp_county ?? '',
+            mpPostcode: parsed.mp_postcode ?? '',
+            date: parsed.date ?? '',
+            letterContentHtml: parsed.letter_content ?? '',
+            senderName: parsed.sender_name ?? '',
+            senderAddress1: parsed.sender_address_1 ?? '',
+            senderAddress2: parsed.sender_address_2 ?? '',
+            senderAddress3: parsed.sender_address_3 ?? '',
+            senderCity: parsed.sender_city ?? '',
+            senderCounty: parsed.sender_county ?? '',
+            senderPostcode: parsed.sender_postcode ?? '',
+            references: parsedReferences,
+          });
+          setLetterMetadata({
+            mpName: parsed.mp_name ?? '',
+            mpAddress1: parsed.mp_address_1 ?? '',
+            mpAddress2: parsed.mp_address_2 ?? '',
+            mpCity: parsed.mp_city ?? '',
+            mpCounty: parsed.mp_county ?? '',
+            mpPostcode: parsed.mp_postcode ?? '',
+            date: parsed.date ?? '',
+            letterContent: resumeLetterHtml ?? parsed.letter_content ?? '',
+            senderName: parsed.sender_name ?? '',
+            senderAddress1: parsed.sender_address_1 ?? '',
+            senderAddress2: parsed.sender_address_2 ?? '',
+            senderAddress3: parsed.sender_address_3 ?? '',
+            senderCity: parsed.sender_city ?? '',
+            senderCounty: parsed.sender_county ?? '',
+            senderPostcode: parsed.sender_postcode ?? '',
+            references: parsedReferences,
+            responseId: job.letterResponseId ?? null,
+            tone: job.letterTone ?? null,
+            rawJson: job.letterJson ?? '',
+          });
+        } catch {
+          setLetterMetadata(null);
+        }
+      } else {
+        setLetterMetadata(null);
+      }
+      const resolvedLetterContent =
+        typeof job.letterContent === 'string' && job.letterContent.trim().length > 0
+          ? job.letterContent
+          : resumeLetterHtml ?? '';
+      if (nextLetterStatus === 'completed') {
+        setLetterContentHtml(resolvedLetterContent);
+        setLetterPhase('completed');
+        setLetterError(null);
+        setLetterStatusMessage(null);
+        setLetterRemainingCredits(null);
+        setLetterReasoningVisible(false);
+      } else if (nextLetterStatus === 'generating') {
+        setLetterContentHtml('');
+        setLetterPhase('error');
+        setLetterError('Letter drafting was interrupted. Start a new letter to continue.');
+        setLetterReasoningVisible(true);
+        setLetterMetadata(null);
+      } else if (nextLetterStatus === 'error') {
+        setLetterContentHtml(resolvedLetterContent);
+        setLetterPhase('error');
+        setLetterError('Letter drafting did not finish. Start again when ready.');
+        setLetterReasoningVisible(true);
+        setLetterMetadata(null);
+      } else {
+        setLetterContentHtml(resolvedLetterContent);
+        setLetterPhase('idle');
+        setLetterError(null);
+        setLetterStatusMessage(null);
+        setLetterReasoningVisible(true);
+        if (!job.letterJson) {
+          setLetterMetadata(null);
+        }
+      }
     },
     [closeResearchStream, resetFollowUps],
   );
@@ -581,6 +951,12 @@ export default function WritingDeskClient() {
       researchContent: job.researchContent ?? null,
       researchResponseId: job.researchResponseId ?? null,
       researchStatus: job.researchStatus ?? 'idle',
+      letterStatus: job.letterStatus ?? 'idle',
+      letterTone: job.letterTone ?? null,
+      letterResponseId: job.letterResponseId ?? null,
+      letterContent: job.letterContent ?? null,
+      letterReferences: Array.isArray(job.letterReferences) ? [...job.letterReferences] : [],
+      letterJson: job.letterJson ?? null,
     }),
     [],
   );
@@ -599,6 +975,12 @@ export default function WritingDeskClient() {
       researchContent,
       researchResponseId: researchResponseId ?? null,
       researchStatus,
+      letterStatus,
+      letterTone: selectedTone,
+      letterResponseId: letterResponseId ?? null,
+      letterContent: letterContentHtml || null,
+      letterReferences,
+      letterJson: letterRawJson,
     }),
     [
       followUpAnswers,
@@ -613,6 +995,12 @@ export default function WritingDeskClient() {
       researchStatus,
       responseId,
       stepIndex,
+      letterStatus,
+      selectedTone,
+      letterResponseId,
+      letterContentHtml,
+      letterReferences,
+      letterRawJson,
     ],
   );
 
@@ -990,8 +1378,58 @@ export default function WritingDeskClient() {
   }, [followUps.length]);
 
   const handleRegenerateFollowUps = useCallback(() => {
+    resetLetter();
     void generateFollowUps('summary');
-  }, [generateFollowUps]);
+  }, [generateFollowUps, resetLetter]);
+
+  const handleShowToneSelection = useCallback(() => {
+    if (letterStatus !== 'idle') {
+      resetLetter();
+    }
+    setLetterPhase('tone');
+    setLetterStatusMessage(null);
+    setLetterError(null);
+    setShowSummaryDetails(false);
+  }, [letterStatus, resetLetter]);
+
+  const handleToneSelect = useCallback(
+    (tone: WritingDeskLetterTone) => {
+      void beginLetterComposition(tone);
+    },
+    [beginLetterComposition],
+  );
+
+  const handleCopyLetter = useCallback(async () => {
+    if (!letterContentHtml) {
+      setLetterCopyState('error');
+      return;
+    }
+    try {
+      if (typeof window !== 'undefined' && 'ClipboardItem' in window && navigator.clipboard && 'write' in navigator.clipboard) {
+        const htmlBlob = new Blob([letterContentHtml], { type: 'text/html' });
+        const plainText = letterHtmlToPlainText(letterContentHtml);
+        const textBlob = new Blob([plainText], { type: 'text/plain' });
+        const item = new (window as any).ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob });
+        await (navigator.clipboard as any).write([item]);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(letterHtmlToPlainText(letterContentHtml));
+      } else {
+        throw new Error('Clipboard API not available');
+      }
+      setLetterCopyState('copied');
+    } catch (error) {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(letterHtmlToPlainText(letterContentHtml));
+          setLetterCopyState('copied');
+          return;
+        }
+      } catch {
+        // ignore nested failure
+      }
+      setLetterCopyState('error');
+    }
+  }, [letterContentHtml]);
 
   return (
     <>
@@ -1222,227 +1660,330 @@ export default function WritingDeskClient() {
 
         {phase === 'summary' && (
           <div className="result" aria-live="polite">
-            <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
-            <p className="section-sub">Thanks for all the information. When you’re ready, click the research button and I’ll dig into the evidence.</p>
-
-            {serverError && (
-              <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
-                <p style={{ color: '#b91c1c' }}>{serverError}</p>
-              </div>
-            )}
-
-            <div className="card" style={{ padding: 16, marginTop: 16 }}>
-              <h4 className="section-title" style={{ fontSize: '1rem' }}>Research evidence</h4>
-              {!hasResearchContent && researchStatus !== 'running' && (
-                <p style={{ marginTop: 8 }}>
-                  Run research to gather cited evidence that supports your letter. We&apos;ll use the research to craft the perfect impactful letter.
-                </p>
-              )}
-              {researchStatus === 'error' && researchError && (
-                <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
-                  <p style={{ color: '#b91c1c' }}>{researchError}</p>
-                </div>
-              )}
-              <div style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={startDeepResearch}
-                  disabled={researchButtonDisabled}
-                >
-                  {researchButtonLabel}
-                </button>
-                {researchCreditState === 'low' && (
-                  <p style={{ marginTop: 8, color: '#b91c1c' }}>
-                    You need at least {formatCredits(deepResearchCreditCost)} credits to run deep research.
-                  </p>
-                )}
-                {researchCreditState === 'loading' && (
-                  <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
-                )}
-              </div>
-              {researchStatus === 'running' && (
-                <div className="research-progress" role="status" aria-live="polite">
-                  <span className="research-progress__spinner" aria-hidden="true" />
-                  <div className="research-progress__content">
-                    <p>
-                      Gathering evidence — this may take several minutes, please be patient and have a cup of tea.
-                    </p>
-                    <p>We&apos;ll keep posting updates in the activity feed below while the research continues.</p>
-                  </div>
-                </div>
-              )}
-              {researchStatus === 'running' && researchActivities.length > 0 && (
-                <div style={{ marginTop: 12 }}>
-                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Latest activity</h5>
-                  <ul style={{ paddingLeft: 18, margin: 0 }}>
-                    {researchActivities.map((activity) => (
-                      <li key={activity.id} style={{ marginBottom: 4 }}>
-                        {activity.text}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {(hasResearchContent || researchStatus === 'running') && (
-                <div style={{ marginTop: 12 }}>
-                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Research notes</h5>
-                  <div className="research-notes">
-                    {researchContent ? (
-                      <ReactMarkdown
-                        skipHtml
-                        components={{
-                          a: ({ node, ...props }) => (
-                            <a {...props} target="_blank" rel="noreferrer noopener" />
-                          ),
-                        }}
-                      >
-                        {researchContent}
-                      </ReactMarkdown>
-                    ) : (
-                      <p className="research-notes__placeholder">Collecting evidence…</p>
-                    )}
-                  </div>
-                </div>
-              )}
-              {researchResponseId && (
-                <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>
-                  Research reference ID: {researchResponseId}
-                </p>
-              )}
-            </div>
-
-            <div
-              style={{
-                marginTop: 12,
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 12,
-              }}
-            >
-              <button
-                type="button"
-                className="btn-link"
-                onClick={() => setShowSummaryDetails((prev) => !prev)}
-                disabled={loading}
-              >
-                {showSummaryDetails ? 'Hide intake details' : 'Show intake details'}
-              </button>
-              {responseId && !showSummaryDetails && (
-                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</span>
-              )}
-            </div>
-
-            {showSummaryDetails && (
+            {letterPhase === 'idle' && (
               <>
-                <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                  <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
-                  <div className="stack" style={{ marginTop: 12 }}>
-                    {steps.map((step) => (
-                      <div key={step.key} style={{ marginBottom: 16 }}>
-                        <div>
-                          <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
-                        </div>
-                        <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
-                      </div>
-                    ))}
+                <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
+                <p className="section-sub">Thanks for all the information. When you’re ready, click the research button and I’ll dig into the evidence.</p>
+
+                {serverError && (
+                  <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
+                    <p style={{ color: '#b91c1c' }}>{serverError}</p>
                   </div>
-                </div>
+                )}
 
                 <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                  <h4 className="section-title" style={{ fontSize: '1rem' }}>Follow-up questions</h4>
-                  {followUps.length > 0 ? (
-                    <ol style={{ marginTop: 8, paddingLeft: 20 }}>
-                      {followUps.map((q, idx) => (
-                        <li key={idx} style={{ marginBottom: 12 }}>
-                          <div
-                            style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'flex-start',
-                              gap: 12,
-                            }}
-                          >
-                            <p style={{ marginBottom: 4 }}>{q}</p>
-                            <button
-                              type="button"
-                              className="btn-link"
-                              onClick={() => handleEditFollowUpQuestion(idx)}
-                              aria-label={`Edit answer for follow-up question ${idx + 1}`}
-                              disabled={loading}
-                            >
-                              Edit answer
-                            </button>
-                          </div>
-                          <p style={{ margin: 0, fontWeight: 600 }}>Your answer:</p>
-                          <p style={{ margin: '4px 0 0 0' }}>{followUpAnswers[idx]}</p>
-                        </li>
-                      ))}
-                    </ol>
-                  ) : (
-                    <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
+                  <h4 className="section-title" style={{ fontSize: '1rem' }}>Research evidence</h4>
+                  {!hasResearchContent && researchStatus !== 'running' && (
+                    <p style={{ marginTop: 8 }}>
+                      Run research to gather cited evidence that supports your letter. We&apos;ll use the research to craft the perfect impactful letter.
+                    </p>
                   )}
-                  {followUps.length > 0 && (
-                    <div className="actions" style={{ marginTop: 12 }}>
-                      <button
-                        type="button"
-                        className="btn-link"
-                        onClick={handleRegenerateFollowUps}
-                        disabled={loading}
-                      >
-                        Ask for new follow-up questions (costs {formatCredits(followUpCreditCost)} credits)
-                      </button>
+                  {researchStatus === 'error' && researchError && (
+                    <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
+                      <p style={{ color: '#b91c1c' }}>{researchError}</p>
                     </div>
                   )}
-                  {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
-                  {responseId && (
-                    <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
+                  <div style={{ marginTop: 12 }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={startDeepResearch}
+                      disabled={researchButtonDisabled}
+                    >
+                      {researchButtonLabel}
+                    </button>
+                    {researchCreditState === 'low' && (
+                      <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                        You need at least {formatCredits(deepResearchCreditCost)} credits to run deep research.
+                      </p>
+                    )}
+                    {researchCreditState === 'loading' && (
+                      <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
+                    )}
+                  </div>
+                  {researchStatus === 'running' && (
+                    <div className="research-progress" role="status" aria-live="polite">
+                      <span className="research-progress__spinner" aria-hidden="true" />
+                      <div className="research-progress__content">
+                        <p>
+                          Gathering evidence — this may take several minutes, please be patient and have a cup of tea.
+                        </p>
+                        <p>We&apos;ll keep posting updates in the activity feed below while the research continues.</p>
+                      </div>
+                    </div>
+                  )}
+                  {researchStatus === 'running' && researchActivities.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Latest activity</h5>
+                      <ul style={{ paddingLeft: 18, margin: 0 }}>
+                        {researchActivities.map((activity) => (
+                          <li key={activity.id} style={{ marginBottom: 4 }}>
+                            {activity.text}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {(hasResearchContent || researchStatus === 'running') && (
+                    <div style={{ marginTop: 12 }}>
+                      <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Research notes</h5>
+                      <div className="research-notes">
+                        {researchContent ? (
+                          <ReactMarkdown
+                            skipHtml
+                            components={{
+                              a: ({ node, ...props }) => (
+                                <a {...props} target="_blank" rel="noreferrer noopener" />
+                              ),
+                            }}
+                          >
+                            {researchContent}
+                          </ReactMarkdown>
+                        ) : (
+                          <p className="research-notes__placeholder">Collecting evidence…</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {researchResponseId && (
+                    <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>
+                      Research reference ID: {researchResponseId}
+                    </p>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn-link"
+                    onClick={() => setShowSummaryDetails((prev) => !prev)}
+                    disabled={loading}
+                  >
+                    {showSummaryDetails ? 'Hide intake details' : 'Show intake details'}
+                  </button>
+                  {responseId && !showSummaryDetails && (
+                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</span>
+                  )}
+                </div>
+
+                {showSummaryDetails && (
+                  <>
+                    <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                      <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
+                      <div className="stack" style={{ marginTop: 12 }}>
+                        {steps.map((step) => (
+                          <div key={step.key} style={{ marginBottom: 16 }}>
+                            <div>
+                              <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
+                            </div>
+                            <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                      <h4 className="section-title" style={{ fontSize: '1rem' }}>Follow-up questions</h4>
+                      {followUps.length > 0 ? (
+                        <ol style={{ marginTop: 8, paddingLeft: 20 }}>
+                          {followUps.map((q, idx) => (
+                            <li key={idx} style={{ marginBottom: 12 }}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'flex-start',
+                                  gap: 12,
+                                }}
+                              >
+                                <p style={{ marginBottom: 4 }}>{q}</p>
+                                <button
+                                  type="button"
+                                  className="btn-link"
+                                  onClick={() => handleEditFollowUpQuestion(idx)}
+                                  aria-label={`Edit answer for follow-up question ${idx + 1}`}
+                                  disabled={loading}
+                                >
+                                  Edit answer
+                                </button>
+                              </div>
+                              <p style={{ margin: 0, fontWeight: 600 }}>Your answer:</p>
+                              <p style={{ margin: '4px 0 0 0' }}>{followUpAnswers[idx]}</p>
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
+                      )}
+                      {followUps.length > 0 && (
+                        <div className="actions" style={{ marginTop: 12 }}>
+                          <button
+                            type="button"
+                            className="btn-link"
+                            onClick={handleRegenerateFollowUps}
+                            disabled={loading}
+                          >
+                            Ask for new follow-up questions (costs {formatCredits(followUpCreditCost)} credits)
+                          </button>
+                        </div>
+                      )}
+                      {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
+                      {responseId && (
+                        <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                <div
+                  className="actions"
+                  style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}
+                >
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setStartOverConfirmOpen(true)}
+                    disabled={loading}
+                  >
+                    Start again
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setEditIntakeModalOpen(true)}
+                    disabled={loading || researchStatus === 'running'}
+                  >
+                    Edit intake answers
+                  </button>
+                  {followUps.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => handleEditFollowUpQuestion(0)}
+                      disabled={loading || researchStatus === 'running'}
+                    >
+                      Review follow-up answers
+                    </button>
+                  )}
+                  {researchStatus === 'completed' && (
+                    <button
+                      type="button"
+                      className="btn-primary create-letter-button"
+                      onClick={handleShowToneSelection}
+                      disabled={loading}
+                    >
+                      Create my letter (costs {formatCredits(letterCreditCost)} credits)
+                    </button>
                   )}
                 </div>
               </>
             )}
 
-            <div
-              className="actions"
-              style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}
-            >
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setStartOverConfirmOpen(true)}
-                disabled={loading}
-              >
-                Start again
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setEditIntakeModalOpen(true)}
-                disabled={loading || researchStatus === 'running'}
-              >
-                Edit intake answers
-              </button>
-              {followUps.length > 0 && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => handleEditFollowUpQuestion(0)}
-                  disabled={loading || researchStatus === 'running'}
-                >
-                  Review follow-up answers
-                </button>
-              )}
-              {researchStatus === 'completed' && (
-                <button
-                  type="button"
-                  className="btn-primary create-letter-button"
-                  disabled={loading}
-                >
-                  Create my letter (costs {formatCredits(letterCreditCost)} credits)
-                </button>
-              )}
-            </div>
+            {letterPhase === 'tone' && (
+              <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Choose a tone for your letter</h4>
+                <p className="section-sub">
+                  Pick the style you want the drafted MP letter to use. You can always compose another letter later in a different tone.
+                </p>
+                <div className="tone-grid" style={{ display: 'grid', gap: 12, marginTop: 16 }}>
+                  {WRITING_DESK_LETTER_TONES.map((tone) => {
+                    const toneInfo = LETTER_TONE_LABELS[tone];
+                    return (
+                      <button
+                        key={tone}
+                        type="button"
+                        className="tone-option"
+                        onClick={() => handleToneSelect(tone)}
+                      >
+                        <span className="tone-option__label">{toneInfo.label}</span>
+                        <span className="tone-option__description">{toneInfo.description}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="actions" style={{ marginTop: 16, display: 'flex', gap: 12 }}>
+                  <button type="button" className="btn-secondary" onClick={() => setLetterPhase('idle')}>
+                    Back to summary
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {letterPhase === 'streaming' && (
+              <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Drafting your letter</h4>
+                {letterStatusMessage && <p style={{ marginTop: 8 }}>{letterStatusMessage}</p>}
+                {letterReasoningVisible && (
+                  <div style={{ marginTop: 16 }}>
+                    <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Reasoning feed</h5>
+                    {letterEvents.length > 0 ? (
+                      <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {letterEvents.map((event) => (
+                          <li key={event.id} style={{ marginBottom: 4 }}>{event.text}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p style={{ margin: 0, color: '#6b7280' }}>The assistant is planning the letter…</p>
+                    )}
+                  </div>
+                )}
+                <div style={{ marginTop: 16 }}>
+                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Letter preview</h5>
+                  <div
+                    className="letter-preview"
+                    dangerouslySetInnerHTML={{ __html: letterContentHtml || '<p>Drafting the opening paragraph…</p>' }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {letterPhase === 'completed' && letterMetadata && (
+              <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Your drafted letter</h4>
+                <p className="section-sub">
+                  Tone: {selectedTone ? LETTER_TONE_LABELS[selectedTone].label : 'Not specified'} · Date {letterMetadata.date || new Date().toISOString().slice(0, 10)}
+                </p>
+                {letterResponseId && (
+                  <p style={{ marginTop: 4, fontSize: '0.85rem', color: '#6b7280' }}>Letter reference ID: {letterResponseId}</p>
+                )}
+                <div
+                  className="letter-preview"
+                  style={{ marginTop: 16 }}
+                  dangerouslySetInnerHTML={{ __html: letterContentHtml || '<p>No content available.</p>' }}
+                />
+                <div className="actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  <button type="button" className="btn-primary" onClick={handleCopyLetter}>
+                    {letterCopyState === 'copied' ? 'Copied!' : letterCopyState === 'error' ? 'Copy failed — try again' : 'Copy letter as HTML'}
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={handleShowToneSelection}>
+                    Compose another letter
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {letterPhase === 'error' && (
+              <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                <h4 className="section-title" style={{ fontSize: '1.1rem', color: '#b91c1c' }}>We couldn&apos;t finish your letter</h4>
+                {letterError && <p style={{ marginTop: 8 }}>{letterError}</p>}
+                <div className="actions" style={{ marginTop: 16, display: 'flex', gap: 12 }}>
+                  <button type="button" className="btn-primary" onClick={handleShowToneSelection}>
+                    Try again
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={() => setLetterPhase('idle')}>
+                    Back to summary
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1476,3 +2017,4 @@ export default function WritingDeskClient() {
     </>
   );
 }
+

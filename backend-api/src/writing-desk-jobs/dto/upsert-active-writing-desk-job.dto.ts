@@ -12,8 +12,12 @@ import {
 } from 'class-validator';
 import {
   WRITING_DESK_JOB_PHASES,
+  WRITING_DESK_LETTER_STATUSES,
+  WRITING_DESK_LETTER_TONES,
   WRITING_DESK_RESEARCH_STATUSES,
   WritingDeskJobPhase,
+  WritingDeskLetterStatus,
+  WritingDeskLetterTone,
   WritingDeskResearchStatus,
 } from '../writing-desk-jobs.types';
 
@@ -74,4 +78,30 @@ export class UpsertActiveWritingDeskJobDto {
   @IsOptional()
   @IsEnum(WRITING_DESK_RESEARCH_STATUSES)
   researchStatus?: WritingDeskResearchStatus;
+
+  @IsOptional()
+  @IsEnum(WRITING_DESK_LETTER_STATUSES)
+  letterStatus?: WritingDeskLetterStatus;
+
+  @IsOptional()
+  @IsEnum(WRITING_DESK_LETTER_TONES)
+  letterTone?: WritingDeskLetterTone;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  letterResponseId?: string;
+
+  @IsOptional()
+  @IsString()
+  letterContent?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  letterReferences?: string[];
+
+  @IsOptional()
+  @IsString()
+  letterJson?: string;
 }
