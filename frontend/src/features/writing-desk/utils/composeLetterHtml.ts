@@ -42,8 +42,9 @@ export const composeLetterHtml = (input: LetterRenderInput): string => {
     sections.push(input.letterContentHtml);
   }
 
+  const senderName = typeof input.senderName === 'string' ? input.senderName.trim() : '';
   const senderLines = buildAddressLines({
-    name: input.senderName,
+    name: null,
     line1: input.senderAddress1,
     line2: input.senderAddress2,
     line3: input.senderAddress3,
@@ -52,8 +53,8 @@ export const composeLetterHtml = (input: LetterRenderInput): string => {
     postcode: input.senderPostcode,
   });
 
-  const hasAddressDetail = senderLines.slice(1).some((line) => line.trim().length > 0);
-  if (hasAddressDetail && shouldAppendSenderAddress(input.letterContentHtml ?? '', senderLines)) {
+  const hasAddressDetail = senderLines.some((line) => line.trim().length > 0);
+  if (hasAddressDetail && shouldAppendSenderAddress(input.letterContentHtml ?? '', senderLines, senderName)) {
     sections.push(`<p>${senderLines.map(escapeHtml).join('<br />')}</p>`);
   }
 
@@ -107,13 +108,24 @@ const buildAddressLines = (input: {
   const city = typeof input.city === 'string' ? input.city.trim() : '';
   const county = typeof input.county === 'string' ? input.county.trim() : '';
   const postcode = typeof input.postcode === 'string' ? input.postcode.trim() : '';
-  const locality = [city, county].filter((part) => part.length > 0).join(', ');
 
-  if (locality && postcode) {
-    lines.push(`${locality} ${postcode}`.trim());
-  } else if (locality) {
-    lines.push(locality);
-  } else if (postcode) {
+  const hasCity = city.length > 0;
+  const hasCounty = county.length > 0;
+  const hasPostcode = postcode.length > 0;
+
+  if (hasCity && !hasCounty && hasPostcode) {
+    lines.push(`${city} ${postcode}`.trim());
+  } else {
+    const locality = [city, county].filter((part) => part.length > 0).join(', ');
+    if (locality.length > 0) {
+      lines.push(locality);
+    }
+    if (hasPostcode) {
+      lines.push(postcode);
+    }
+  }
+
+  if (!hasCity && !hasCounty && hasPostcode && lines[lines.length - 1] !== postcode) {
     lines.push(postcode);
   }
 
@@ -140,17 +152,27 @@ const formatDisplayDate = (value: string | null | undefined): string => {
   return `${day}/${month}/${year}`;
 };
 
-const shouldAppendSenderAddress = (letterHtml: string, senderLines: string[]): boolean => {
-  if (senderLines.length === 0) return false;
-  const addressDetail = senderLines.slice(1).filter((line) => line.trim().length > 0);
+const shouldAppendSenderAddress = (
+  letterHtml: string,
+  senderLines: string[],
+  senderName?: string | null,
+): boolean => {
+  const addressDetail = senderLines.filter((line) => line.trim().length > 0);
   if (addressDetail.length === 0) return false;
   const text = normalisePlainText(letterHtml);
   if (!text) return true;
   const lower = text.toLowerCase();
-  const name = senderLines[0]?.trim()?.toLowerCase();
-  const hasName = name ? lower.includes(name) : false;
   const hasAddress = addressDetail.some((line) => lower.includes(line.trim().toLowerCase()));
-  return !(hasName && hasAddress);
+  if (hasAddress) {
+    return false;
+  }
+  if (typeof senderName === 'string' && senderName.trim().length > 0) {
+    const name = senderName.trim().toLowerCase();
+    if (!lower.includes(name)) {
+      return true;
+    }
+  }
+  return true;
 };
 
 const normalisePlainText = (value: string | null | undefined): string => {
