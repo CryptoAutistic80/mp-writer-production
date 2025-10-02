@@ -40,26 +40,34 @@ const initialFormState: FormState = {
   issueDescription: '',
 };
 
-const LETTER_TONE_LABELS: Record<WritingDeskLetterTone, { label: string; description: string }> = {
+const LETTER_TONE_LABELS: Record<
+  WritingDeskLetterTone,
+  { label: string; description: string; icon: string }
+> = {
   formal: {
     label: 'Formal',
     description: 'Traditional parliamentary tone: respectful, precise, and structured.',
+    icon: '🏛️',
   },
   polite_but_firm: {
     label: 'Polite but firm',
     description: 'Courteous but clear about expectations and urgency.',
+    icon: '🤝',
   },
   empathetic: {
     label: 'Empathetic',
     description: 'Centres the human impact with warmth and compassion.',
+    icon: '💗',
   },
   urgent: {
     label: 'Urgent',
     description: 'Direct and time-sensitive while remaining respectful.',
+    icon: '⏰',
   },
   neutral: {
     label: 'Neutral',
     description: 'Calm, factual tone that lets the evidence speak for itself.',
+    icon: '📄',
   },
 };
 
@@ -1893,7 +1901,7 @@ export default function WritingDeskClient() {
                 <p className="section-sub">
                   Pick the style you want the drafted MP letter to use. You can always compose another letter later in a different tone.
                 </p>
-                <div className="tone-grid" style={{ display: 'grid', gap: 12, marginTop: 16 }}>
+                <div className="tone-grid">
                   {WRITING_DESK_LETTER_TONES.map((tone) => {
                     const toneInfo = LETTER_TONE_LABELS[tone];
                     return (
@@ -1901,8 +1909,12 @@ export default function WritingDeskClient() {
                         key={tone}
                         type="button"
                         className="tone-option"
+                        data-tone={tone}
                         onClick={() => handleToneSelect(tone)}
                       >
+                        <span className="tone-option__badge" aria-hidden="true">
+                          {toneInfo.icon}
+                        </span>
                         <span className="tone-option__label">{toneInfo.label}</span>
                         <span className="tone-option__description">{toneInfo.description}</span>
                       </button>
@@ -2007,6 +2019,163 @@ export default function WritingDeskClient() {
           }
           75% {
             transform: translateX(-1px) rotate(-0.5deg);
+          }
+        }
+
+        .tone-grid {
+          display: grid;
+          gap: 16px;
+          margin-top: 16px;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        }
+
+        @media (max-width: 640px) {
+          .tone-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .tone-option {
+            padding: 16px;
+          }
+        }
+
+        .tone-option {
+          --tone-bg: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+          --tone-border: rgba(148, 163, 184, 0.4);
+          --tone-heading: #0f172a;
+          --tone-text: rgba(30, 41, 59, 0.82);
+          --tone-badge-bg: rgba(15, 23, 42, 0.08);
+          --tone-badge-fg: #0f172a;
+          background: var(--tone-bg);
+          border: 1px solid var(--tone-border);
+          border-radius: 20px;
+          color: var(--tone-text);
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          font-family: inherit;
+          line-height: 1.4;
+          gap: 12px;
+          -webkit-appearance: none;
+          appearance: none;
+          padding: 18px 20px;
+          position: relative;
+          text-align: left;
+          transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+          overflow: hidden;
+        }
+
+        .tone-option::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          background: radial-gradient(circle at top right, rgba(255, 255, 255, 0.55), transparent 55%);
+          opacity: 0;
+          transition: opacity 160ms ease;
+        }
+
+        .tone-option:hover,
+        .tone-option:focus-visible {
+          transform: translateY(-2px);
+          box-shadow: 0 16px 32px rgba(15, 23, 42, 0.16);
+          border-color: transparent;
+        }
+
+        .tone-option:hover::after,
+        .tone-option:focus-visible::after {
+          opacity: 1;
+        }
+
+        .tone-option:focus-visible {
+          outline: 3px solid rgba(59, 130, 246, 0.45);
+          outline-offset: 2px;
+        }
+
+        .tone-option__badge {
+          align-items: center;
+          background: var(--tone-badge-bg);
+          border-radius: 16px;
+          box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+          color: var(--tone-badge-fg);
+          display: inline-flex;
+          font-size: 1.75rem;
+          height: 52px;
+          justify-content: center;
+          width: 52px;
+        }
+
+        .tone-option__label {
+          color: var(--tone-heading);
+          font-size: 1.05rem;
+          font-weight: 600;
+        }
+
+        .tone-option__description {
+          color: var(--tone-text);
+          font-size: 0.9rem;
+          line-height: 1.45;
+        }
+
+        .tone-option[data-tone='formal'] {
+          --tone-bg: linear-gradient(135deg, #f8fafc 0%, #e0f2fe 100%);
+          --tone-border: rgba(59, 130, 246, 0.35);
+          --tone-heading: #1d4ed8;
+          --tone-text: rgba(30, 64, 175, 0.88);
+          --tone-badge-bg: rgba(37, 99, 235, 0.18);
+          --tone-badge-fg: #1e3a8a;
+        }
+
+        .tone-option[data-tone='polite_but_firm'] {
+          --tone-bg: linear-gradient(135deg, #fff7ed 0%, #fde68a 100%);
+          --tone-border: rgba(217, 119, 6, 0.4);
+          --tone-heading: #b45309;
+          --tone-text: rgba(146, 64, 14, 0.9);
+          --tone-badge-bg: rgba(180, 83, 9, 0.18);
+          --tone-badge-fg: #9a3412;
+        }
+
+        .tone-option[data-tone='empathetic'] {
+          --tone-bg: linear-gradient(135deg, #fdf2f8 0%, #ede9fe 100%);
+          --tone-border: rgba(217, 70, 239, 0.35);
+          --tone-heading: #a855f7;
+          --tone-text: rgba(134, 25, 143, 0.86);
+          --tone-badge-bg: rgba(168, 85, 247, 0.2);
+          --tone-badge-fg: #7c3aed;
+        }
+
+        .tone-option[data-tone='urgent'] {
+          --tone-bg: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+          --tone-border: rgba(248, 113, 113, 0.5);
+          --tone-heading: #dc2626;
+          --tone-text: rgba(153, 27, 27, 0.9);
+          --tone-badge-bg: rgba(220, 38, 38, 0.22);
+          --tone-badge-fg: #b91c1c;
+        }
+
+        .tone-option[data-tone='neutral'] {
+          --tone-bg: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+          --tone-border: rgba(71, 85, 105, 0.35);
+          --tone-heading: #334155;
+          --tone-text: rgba(51, 65, 85, 0.88);
+          --tone-badge-bg: rgba(71, 85, 105, 0.18);
+          --tone-badge-fg: #1e293b;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .tone-option {
+            transition: none;
+          }
+
+          .tone-option:hover,
+          .tone-option:focus-visible {
+            transform: none;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+          }
+
+          .tone-option::after {
+            transition: none;
           }
         }
 
