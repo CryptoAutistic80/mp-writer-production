@@ -703,7 +703,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 type: 'json_schema',
                 name: 'mp_letter',
                 strict: true,
-                schema: LETTER_RESPONSE_SCHEMA,
+                schema: this.buildLetterResponseSchema(context),
               },
               verbosity,
             },
@@ -790,23 +790,24 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               const responseId = (normalised as any)?.response?.id ?? null;
               const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
               const parsed = this.parseLetterResult(finalText);
-              const references = Array.isArray(parsed.references) ? parsed.references : [];
+              const merged = this.mergeLetterResultWithContext(parsed, context);
+              const references = Array.isArray(merged.references) ? merged.references : [];
               const finalDocument = this.buildLetterDocumentHtml({
-                mpName: parsed.mp_name,
-                mpAddress1: parsed.mp_address_1,
-                mpAddress2: parsed.mp_address_2,
-                mpCity: parsed.mp_city,
-                mpCounty: parsed.mp_county,
-                mpPostcode: parsed.mp_postcode,
-                date: parsed.date,
-                letterContentHtml: parsed.letter_content,
-                senderName: parsed.sender_name,
-                senderAddress1: parsed.sender_address_1,
-                senderAddress2: parsed.sender_address_2,
-                senderAddress3: parsed.sender_address_3,
-                senderCity: parsed.sender_city,
-                senderCounty: parsed.sender_county,
-                senderPostcode: parsed.sender_postcode,
+                mpName: merged.mp_name,
+                mpAddress1: merged.mp_address_1,
+                mpAddress2: merged.mp_address_2,
+                mpCity: merged.mp_city,
+                mpCounty: merged.mp_county,
+                mpPostcode: merged.mp_postcode,
+                date: merged.date,
+                letterContentHtml: merged.letter_content,
+                senderName: merged.sender_name,
+                senderAddress1: merged.sender_address_1,
+                senderAddress2: merged.sender_address_2,
+                senderAddress3: merged.sender_address_3,
+                senderCity: merged.sender_city,
+                senderCounty: merged.sender_county,
+                senderPostcode: merged.sender_postcode,
                 references,
               });
 
@@ -824,7 +825,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               send({
                 type: 'complete',
                 letter: this.toLetterCompletePayload(
-                  { ...parsed, letter_content: finalDocument },
+                  { ...merged, letter_content: finalDocument },
                   {
                     responseId,
                     tone,
@@ -1879,6 +1880,29 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return LETTER_SYSTEM_PROMPT;
   }
 
+  private buildLetterResponseSchema(context: LetterContext) {
+    const schema = JSON.parse(JSON.stringify(LETTER_RESPONSE_SCHEMA)) as Record<string, any>;
+    const normalise = (value: string | null | undefined): string =>
+      typeof value === 'string' ? value.trim() : '';
+
+    schema.properties.mp_name.const = normalise(context.mpName);
+    schema.properties.mp_address_1.const = normalise(context.mpAddress1);
+    schema.properties.mp_address_2.const = normalise(context.mpAddress2);
+    schema.properties.mp_city.const = normalise(context.mpCity);
+    schema.properties.mp_county.const = normalise(context.mpCounty);
+    schema.properties.mp_postcode.const = normalise(context.mpPostcode);
+    schema.properties.date.const = normalise(context.today);
+    schema.properties.sender_name.const = normalise(context.senderName);
+    schema.properties.sender_address_1.const = normalise(context.senderAddress1);
+    schema.properties.sender_address_2.const = normalise(context.senderAddress2);
+    schema.properties.sender_address_3.const = normalise(context.senderAddress3);
+    schema.properties.sender_city.const = normalise(context.senderCity);
+    schema.properties.sender_county.const = normalise(context.senderCounty);
+    schema.properties.sender_postcode.const = normalise(context.senderPostcode);
+
+    return schema;
+  }
+
   private buildStubLetter(params: {
     job: ActiveWritingDeskJobResource;
     tone: WritingDeskLetterTone;
@@ -2027,8 +2051,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       sections.push(input.letterContentHtml);
     }
 
+    const senderName = typeof input.senderName === 'string' ? input.senderName.trim() : '';
     const senderLines = this.buildAddressLines({
-      name: input.senderName,
+      name: null,
       line1: input.senderAddress1,
       line2: input.senderAddress2,
       line3: input.senderAddress3,
@@ -2037,8 +2062,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       postcode: input.senderPostcode,
     });
 
-    const hasAddressDetail = senderLines.slice(1).some((line) => line.trim().length > 0);
-    if (hasAddressDetail && this.shouldAppendSenderAddress(input.letterContentHtml ?? '', senderLines)) {
+    const hasAddressDetail = senderLines.some((line) => line.trim().length > 0);
+    if (hasAddressDetail && this.shouldAppendSenderAddress(input.letterContentHtml ?? '', senderLines, senderName)) {
       sections.push(`<p>${senderLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
     }
 
@@ -2089,13 +2114,24 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const city = typeof input.city === 'string' ? input.city.trim() : '';
     const county = typeof input.county === 'string' ? input.county.trim() : '';
     const postcode = typeof input.postcode === 'string' ? input.postcode.trim() : '';
-    const locality = [city, county].filter((part) => part.length > 0).join(', ');
 
-    if (locality && postcode) {
-      lines.push(`${locality} ${postcode}`.trim());
-    } else if (locality) {
-      lines.push(locality);
-    } else if (postcode) {
+    const hasCity = city.length > 0;
+    const hasCounty = county.length > 0;
+    const hasPostcode = postcode.length > 0;
+
+    if (hasCity && !hasCounty && hasPostcode) {
+      lines.push(`${city} ${postcode}`.trim());
+    } else {
+      const locality = [city, county].filter((part) => part.length > 0).join(', ');
+      if (locality.length > 0) {
+        lines.push(locality);
+      }
+      if (hasPostcode) {
+        lines.push(postcode);
+      }
+    }
+
+    if (!hasCity && !hasCounty && hasPostcode && lines[lines.length - 1] !== postcode) {
       lines.push(postcode);
     }
 
@@ -2124,17 +2160,27 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return `${day}/${month}/${year}`;
   }
 
-  private shouldAppendSenderAddress(letterHtml: string, senderLines: string[]): boolean {
-    if (senderLines.length === 0) return false;
-    const addressDetail = senderLines.slice(1).filter((line) => line.trim().length > 0);
+  private shouldAppendSenderAddress(
+    letterHtml: string,
+    senderLines: string[],
+    senderName?: string | null,
+  ): boolean {
+    const addressDetail = senderLines.filter((line) => line.trim().length > 0);
     if (addressDetail.length === 0) return false;
     const text = this.normaliseLetterPlainText(letterHtml);
     if (!text) return true;
     const lower = text.toLowerCase();
-    const name = senderLines[0]?.trim()?.toLowerCase();
-    const hasName = name ? lower.includes(name) : false;
     const hasAddress = addressDetail.some((line) => lower.includes(line.trim().toLowerCase()));
-    return !(hasName && hasAddress);
+    if (hasAddress) {
+      return false;
+    }
+    if (typeof senderName === 'string' && senderName.trim().length > 0) {
+      const name = senderName.trim().toLowerCase();
+      if (!lower.includes(name)) {
+        return true;
+      }
+    }
+    return true;
   }
 
   private normaliseLetterPlainText(value: string | null | undefined): string {
@@ -2207,6 +2253,32 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     } catch (error) {
       throw new Error(`Failed to parse letter JSON: ${(error as Error)?.message ?? error}`);
     }
+  }
+
+  private mergeLetterResultWithContext(
+    result: WritingDeskLetterResult,
+    context: LetterContext,
+  ): WritingDeskLetterResult {
+    const normalise = (value: string | null | undefined): string =>
+      typeof value === 'string' ? value.trim() : '';
+
+    return {
+      ...result,
+      mp_name: normalise(context.mpName),
+      mp_address_1: normalise(context.mpAddress1),
+      mp_address_2: normalise(context.mpAddress2),
+      mp_city: normalise(context.mpCity),
+      mp_county: normalise(context.mpCounty),
+      mp_postcode: normalise(context.mpPostcode),
+      date: normalise(context.today),
+      sender_name: normalise(context.senderName),
+      sender_address_1: normalise(context.senderAddress1),
+      sender_address_2: normalise(context.senderAddress2),
+      sender_address_3: normalise(context.senderAddress3),
+      sender_city: normalise(context.senderCity),
+      sender_county: normalise(context.senderCounty),
+      sender_postcode: normalise(context.senderPostcode),
+    };
   }
 
   private extractOutputTextDelta(event: Record<string, unknown>): string | null {
