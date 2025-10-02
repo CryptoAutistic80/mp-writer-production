@@ -277,6 +277,11 @@ const LETTER_TONE_DETAILS: Record<WritingDeskLetterTone, { label: string; prompt
     prompt:
       'Use clear, matter-of-fact language that presents evidence and requests without emotional colouring.',
   },
+  highly_persuasive: {
+    label: 'Highly persuasive',
+    prompt:
+      'Craft a confident, compelling argument that highlights benefits, anticipated outcomes, and stakes while remaining respectful and evidence-led.',
+  },
 };
 
 const LETTER_TONE_SIGN_OFFS: Record<WritingDeskLetterTone, string> = {
@@ -285,6 +290,7 @@ const LETTER_TONE_SIGN_OFFS: Record<WritingDeskLetterTone, string> = {
   empathetic: 'With thanks for your understanding,',
   urgent: 'Yours urgently,',
   neutral: 'Yours sincerely,',
+  highly_persuasive: 'With determination,',
 };
 
 const LETTER_TONE_REQUEST_PREFIX: Record<WritingDeskLetterTone, string> = {
@@ -293,6 +299,7 @@ const LETTER_TONE_REQUEST_PREFIX: Record<WritingDeskLetterTone, string> = {
   empathetic: 'I kindly ask that you',
   urgent: 'Please urgently',
   neutral: 'I ask that you',
+  highly_persuasive: 'I strongly urge you to',
 };
 
 const LETTER_SYSTEM_PROMPT = `You are generating a UK MP letter using stored MP and sender details plus prior user inputs.

@@ -16,6 +16,7 @@ export const WRITING_DESK_LETTER_TONES = [
   'empathetic',
   'urgent',
   'neutral',
+  'highly_persuasive',
 ] as const;
 
 export type WritingDeskLetterTone = (typeof WRITING_DESK_LETTER_TONES)[number];
