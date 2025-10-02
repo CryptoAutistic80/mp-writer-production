@@ -69,6 +69,11 @@ const LETTER_TONE_LABELS: Record<
     description: 'Calm, factual tone that lets the evidence speak for itself.',
     icon: '📄',
   },
+  highly_persuasive: {
+    label: 'Highly persuasive',
+    description: 'Confident, evidence-led case designed to motivate decisive action.',
+    icon: '🎯',
+  },
 };
 
 type ResearchStatus = 'idle' | 'running' | 'completed' | 'error';
@@ -2161,6 +2166,15 @@ export default function WritingDeskClient() {
           --tone-text: rgba(51, 65, 85, 0.88);
           --tone-badge-bg: rgba(71, 85, 105, 0.18);
           --tone-badge-fg: #1e293b;
+        }
+
+        .tone-option[data-tone='highly_persuasive'] {
+          --tone-bg: linear-gradient(135deg, #ecfeff 0%, #cffafe 100%);
+          --tone-border: rgba(14, 165, 233, 0.38);
+          --tone-heading: #0f766e;
+          --tone-text: rgba(15, 118, 110, 0.9);
+          --tone-badge-bg: rgba(13, 148, 136, 0.18);
+          --tone-badge-fg: #115e59;
         }
 
         @media (prefers-reduced-motion: reduce) {
