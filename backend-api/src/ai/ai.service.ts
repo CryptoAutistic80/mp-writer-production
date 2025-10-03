@@ -89,6 +89,7 @@ interface WritingDeskLetterResult {
   mp_county: string;
   mp_postcode: string;
   date: string;
+  subject_line_html: string;
   letter_content: string;
   sender_name: string;
   sender_address_1: string;
@@ -108,6 +109,7 @@ interface LetterCompletePayload {
   mpCounty: string;
   mpPostcode: string;
   date: string;
+  subjectLineHtml: string;
   letterContent: string;
   senderName: string;
   senderAddress1: string;
@@ -146,6 +148,7 @@ interface LetterDocumentInput {
   mpCounty?: string | null;
   mpPostcode?: string | null;
   date?: string | null;
+  subjectLineHtml?: string | null;
   letterContentHtml?: string | null;
   senderName?: string | null;
   senderAddress1?: string | null;
@@ -207,6 +210,11 @@ const LETTER_RESPONSE_SCHEMA = {
       description: 'Date the letter is written (ISO 8601 format recommended).',
       pattern: '^\\d{4}-\\d{2}-\\d{2}$',
     },
+    subject_line_html: {
+      type: 'string',
+      description: 'HTML paragraph containing the subject line, starting with a bold "Subject:" label.',
+      pattern: '^\\s*<p>\\s*<strong>Subject:</strong>.*</p>\\s*$',
+    },
     letter_content: {
       type: 'string',
       description: 'The text body of the letter.',
@@ -256,6 +264,7 @@ const LETTER_RESPONSE_SCHEMA = {
     'mp_county',
     'mp_postcode',
     'date',
+    'subject_line_html',
     'letter_content',
     'sender_name',
     'sender_address_1',
@@ -332,13 +341,14 @@ Goals:
 6. Draw on all prior inputs: user_intake (issue, who is affected, background, requested action); follow_ups (clarifications); deep_research (facts, citations, URLs).
 7. Include only accurate, supportable statements. Add actual URLs used into the references array.
 8. If any stored values are missing, output an empty string for that field, but keep the schema valid.
+9. Set subject_line_html to a single HTML paragraph that begins with <strong>Subject:</strong> followed by the letter’s subject line.
 
 Letter content requirements:
 
 * Opening: state the issue and constituency link.
 * Body: evidence-led argument in chosen tone.
 * Ask: specific, actionable request of the MP.
-* Closing: professional and courteous.
+* Closing: professional and courteous. Sign off using only the sender_name (no addresses or extra details after the name).
 
 Output:
 Return only the JSON object defined by the schema. Do not output explanations or text outside the JSON.`;
@@ -782,6 +792,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           mpCounty: stub.mp_county,
           mpPostcode: stub.mp_postcode,
           date: stub.date,
+          subjectLineHtml: stub.subject_line_html,
           letterContentHtml: stub.letter_content,
           senderName: stub.sender_name,
           senderAddress1: stub.sender_address_1,
@@ -858,6 +869,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             send({ type: 'delta', text: delta });
             const preview = this.extractLetterPreview(jsonBuffer);
             if (preview !== null) {
+              const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
               const previewDocument = this.buildLetterDocumentHtml({
                 mpName: context.mpName,
                 mpAddress1: context.mpAddress1,
@@ -866,6 +878,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 mpCounty: context.mpCounty,
                 mpPostcode: context.mpPostcode,
                 date: context.today,
+                subjectLineHtml: subjectPreview,
                 letterContentHtml: preview,
                 senderName: context.senderName,
                 senderAddress1: context.senderAddress1,
@@ -885,6 +898,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         if (eventType === 'response.output_text.done') {
           const preview = this.extractLetterPreview(jsonBuffer);
           if (preview !== null) {
+            const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
             const previewDocument = this.buildLetterDocumentHtml({
               mpName: context.mpName,
               mpAddress1: context.mpAddress1,
@@ -893,6 +907,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               mpCounty: context.mpCounty,
               mpPostcode: context.mpPostcode,
               date: context.today,
+              subjectLineHtml: subjectPreview,
               letterContentHtml: preview,
               senderName: context.senderName,
               senderAddress1: context.senderAddress1,
@@ -923,6 +938,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             mpCounty: merged.mp_county,
             mpPostcode: merged.mp_postcode,
             date: merged.date,
+            subjectLineHtml: merged.subject_line_html,
             letterContentHtml: merged.letter_content,
             senderName: merged.sender_name,
             senderAddress1: merged.sender_address_1,
@@ -2115,6 +2131,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const signOff = LETTER_TONE_SIGN_OFFS[tone] ?? LETTER_TONE_SIGN_OFFS.neutral;
     const senderName = context.senderName || 'A concerned constituent';
 
+    const subjectSource = intakeSummary.split(/\n+/)[0]?.trim() ?? '';
+    const compactSubject = subjectSource.replace(/\s+/g, ' ').trim();
+    const fallbackSubject = 'Constituent concern requiring your support';
+    const subjectText = compactSubject.length > 0 ? compactSubject : fallbackSubject;
+    const truncatedSubject = subjectText.length > 160 ? `${subjectText.slice(0, 157)}…` : subjectText;
+    const subjectLineHtml = `<p><strong>Subject:</strong> ${escapeHtml(truncatedSubject)}</p>`;
+
     const letterSections: string[] = [
       toParagraph(
         `I am writing as a constituent in ${context.constituency || 'our constituency'} to share the following situation: ${intakeSummary}`,
@@ -2140,6 +2163,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       mp_county: context.mpCounty || '',
       mp_postcode: context.mpPostcode || '',
       date: context.today,
+      subject_line_html: subjectLineHtml,
       letter_content: letterSections.join(''),
       sender_name: context.senderName || '',
       sender_address_1: context.senderAddress1 || '',
@@ -2170,6 +2194,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const formattedDate = this.formatLetterDisplayDate(input.date);
     if (formattedDate) {
       sections.push(`<p>${this.escapeLetterHtml(formattedDate)}</p>`);
+    }
+
+    const subjectLineHtml = typeof input.subjectLineHtml === 'string' ? input.subjectLineHtml.trim() : '';
+    if (subjectLineHtml.length > 0) {
+      sections.push(subjectLineHtml);
     }
 
     if (input.letterContentHtml) {
@@ -2336,6 +2365,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       mpCounty: result.mp_county ?? '',
       mpPostcode: result.mp_postcode ?? '',
       date: result.date ?? '',
+      subjectLineHtml: result.subject_line_html ?? '',
       letterContent: result.letter_content ?? '',
       senderName: result.sender_name ?? '',
       senderAddress1: result.sender_address_1 ?? '',
@@ -2365,6 +2395,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         mp_county: parsed.mp_county ?? '',
         mp_postcode: parsed.mp_postcode ?? '',
         date: parsed.date ?? '',
+        subject_line_html: parsed.subject_line_html ?? '',
         letter_content: parsed.letter_content ?? '',
         sender_name: parsed.sender_name ?? '',
         sender_address_1: parsed.sender_address_1 ?? '',
@@ -2411,8 +2442,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return typeof delta === 'string' ? delta : null;
   }
 
-  private extractLetterPreview(buffer: string): string | null {
-    const marker = '"letter_content":"';
+  private extractStringPreviewField(buffer: string, field: string): string | null {
+    const marker = `"${field}":"`;
     const index = buffer.lastIndexOf(marker);
     if (index === -1) return null;
     const start = index + marker.length;
@@ -2475,6 +2506,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
 
     return result;
+  }
+
+  private extractLetterPreview(buffer: string): string | null {
+    return this.extractStringPreviewField(buffer, 'letter_content');
+  }
+
+  private extractSubjectLinePreview(buffer: string): string | null {
+    return this.extractStringPreviewField(buffer, 'subject_line_html');
   }
 
   private async persistLetterState(
