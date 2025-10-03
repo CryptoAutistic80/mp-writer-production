@@ -203,6 +203,18 @@ pre {
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }
+
+.letter-preview {
+  line-height: 1.6;
+}
+
+.letter-preview p {
+  margin: 0 0 1rem;
+}
+
+.letter-preview p:last-child {
+  margin-bottom: 0;
+}
 .list-item-link svg:last-child {
   height: 1rem;
   transition-property: all;
