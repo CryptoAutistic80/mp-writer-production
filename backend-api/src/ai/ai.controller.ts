@@ -33,8 +33,17 @@ export class AiController {
   }
 
   @Sse('writing-desk/letter')
-  writingDeskLetter(@Req() req: any, @Query('jobId') jobId?: string, @Query('tone') tone?: string) {
+  writingDeskLetter(
+    @Req() req: any,
+    @Query('jobId') jobId?: string,
+    @Query('tone') tone?: string,
+    @Query('resume') resume?: string,
+  ) {
     const userId = req?.user?.id ?? req?.user?._id ?? null;
-    return this.ai.streamWritingDeskLetter(userId, { jobId: jobId ?? null, tone: tone ?? null });
+    return this.ai.streamWritingDeskLetter(userId, {
+      jobId: jobId ?? null,
+      tone: tone ?? null,
+      resume: resume === '1' || resume === 'true',
+    });
   }
 }

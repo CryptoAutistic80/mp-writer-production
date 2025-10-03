@@ -81,9 +81,29 @@ export class WritingDeskJobsController {
       throw new ConflictException('Your saved letter changed. Refresh the page before composing the letter again.');
     }
 
+    const resume = body?.resume === true;
+    const tone = body?.tone ?? activeJob.letterTone;
+
+    if (!tone) {
+      throw new BadRequestException('Select a tone before composing the letter.');
+    }
+
+    if (resume && activeJob.letterStatus !== 'generating') {
+      throw new BadRequestException('There is no letter in progress to resume.');
+    }
+
+    if (resume) {
+      await this.ai.ensureLetterRun(req.user.id, activeJob.jobId, { createIfMissing: false });
+    } else {
+      await this.ai.ensureLetterRun(req.user.id, activeJob.jobId, { tone, restart: true });
+    }
+
     const params = new URLSearchParams();
     params.set('jobId', activeJob.jobId);
-    params.set('tone', body.tone);
+    params.set('tone', tone);
+    if (resume) {
+      params.set('resume', '1');
+    }
 
     return {
       jobId: activeJob.jobId,

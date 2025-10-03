@@ -8,12 +8,13 @@ export interface StartLetterResponse {
 export async function startLetterComposition(input: {
   jobId?: string;
   tone: WritingDeskLetterTone;
+  resume?: boolean;
 }): Promise<StartLetterResponse> {
   const res = await fetch('/api/writing-desk/jobs/active/letter/start', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jobId: input.jobId, tone: input.tone }),
+    body: JSON.stringify({ jobId: input.jobId, tone: input.tone, resume: input.resume === true }),
   });
 
   if (!res.ok) {

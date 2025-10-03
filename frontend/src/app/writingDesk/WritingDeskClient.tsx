@@ -282,6 +282,7 @@ export default function WritingDeskClient() {
   const [letterRemainingCredits, setLetterRemainingCredits] = useState<number | null>(null);
   const [letterReasoningVisible, setLetterReasoningVisible] = useState(true);
   const [letterMetadata, setLetterMetadata] = useState<LetterStreamLetterPayload | null>(null);
+  const [letterPendingAutoResume, setLetterPendingAutoResume] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
   const letterJsonBufferRef = useRef<string>('');
 
@@ -338,6 +339,7 @@ export default function WritingDeskClient() {
     setLetterReasoningVisible(true);
     setLetterMetadata(null);
     letterJsonBufferRef.current = '';
+    setLetterPendingAutoResume(false);
   }, [closeLetterStream]);
 
   const resetResearch = useCallback(() => {
@@ -696,6 +698,7 @@ export default function WritingDeskClient() {
       setLetterReasoningVisible(true);
       setLetterMetadata(null);
       letterJsonBufferRef.current = '';
+      setLetterPendingAutoResume(false);
       let resolvedPath = streamPath;
       if (typeof window !== 'undefined') {
         try {
@@ -830,6 +833,62 @@ export default function WritingDeskClient() {
     [jobId, openLetterStream, setJobId],
   );
 
+  const resumeLetterComposition = useCallback(async () => {
+    setLetterPendingAutoResume(false);
+    if (!selectedTone) {
+      setLetterStatus('error');
+      setLetterPhase('error');
+      setLetterError('We could not resume letter composition. Start again when ready.');
+      setLetterStatusMessage(null);
+      return;
+    }
+
+    setLetterStatus('generating');
+    setLetterPhase('streaming');
+    setLetterStatusMessage('Reconnecting to your letter…');
+    setLetterError(null);
+    setLetterEvents([]);
+    setLetterCopyState('idle');
+    setLetterRemainingCredits(null);
+    setLetterReasoningVisible(true);
+    letterJsonBufferRef.current = '';
+
+    try {
+      const handshake = await startLetterComposition({
+        jobId: jobId ?? undefined,
+        tone: selectedTone,
+        resume: true,
+      });
+      if (handshake?.jobId) {
+        setJobId(handshake.jobId);
+      }
+      const url = new URL(handshake.streamPath, window.location.origin);
+      if (!url.searchParams.has('jobId') && (jobId ?? handshake.jobId)) {
+        url.searchParams.set('jobId', (jobId ?? handshake.jobId) as string);
+      }
+      openLetterStream(url.toString());
+    } catch (error: any) {
+      setLetterStatus('error');
+      setLetterPhase('error');
+      const message =
+        error?.message && typeof error.message === 'string'
+          ? error.message
+          : 'We could not resume letter composition. Start again when ready.';
+      setLetterError(message);
+      setLetterStatusMessage(null);
+    }
+  }, [jobId, openLetterStream, selectedTone, setJobId]);
+
+  useEffect(() => {
+    if (!letterPendingAutoResume) return;
+    if (!hasHandledInitialJob) return;
+    if (letterSourceRef.current) {
+      setLetterPendingAutoResume(false);
+      return;
+    }
+    void resumeLetterComposition();
+  }, [hasHandledInitialJob, letterPendingAutoResume, resumeLetterComposition]);
+
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {
       closeResearchStream();
@@ -921,6 +980,8 @@ export default function WritingDeskClient() {
         typeof job.letterContent === 'string' && job.letterContent.trim().length > 0
           ? job.letterContent
           : resumeLetterHtml ?? '';
+      setLetterPendingAutoResume(false);
+
       if (nextLetterStatus === 'completed') {
         setLetterContentHtml(resolvedLetterContent);
         setLetterPhase('completed');
@@ -929,17 +990,23 @@ export default function WritingDeskClient() {
         setLetterRemainingCredits(null);
         setLetterReasoningVisible(false);
       } else if (nextLetterStatus === 'generating') {
-        setLetterContentHtml('');
-        setLetterPhase('error');
-        setLetterError('Letter drafting was interrupted. Start a new letter to continue.');
+        setLetterContentHtml(resumeLetterHtml ?? '');
+        setLetterPhase('streaming');
+        setLetterError(null);
+        setLetterStatusMessage('Composing your letter…');
+        setLetterRemainingCredits(null);
         setLetterReasoningVisible(true);
         setLetterMetadata(null);
+        setLetterEvents([]);
+        setLetterCopyState('idle');
+        setLetterPendingAutoResume(true);
       } else if (nextLetterStatus === 'error') {
         setLetterContentHtml(resolvedLetterContent);
         setLetterPhase('error');
         setLetterError('Letter drafting did not finish. Start again when ready.');
         setLetterReasoningVisible(true);
         setLetterMetadata(null);
+        setLetterStatusMessage(null);
       } else {
         setLetterContentHtml(resolvedLetterContent);
         setLetterPhase('idle');

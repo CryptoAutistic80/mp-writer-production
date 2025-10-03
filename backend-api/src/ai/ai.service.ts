@@ -66,6 +66,8 @@ const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
 const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
 const BACKGROUND_POLL_INTERVAL_MS = 2000;
 const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
+const LETTER_RUN_BUFFER_SIZE = 2000;
+const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
 
 type LetterStreamPayload =
   | { type: 'status'; status: string; remainingCredits?: number | null }
@@ -118,6 +120,22 @@ interface LetterCompletePayload {
   responseId: string | null;
   tone: WritingDeskLetterTone;
   rawJson: string;
+}
+
+type LetterRunStatus = 'running' | 'completed' | 'error';
+
+interface LetterRun {
+  key: string;
+  userId: string;
+  jobId: string;
+  tone: WritingDeskLetterTone;
+  subject: ReplaySubject<LetterStreamPayload>;
+  status: LetterRunStatus;
+  startedAt: number;
+  cleanupTimer: NodeJS.Timeout | null;
+  promise: Promise<void> | null;
+  responseId: string | null;
+  remainingCredits: number | null;
 }
 
 interface LetterDocumentInput {
@@ -330,6 +348,7 @@ export class AiService {
   private readonly logger = new Logger(AiService.name);
   private openaiClient: any | null = null;
   private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
+  private readonly letterRuns = new Map<string, LetterRun>();
 
   constructor(
     private readonly config: ConfigService,
@@ -571,330 +590,436 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
   streamWritingDeskLetter(
     userId: string | null | undefined,
-    options?: { jobId?: string | null; tone?: string | null },
+    options?: { jobId?: string | null; tone?: string | null; resume?: boolean | null },
   ): Observable<MessageEvent> {
     if (!userId) {
       throw new BadRequestException('User account required');
     }
 
-    const tone = this.normaliseLetterTone(options?.tone ?? null);
+    const resume = options?.resume === true;
+
+    return new Observable<MessageEvent>((subscriber) => {
+      let subscription: Subscription | null = null;
+
+      const attach = async () => {
+        try {
+          const run = await this.beginLetterRun(userId, options?.jobId ?? null, {
+            tone: options?.tone ?? null,
+            createIfMissing: !resume,
+          });
+
+          subscription = run.subject.subscribe({
+            next: (payload) => {
+              if (!subscriber.closed) {
+                subscriber.next({ data: JSON.stringify(payload) });
+              }
+            },
+            error: (error) => {
+              if (!subscriber.closed) {
+                subscriber.error(error);
+              }
+            },
+            complete: () => {
+              if (!subscriber.closed) {
+                subscriber.complete();
+              }
+            },
+          });
+        } catch (error) {
+          if (error instanceof BadRequestException) {
+            if (!subscriber.closed) {
+              subscriber.next({ data: JSON.stringify({ type: 'error', message: error.message }) });
+              subscriber.complete();
+            }
+            return;
+          }
+          if (!subscriber.closed) {
+            subscriber.error(error);
+          }
+        }
+      };
+
+      void attach();
+
+      return () => {
+        if (subscription) {
+          subscription.unsubscribe();
+          subscription = null;
+        }
+      };
+    });
+  }
+
+  async ensureLetterRun(
+    userId: string,
+    requestedJobId: string | null,
+    options?: { tone?: string | null; restart?: boolean; createIfMissing?: boolean },
+  ): Promise<{ jobId: string; status: LetterRunStatus }> {
+    const run = await this.beginLetterRun(userId, requestedJobId, options);
+    return { jobId: run.jobId, status: run.status };
+  }
+
+  private async beginLetterRun(
+    userId: string,
+    requestedJobId: string | null,
+    options?: { tone?: string | null; restart?: boolean; createIfMissing?: boolean },
+  ): Promise<LetterRun> {
+    const baselineJob = await this.resolveActiveWritingDeskJob(userId, requestedJobId);
+    const key = this.getLetterRunKey(userId, baselineJob.jobId);
+    const existing = this.letterRuns.get(key);
+
+    if (existing) {
+      if (options?.restart) {
+        if (existing.status === 'running') {
+          throw new BadRequestException('Letter composition is already running. Please wait for it to finish.');
+        }
+        if (existing.cleanupTimer) {
+          clearTimeout(existing.cleanupTimer);
+        }
+        existing.subject.complete();
+        this.letterRuns.delete(key);
+      } else {
+        return existing;
+      }
+    } else if (options?.createIfMissing === false) {
+      throw new BadRequestException('We could not resume letter composition. Please start a new letter.');
+    }
+
+    const tone = this.normaliseLetterTone(options?.tone ?? baselineJob.letterTone ?? null);
     if (!tone) {
       throw new BadRequestException('Select a tone before composing the letter.');
     }
 
-    return new Observable<MessageEvent>((subscriber) => {
-      let controller: { abort: () => void } | null = null;
-      let closed = false;
+    const researchContent = this.normaliseResearchContent(baselineJob.researchContent ?? null);
+    if (!researchContent) {
+      throw new BadRequestException('Run deep research before composing the letter.');
+    }
 
-      const send = (payload: LetterStreamPayload) => {
-        if (!closed && !subscriber.closed) {
-          subscriber.next({ data: JSON.stringify(payload) });
+    const subject = new ReplaySubject<LetterStreamPayload>(LETTER_RUN_BUFFER_SIZE);
+    const run: LetterRun = {
+      key,
+      userId,
+      jobId: baselineJob.jobId,
+      tone,
+      subject,
+      status: 'running',
+      startedAt: Date.now(),
+      cleanupTimer: null,
+      promise: null,
+      responseId: null,
+      remainingCredits: null,
+    };
+
+    this.letterRuns.set(key, run);
+
+    run.promise = this.executeLetterRun({
+      run,
+      userId,
+      baselineJob,
+      subject,
+      researchContent,
+    }).catch((error) => {
+      this.logger.error(`Letter run encountered an unhandled error: ${(error as Error)?.message ?? error}`);
+      subject.error(error);
+    });
+
+    return run;
+  }
+
+  private async executeLetterRun(params: {
+    run: LetterRun;
+    userId: string;
+    baselineJob: ActiveWritingDeskJobResource;
+    subject: ReplaySubject<LetterStreamPayload>;
+    researchContent: string;
+  }) {
+    const { run, userId, baselineJob, subject, researchContent } = params;
+    const tone = run.tone;
+    let deductionApplied = false;
+    let remainingCredits: number | null = null;
+    let controller: { abort: () => void } | null = null;
+    let jsonBuffer = '';
+
+    const send = (payload: LetterStreamPayload) => {
+      subject.next(payload);
+    };
+
+    try {
+      const { credits: creditsAfterCharge } = await this.userCredits.deductFromMine(userId, LETTER_CREDIT_COST);
+      deductionApplied = true;
+      remainingCredits = Math.round(creditsAfterCharge * 100) / 100;
+      run.remainingCredits = remainingCredits;
+
+      await this.persistLetterState(userId, baselineJob, {
+        status: 'generating',
+        tone,
+        responseId: null,
+        content: null,
+        references: [],
+        json: null,
+      });
+
+      send({ type: 'status', status: 'Composing your letter…', remainingCredits });
+
+      const apiKey = this.config.get<string>('OPENAI_API_KEY');
+      const model = this.config.get<string>('OPENAI_LETTER_MODEL')?.trim() || 'gpt-5';
+      const verbosity = this.normaliseLetterVerbosity(this.config.get<string>('OPENAI_LETTER_VERBOSITY'));
+      const reasoningEffort = this.normaliseLetterReasoningEffort(
+        model,
+        this.config.get<string>('OPENAI_LETTER_REASONING_EFFORT'),
+      );
+
+      const context = await this.resolveLetterContext(userId);
+      const prompt = this.buildLetterPrompt({ job: baselineJob, tone, context, research: researchContent });
+
+      if (!apiKey) {
+        const stub = this.buildStubLetter({ job: baselineJob, tone, context, research: researchContent });
+        const stubDocument = this.buildLetterDocumentHtml({
+          mpName: stub.mp_name,
+          mpAddress1: stub.mp_address_1,
+          mpAddress2: stub.mp_address_2,
+          mpCity: stub.mp_city,
+          mpCounty: stub.mp_county,
+          mpPostcode: stub.mp_postcode,
+          date: stub.date,
+          letterContentHtml: stub.letter_content,
+          senderName: stub.sender_name,
+          senderAddress1: stub.sender_address_1,
+          senderAddress2: stub.sender_address_2,
+          senderAddress3: stub.sender_address_3,
+          senderCity: stub.sender_city,
+          senderCounty: stub.sender_county,
+          senderPostcode: stub.sender_postcode,
+          references: stub.references,
+        });
+        const rawJson = JSON.stringify(stub);
+        await this.persistLetterResult(userId, baselineJob, {
+          status: 'completed',
+          tone,
+          responseId: 'dev-stub',
+          content: stubDocument,
+          references: stub.references ?? [],
+          json: rawJson,
+        });
+        run.status = 'completed';
+        send({ type: 'letter_delta', html: stubDocument });
+        send({
+          type: 'complete',
+          letter: this.toLetterCompletePayload(
+            { ...stub, letter_content: stubDocument },
+            { responseId: 'dev-stub', tone, rawJson },
+          ),
+          remainingCredits,
+        });
+        subject.complete();
+        return;
+      }
+
+      const client = await this.getOpenAiClient(apiKey);
+      const stream = client.responses.stream({
+        model,
+        input: [
+          { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
+          { role: 'user', content: [{ type: 'input_text', text: prompt }] },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'mp_letter',
+            strict: true,
+            schema: this.buildLetterResponseSchema(context),
+          },
+          verbosity,
+        },
+        reasoning: {
+          effort: reasoningEffort,
+          summary: 'auto',
+        },
+        tools: [],
+        store: true,
+        include: ['reasoning.encrypted_content', 'web_search_call.action.sources'],
+      }) as ResponseStreamLike;
+
+      controller = stream.controller ?? null;
+
+      for await (const event of stream) {
+        const normalised = this.normaliseStreamEvent(event);
+        const eventType = typeof normalised.type === 'string' ? normalised.type : null;
+
+        if (eventType?.startsWith('response.reasoning')) {
+          send({ type: 'event', event: normalised });
+          continue;
         }
-      };
 
-      const complete = () => {
-        if (!closed && !subscriber.closed) {
-          subscriber.complete();
-        }
-        closed = true;
-      };
-
-      (async () => {
-        let deductionApplied = false;
-        let remainingCredits: number | null = null;
-        let baselineJob: ActiveWritingDeskJobResource | null = null;
-
-        try {
-          baselineJob = await this.resolveActiveWritingDeskJob(userId, options?.jobId ?? null);
-
-          const researchContent = this.normaliseResearchContent(baselineJob.researchContent ?? null);
-          if (!researchContent) {
-            throw new BadRequestException('Run deep research before composing the letter.');
+        if (eventType === 'response.output_text.delta') {
+          const delta = this.extractOutputTextDelta(normalised);
+          if (delta) {
+            jsonBuffer += delta;
+            send({ type: 'delta', text: delta });
+            const preview = this.extractLetterPreview(jsonBuffer);
+            if (preview !== null) {
+              const previewDocument = this.buildLetterDocumentHtml({
+                mpName: context.mpName,
+                mpAddress1: context.mpAddress1,
+                mpAddress2: context.mpAddress2,
+                mpCity: context.mpCity,
+                mpCounty: context.mpCounty,
+                mpPostcode: context.mpPostcode,
+                date: context.today,
+                letterContentHtml: preview,
+                senderName: context.senderName,
+                senderAddress1: context.senderAddress1,
+                senderAddress2: context.senderAddress2,
+                senderAddress3: context.senderAddress3,
+                senderCity: context.senderCity,
+                senderCounty: context.senderCounty,
+                senderPostcode: context.senderPostcode,
+                references: [],
+              });
+              send({ type: 'letter_delta', html: previewDocument });
+            }
           }
+          continue;
+        }
 
-          const { credits: creditsAfterCharge } = await this.userCredits.deductFromMine(
-            userId,
-            LETTER_CREDIT_COST,
-          );
-          deductionApplied = true;
-          remainingCredits = Math.round(creditsAfterCharge * 100) / 100;
+        if (eventType === 'response.output_text.done') {
+          const preview = this.extractLetterPreview(jsonBuffer);
+          if (preview !== null) {
+            const previewDocument = this.buildLetterDocumentHtml({
+              mpName: context.mpName,
+              mpAddress1: context.mpAddress1,
+              mpAddress2: context.mpAddress2,
+              mpCity: context.mpCity,
+              mpCounty: context.mpCounty,
+              mpPostcode: context.mpPostcode,
+              date: context.today,
+              letterContentHtml: preview,
+              senderName: context.senderName,
+              senderAddress1: context.senderAddress1,
+              senderAddress2: context.senderAddress2,
+              senderAddress3: context.senderAddress3,
+              senderCity: context.senderCity,
+              senderCounty: context.senderCounty,
+              senderPostcode: context.senderPostcode,
+              references: [],
+            });
+            send({ type: 'letter_delta', html: previewDocument });
+          }
+          continue;
+        }
 
-          await this.persistLetterState(userId, baselineJob, {
-            status: 'generating',
-            tone,
-            responseId: null,
-            content: null,
-            references: [],
-            json: null,
+        if (eventType === 'response.completed') {
+          const responseId = (normalised as any)?.response?.id ?? null;
+          run.responseId = typeof responseId === 'string' ? responseId : null;
+          const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
+          const parsed = this.parseLetterResult(finalText);
+          const merged = this.mergeLetterResultWithContext(parsed, context);
+          const references = Array.isArray(merged.references) ? merged.references : [];
+          const finalDocument = this.buildLetterDocumentHtml({
+            mpName: merged.mp_name,
+            mpAddress1: merged.mp_address_1,
+            mpAddress2: merged.mp_address_2,
+            mpCity: merged.mp_city,
+            mpCounty: merged.mp_county,
+            mpPostcode: merged.mp_postcode,
+            date: merged.date,
+            letterContentHtml: merged.letter_content,
+            senderName: merged.sender_name,
+            senderAddress1: merged.sender_address_1,
+            senderAddress2: merged.sender_address_2,
+            senderAddress3: merged.sender_address_3,
+            senderCity: merged.sender_city,
+            senderCounty: merged.sender_county,
+            senderPostcode: merged.sender_postcode,
+            references,
           });
 
-          send({ type: 'status', status: 'Composing your letter…', remainingCredits });
+          await this.persistLetterResult(userId, baselineJob, {
+            status: 'completed',
+            tone,
+            responseId,
+            content: finalDocument,
+            references,
+            json: finalText,
+          });
 
-          const apiKey = this.config.get<string>('OPENAI_API_KEY');
-          const model = this.config.get<string>('OPENAI_LETTER_MODEL')?.trim() || 'gpt-5';
-          const verbosity = this.normaliseLetterVerbosity(
-            this.config.get<string>('OPENAI_LETTER_VERBOSITY'),
-          );
-          const reasoningEffort = this.normaliseLetterReasoningEffort(
-            model,
-            this.config.get<string>('OPENAI_LETTER_REASONING_EFFORT'),
-          );
+          run.status = 'completed';
+          send({ type: 'letter_delta', html: finalDocument });
+          send({
+            type: 'complete',
+            letter: this.toLetterCompletePayload(
+              { ...merged, letter_content: finalDocument },
+              { responseId, tone, rawJson: finalText },
+            ),
+            remainingCredits,
+          });
+          subject.complete();
+          return;
+        }
 
-          const context = await this.resolveLetterContext(userId);
-          const research = researchContent;
-          const prompt = this.buildLetterPrompt({ job: baselineJob, tone, context, research });
-
-          if (!apiKey) {
-            const stub = this.buildStubLetter({ job: baselineJob, tone, context, research });
-            const stubDocument = this.buildLetterDocumentHtml({
-              mpName: stub.mp_name,
-              mpAddress1: stub.mp_address_1,
-              mpAddress2: stub.mp_address_2,
-              mpCity: stub.mp_city,
-              mpCounty: stub.mp_county,
-              mpPostcode: stub.mp_postcode,
-              date: stub.date,
-              letterContentHtml: stub.letter_content,
-              senderName: stub.sender_name,
-              senderAddress1: stub.sender_address_1,
-              senderAddress2: stub.sender_address_2,
-              senderAddress3: stub.sender_address_3,
-              senderCity: stub.sender_city,
-              senderCounty: stub.sender_county,
-              senderPostcode: stub.sender_postcode,
-              references: stub.references,
-            });
-            const rawJson = JSON.stringify(stub);
-            await this.persistLetterResult(userId, baselineJob, {
-              status: 'completed',
-              tone,
-              responseId: 'dev-stub',
-              content: stubDocument,
-              references: stub.references ?? [],
-              json: rawJson,
-            });
-            send({ type: 'letter_delta', html: stubDocument });
-            send({
-              type: 'complete',
-              letter: this.toLetterCompletePayload(
-                { ...stub, letter_content: stubDocument },
-                {
-                  responseId: 'dev-stub',
-                  tone,
-                  rawJson,
-                },
-              ),
-              remainingCredits,
-            });
-            complete();
-            return;
-          }
-
-          const client = await this.getOpenAiClient(apiKey);
-
-          const stream = client.responses.stream({
-            model,
-            input: [
-              { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
-              { role: 'user', content: [{ type: 'input_text', text: prompt }] },
-            ],
-            text: {
-              format: {
-                type: 'json_schema',
-                name: 'mp_letter',
-                strict: true,
-                schema: this.buildLetterResponseSchema(context),
-              },
-              verbosity,
-            },
-            reasoning: {
-              effort: reasoningEffort,
-              summary: 'auto',
-            },
-            tools: [],
-            store: true,
-            include: ['reasoning.encrypted_content', 'web_search_call.action.sources'],
-          }) as ResponseStreamLike;
-
-          controller = stream.controller ?? null;
-
-          let jsonBuffer = '';
-
-          for await (const event of stream) {
-            const normalised = this.normaliseStreamEvent(event);
-            const eventType = typeof normalised.type === 'string' ? normalised.type : null;
-
-            if (eventType?.startsWith('response.reasoning')) {
-              send({ type: 'event', event: normalised });
-              continue;
-            }
-
-            if (eventType === 'response.output_text.delta') {
-              const delta = this.extractOutputTextDelta(normalised);
-              if (delta) {
-                jsonBuffer += delta;
-                send({ type: 'delta', text: delta });
-                const preview = this.extractLetterPreview(jsonBuffer);
-                if (preview !== null) {
-                  const previewDocument = this.buildLetterDocumentHtml({
-                    mpName: context.mpName,
-                    mpAddress1: context.mpAddress1,
-                    mpAddress2: context.mpAddress2,
-                    mpCity: context.mpCity,
-                    mpCounty: context.mpCounty,
-                    mpPostcode: context.mpPostcode,
-                    date: context.today,
-                    letterContentHtml: preview,
-                    senderName: context.senderName,
-                    senderAddress1: context.senderAddress1,
-                    senderAddress2: context.senderAddress2,
-                    senderAddress3: context.senderAddress3,
-                    senderCity: context.senderCity,
-                    senderCounty: context.senderCounty,
-                    senderPostcode: context.senderPostcode,
-                    references: [],
-                  });
-                  send({ type: 'letter_delta', html: previewDocument });
-                }
-              }
-              continue;
-            }
-
-            if (eventType === 'response.output_text.done') {
-              const preview = this.extractLetterPreview(jsonBuffer);
-              if (preview !== null) {
-                const previewDocument = this.buildLetterDocumentHtml({
-                  mpName: context.mpName,
-                  mpAddress1: context.mpAddress1,
-                  mpAddress2: context.mpAddress2,
-                  mpCity: context.mpCity,
-                  mpCounty: context.mpCounty,
-                  mpPostcode: context.mpPostcode,
-                  date: context.today,
-                  letterContentHtml: preview,
-                  senderName: context.senderName,
-                  senderAddress1: context.senderAddress1,
-                  senderAddress2: context.senderAddress2,
-                  senderAddress3: context.senderAddress3,
-                  senderCity: context.senderCity,
-                  senderCounty: context.senderCounty,
-                  senderPostcode: context.senderPostcode,
-                  references: [],
-                });
-                send({ type: 'letter_delta', html: previewDocument });
-              }
-              continue;
-            }
-
-            if (eventType === 'response.completed') {
-              const responseId = (normalised as any)?.response?.id ?? null;
-              const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
-              const parsed = this.parseLetterResult(finalText);
-              const merged = this.mergeLetterResultWithContext(parsed, context);
-              const references = Array.isArray(merged.references) ? merged.references : [];
-              const finalDocument = this.buildLetterDocumentHtml({
-                mpName: merged.mp_name,
-                mpAddress1: merged.mp_address_1,
-                mpAddress2: merged.mp_address_2,
-                mpCity: merged.mp_city,
-                mpCounty: merged.mp_county,
-                mpPostcode: merged.mp_postcode,
-                date: merged.date,
-                letterContentHtml: merged.letter_content,
-                senderName: merged.sender_name,
-                senderAddress1: merged.sender_address_1,
-                senderAddress2: merged.sender_address_2,
-                senderAddress3: merged.sender_address_3,
-                senderCity: merged.sender_city,
-                senderCounty: merged.sender_county,
-                senderPostcode: merged.sender_postcode,
-                references,
-              });
-
-              await this.persistLetterResult(userId, baselineJob, {
-                status: 'completed',
-                tone,
-                responseId,
-                content: finalDocument,
-                references,
-                json: finalText,
-              });
-
-              send({ type: 'letter_delta', html: finalDocument });
-
-              send({
-                type: 'complete',
-                letter: this.toLetterCompletePayload(
-                  { ...merged, letter_content: finalDocument },
-                  {
-                    responseId,
-                    tone,
-                    rawJson: finalText,
-                  },
-                ),
-                remainingCredits,
-              });
-              complete();
-              return;
-            }
-
-            if (eventType === 'response.error' || eventType === 'response.failed') {
-              const message =
-                typeof (normalised as any)?.error?.message === 'string'
-                  ? ((normalised as any).error.message as string)
-                  : 'Letter composition failed. Please try again in a few moments.';
-              throw new Error(message);
-            }
-          }
-
-          throw new Error('Letter composition ended unexpectedly. Please try again in a few moments.');
-        } catch (error) {
-          if (deductionApplied) {
-            await this.refundCredits(userId, LETTER_CREDIT_COST);
-            if (typeof remainingCredits === 'number') {
-              remainingCredits = Math.round((remainingCredits + LETTER_CREDIT_COST) * 100) / 100;
-            }
-          }
-
-          if (baselineJob) {
-            try {
-              await this.persistLetterState(userId, baselineJob, { status: 'error', tone });
-            } catch (persistError) {
-              this.logger.warn(
-                `Failed to persist letter error state for user ${userId}: ${(persistError as Error)?.message ?? persistError}`,
-              );
-            }
-          }
-
+        if (eventType === 'response.error' || eventType === 'response.failed') {
           const message =
-            error instanceof BadRequestException
-              ? error.message
+            typeof (normalised as any)?.error?.message === 'string'
+              ? ((normalised as any).error.message as string)
               : 'Letter composition failed. Please try again in a few moments.';
-
-          send({ type: 'error', message, remainingCredits });
-          complete();
-        } finally {
-          if (controller) {
-            try {
-              controller.abort();
-            } catch {
-              // ignore
-            }
-          }
+          throw new Error(message);
         }
-      })();
+      }
 
-      return () => {
-        closed = true;
-        if (controller) {
-          try {
-            controller.abort();
-          } catch {
-            // ignore
-          }
+      throw new Error('Letter composition ended unexpectedly. Please try again in a few moments.');
+    } catch (error) {
+      if (deductionApplied) {
+        await this.refundCredits(userId, LETTER_CREDIT_COST);
+        if (typeof remainingCredits === 'number') {
+          remainingCredits = Math.round((remainingCredits + LETTER_CREDIT_COST) * 100) / 100;
         }
-      };
-    });
+      }
+
+      run.status = 'error';
+
+      try {
+        await this.persistLetterState(userId, baselineJob, { status: 'error', tone });
+      } catch (persistError) {
+        this.logger.warn(
+          `Failed to persist letter error state for user ${userId}: ${(persistError as Error)?.message ?? persistError}`,
+        );
+      }
+
+      const message =
+        error instanceof BadRequestException
+          ? error.message
+          : 'Letter composition failed. Please try again in a few moments.';
+
+      send({ type: 'error', message, remainingCredits });
+      subject.complete();
+    } finally {
+      if (controller) {
+        try {
+          controller.abort();
+        } catch {
+          // ignore
+        }
+      }
+
+      this.scheduleLetterRunCleanup(run);
+    }
+  }
+
+  private getLetterRunKey(userId: string, jobId: string): string {
+    return `${userId}::${jobId}`;
+  }
+
+  private scheduleLetterRunCleanup(run: LetterRun) {
+    if (run.cleanupTimer) {
+      clearTimeout(run.cleanupTimer);
+    }
+    const timer = setTimeout(() => {
+      this.letterRuns.delete(run.key);
+    }, LETTER_RUN_TTL_MS);
+    if (typeof (timer as any)?.unref === 'function') {
+      (timer as any).unref();
+    }
+    run.cleanupTimer = timer as NodeJS.Timeout;
   }
 
   async ensureDeepResearchRun(
