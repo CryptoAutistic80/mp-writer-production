@@ -97,6 +97,7 @@ type DeepResearchHandshakeResponse = {
 };
 
 const MAX_RESEARCH_ACTIVITY_ITEMS = 10;
+const MAX_LETTER_REASONING_ITEMS = 3;
 
 interface LetterStreamLetterPayload {
   mpName: string;
@@ -402,6 +403,11 @@ export default function WritingDeskClient() {
     availableCredits === null
       ? 'Checking available credits'
       : `You have ${formatCredits(availableCredits)} credits available`;
+
+  const visibleLetterEvents = useMemo(
+    () => letterEvents.slice(0, MAX_LETTER_REASONING_ITEMS),
+    [letterEvents],
+  );
 
   const researchCreditState = useMemo<'loading' | 'low' | 'ok'>(() => {
     if (availableCredits === null) return 'loading';
@@ -1937,13 +1943,26 @@ export default function WritingDeskClient() {
             {letterPhase === 'streaming' && (
               <div className="card" style={{ padding: 16, marginTop: 16 }}>
                 <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Drafting your letter</h4>
-                {letterStatusMessage && <p style={{ marginTop: 8 }}>{letterStatusMessage}</p>}
+                {letterStatus === 'generating' && letterStatusMessage && (
+                  <div
+                    className="research-progress"
+                    role="status"
+                    aria-live="polite"
+                    style={{ marginTop: 16 }}
+                  >
+                    <span className="research-progress__spinner" aria-hidden="true" />
+                    <div className="research-progress__content">
+                      <p>{letterStatusMessage}</p>
+                      <p>We’ll keep posting updates in the reasoning feed while the letter takes shape.</p>
+                    </div>
+                  </div>
+                )}
                 {letterReasoningVisible && (
                   <div style={{ marginTop: 16 }}>
                     <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Reasoning feed</h5>
-                    {letterEvents.length > 0 ? (
+                    {visibleLetterEvents.length > 0 ? (
                       <ul style={{ margin: 0, paddingLeft: 18 }}>
-                        {letterEvents.map((event) => (
+                        {visibleLetterEvents.map((event) => (
                           <li key={event.id} style={{ marginBottom: 4 }}>{event.text}</li>
                         ))}
                       </ul>
@@ -2200,4 +2219,3 @@ export default function WritingDeskClient() {
     </>
   );
 }
-
