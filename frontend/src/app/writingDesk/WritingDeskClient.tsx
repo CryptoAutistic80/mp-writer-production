@@ -602,7 +602,13 @@ export default function WritingDeskClient() {
             if (descriptor) appendResearchActivity(descriptor);
           } else if (payload.type === 'delta') {
             if (typeof payload.text === 'string') {
-              setResearchContent((prev) => prev + payload.text);
+              setResearchContent((prev) => {
+                // Clear activity feed when content starts streaming
+                if (prev.length === 0) {
+                  setResearchActivities([]);
+                }
+                return prev + payload.text;
+              });
             }
           } else if (payload.type === 'event') {
             const descriptor = describeResearchEvent(payload.event);
@@ -764,7 +770,7 @@ export default function WritingDeskClient() {
           setLetterStatus('completed');
           setLetterPhase('completed');
           setLetterStatusMessage('Letter ready');
-          setLetterContentHtml(payload.letter.letterContent);
+          // Don't overwrite letterContentHtml - it should already contain the final HTML from letter_delta events
           setLetterReferences(payload.letter.references ?? []);
           setLetterResponseId(payload.letter.responseId ?? null);
           setLetterRawJson(payload.letter.rawJson ?? null);
