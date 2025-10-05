@@ -602,7 +602,13 @@ export default function WritingDeskClient() {
             if (descriptor) appendResearchActivity(descriptor);
           } else if (payload.type === 'delta') {
             if (typeof payload.text === 'string') {
-              setResearchContent((prev) => prev + payload.text);
+              setResearchContent((prev) => {
+                // Clear activity feed when content starts streaming
+                if (prev.length === 0) {
+                  setResearchActivities([]);
+                }
+                return prev + payload.text;
+              });
             }
           } else if (payload.type === 'event') {
             const descriptor = describeResearchEvent(payload.event);
