@@ -4,6 +4,7 @@ import { AiService } from './ai.service';
 import { GenerateDto } from './dto/generate.dto';
 import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
+import { TranscriptionDto, StreamingTranscriptionDto } from './dto/transcription.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('ai')
@@ -45,5 +46,17 @@ export class AiController {
       tone: tone ?? null,
       resume: resume === '1' || resume === 'true',
     });
+  }
+
+  @Post('transcription')
+  async transcribeAudio(@Req() req: any, @Body() body: TranscriptionDto) {
+    const userId = req?.user?.id ?? req?.user?._id ?? null;
+    return this.ai.transcribeAudio(userId, body);
+  }
+
+  @Sse('transcription/stream')
+  streamTranscription(@Req() req: any, @Body() body: StreamingTranscriptionDto) {
+    const userId = req?.user?.id ?? req?.user?._id ?? null;
+    return this.ai.streamTranscription(userId, body);
   }
 }

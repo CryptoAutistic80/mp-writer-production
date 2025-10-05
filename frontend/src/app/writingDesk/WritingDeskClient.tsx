@@ -15,6 +15,7 @@ import {
 } from '../../features/writing-desk/types';
 import { startLetterComposition } from '../../features/writing-desk/api/letter';
 import { composeLetterHtml, letterHtmlToPlainText } from '../../features/writing-desk/utils/composeLetterHtml';
+import { MicButton } from '../../components/audio/MicButton';
 
 type StepKey = 'issueDescription';
 
@@ -1183,6 +1184,21 @@ export default function WritingDeskClient() {
     setForm((prev) => ({ ...prev, [currentStep.key]: value }));
   };
 
+  const handleTranscriptionComplete = useCallback((text: string) => {
+    if (!currentStep) return;
+    if (!persistenceEnabled) setPersistenceEnabled(true);
+    setForm((prev) => ({ ...prev, [currentStep.key]: prev[currentStep.key] + (prev[currentStep.key] ? ' ' : '') + text }));
+  }, [currentStep, persistenceEnabled]);
+
+  const handleFollowUpTranscriptionComplete = useCallback((text: string) => {
+    if (!persistenceEnabled) setPersistenceEnabled(true);
+    setFollowUpAnswers((prev) => {
+      const next = [...prev];
+      next[followUpIndex] = next[followUpIndex] + (next[followUpIndex] ? ' ' : '') + text;
+      return next;
+    });
+  }, [followUpIndex, persistenceEnabled]);
+
   const handleInitialBack = () => {
     setServerError(null);
     setError(null);
@@ -1593,16 +1609,25 @@ export default function WritingDeskClient() {
             <div className="field">
               <label htmlFor={`writing-step-${currentStep.key}`} className="label">{currentStep.title}</label>
               <p className="label-sub">{currentStep.description}</p>
-              <textarea
-                id={`writing-step-${currentStep.key}`}
-                className="input"
-                rows={6}
-                value={form[currentStep.key]}
-                onChange={(e) => handleInitialChange(e.target.value)}
-                placeholder={currentStep.placeholder}
-                aria-invalid={!!error && !form[currentStep.key].trim()}
-                disabled={loading}
-              />
+              <div className="input-with-mic">
+                <textarea
+                  id={`writing-step-${currentStep.key}`}
+                  className="input"
+                  rows={6}
+                  value={form[currentStep.key]}
+                  onChange={(e) => handleInitialChange(e.target.value)}
+                  placeholder={currentStep.placeholder}
+                  aria-invalid={!!error && !form[currentStep.key].trim()}
+                  disabled={loading}
+                />
+                <div className="input-mic-button">
+                  <MicButton
+                    onTranscriptionComplete={handleTranscriptionComplete}
+                    disabled={loading}
+                    size="sm"
+                  />
+                </div>
+              </div>
             </div>
 
             {error && (
@@ -1694,16 +1719,25 @@ export default function WritingDeskClient() {
             <div className="field">
               <label htmlFor={`followup-${followUpIndex}`} className="label">Follow-up question {followUpIndex + 1} of {followUps.length}</label>
               <p className="label-sub">{followUps[followUpIndex]}</p>
-              <textarea
-                id={`followup-${followUpIndex}`}
-                className="input"
-                rows={5}
-                value={followUpAnswers[followUpIndex] ?? ''}
-                onChange={(e) => handleFollowUpChange(e.target.value)}
-                placeholder="Type your answer here"
-                aria-invalid={!!error && !(followUpAnswers[followUpIndex]?.trim?.())}
-                disabled={loading}
-              />
+              <div className="input-with-mic">
+                <textarea
+                  id={`followup-${followUpIndex}`}
+                  className="input"
+                  rows={5}
+                  value={followUpAnswers[followUpIndex] ?? ''}
+                  onChange={(e) => handleFollowUpChange(e.target.value)}
+                  placeholder="Type your answer here"
+                  aria-invalid={!!error && !(followUpAnswers[followUpIndex]?.trim?.())}
+                  disabled={loading}
+                />
+                <div className="input-mic-button">
+                  <MicButton
+                    onTranscriptionComplete={handleFollowUpTranscriptionComplete}
+                    disabled={loading}
+                    size="sm"
+                  />
+                </div>
+              </div>
             </div>
 
             {notes && followUpIndex === 0 && (
@@ -2281,6 +2315,36 @@ export default function WritingDeskClient() {
 
         .create-letter-button {
           animation: create-letter-jiggle 1.6s ease-in-out infinite;
+        }
+
+        .input-with-mic {
+          position: relative;
+          display: flex;
+          align-items: flex-end;
+          gap: 8px;
+        }
+
+        .input-with-mic .input {
+          flex: 1;
+          margin-bottom: 0;
+        }
+
+        .input-mic-button {
+          flex-shrink: 0;
+          margin-bottom: 8px;
+        }
+
+        @media (max-width: 640px) {
+          .input-with-mic {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .input-mic-button {
+            align-self: flex-end;
+            margin-bottom: 0;
+            margin-top: 8px;
+          }
         }
       `}</style>
     </>

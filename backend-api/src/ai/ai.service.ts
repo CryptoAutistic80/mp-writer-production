@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, MessageEvent } from '@nestjs/c
 import { ConfigService } from '@nestjs/config';
 import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
+import { TranscriptionDto, StreamingTranscriptionDto, TranscriptionModel, TranscriptionResponseFormat } from './dto/transcription.dto';
 import { UserCreditsService } from '../user-credits/user-credits.service';
 import { WritingDeskJobsService } from '../writing-desk-jobs/writing-desk-jobs.service';
 import { UserMpService } from '../user-mp/user-mp.service';
@@ -21,6 +22,7 @@ import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 const FOLLOW_UP_CREDIT_COST = 0.1;
 const DEEP_RESEARCH_CREDIT_COST = 0.7;
 const LETTER_CREDIT_COST = 0.2;
+const TRANSCRIPTION_CREDIT_COST = 0;
 
 type DeepResearchRequestExtras = {
   tools?: Array<Record<string, unknown>>;
@@ -2706,5 +2708,131 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
 
     return questions.slice(0, 5);
+  }
+
+  async transcribeAudio(userId: string | null | undefined, input: TranscriptionDto) {
+    if (!userId) {
+      throw new BadRequestException('User account required');
+    }
+
+    const { credits: remainingAfterCharge } = await this.userCredits.deductFromMine(userId, TRANSCRIPTION_CREDIT_COST);
+    const apiKey = this.config.get<string>('OPENAI_API_KEY');
+
+    try {
+      if (!apiKey) {
+        // In dev without key, return a stub so flows work
+        const stubText = 'DEV-STUB: This is a placeholder transcription. Please configure OPENAI_API_KEY for real transcription.';
+        this.logger.log(`[transcription] DEV-STUB ${JSON.stringify({ model: 'dev-stub', text: stubText })}`);
+        return {
+          model: 'dev-stub',
+          text: stubText,
+          remainingCredits: remainingAfterCharge,
+        };
+      }
+
+      const client = await this.getOpenAiClient(apiKey);
+      
+      // Convert base64 to buffer
+      const audioBuffer = Buffer.from(input.audioData, 'base64');
+      
+      // Create a File-like object for the OpenAI API
+      const audioFile = new File([audioBuffer], 'audio.webm', { type: 'audio/webm' });
+
+      const transcription = await client.audio.transcriptions.create({
+        file: audioFile,
+        model: input.model || TranscriptionModel.GPT_4O_MINI_TRANSCRIBE,
+        response_format: input.responseFormat || TranscriptionResponseFormat.TEXT,
+        prompt: input.prompt,
+        language: input.language,
+      });
+
+      this.logger.log(`[transcription] Raw response: ${JSON.stringify(transcription)}`);
+
+      const bundle = {
+        model: input.model || TranscriptionModel.GPT_4O_MINI_TRANSCRIBE,
+        text: transcription.text || transcription || 'No transcription text received',
+        remainingCredits: remainingAfterCharge,
+      };
+      
+      this.logger.log(`[transcription] Processed bundle: ${JSON.stringify(bundle)}`);
+
+      return bundle;
+    } catch (error) {
+      await this.refundCredits(userId, TRANSCRIPTION_CREDIT_COST);
+      throw error;
+    }
+  }
+
+  streamTranscription(userId: string | null | undefined, input: StreamingTranscriptionDto): Observable<MessageEvent> {
+    if (!userId) {
+      throw new BadRequestException('User account required');
+    }
+
+    return new Observable<MessageEvent>((subscriber) => {
+      let settled = false;
+
+      const transcribe = async () => {
+        try {
+          const { credits: remainingAfterCharge } = await this.userCredits.deductFromMine(userId, TRANSCRIPTION_CREDIT_COST);
+          const apiKey = this.config.get<string>('OPENAI_API_KEY');
+
+          if (!apiKey) {
+            // In dev without key, return a stub so flows work
+            const stubText = 'DEV-STUB: This is a placeholder streaming transcription. Please configure OPENAI_API_KEY for real transcription.';
+            subscriber.next({ data: JSON.stringify({ type: 'delta', text: stubText }) });
+            subscriber.next({ data: JSON.stringify({ type: 'complete', text: stubText, remainingCredits: remainingAfterCharge }) });
+            subscriber.complete();
+            return;
+          }
+
+          const client = await this.getOpenAiClient(apiKey);
+          
+          // Convert base64 to buffer
+          const audioBuffer = Buffer.from(input.audioData, 'base64');
+          
+          // Create a File-like object for the OpenAI API
+          const audioFile = new File([audioBuffer], 'audio.webm', { type: 'audio/webm' });
+
+          const stream = await client.audio.transcriptions.create({
+            file: audioFile,
+            model: input.model || TranscriptionModel.GPT_4O_MINI_TRANSCRIBE,
+            response_format: TranscriptionResponseFormat.TEXT,
+            stream: true,
+            prompt: input.prompt,
+            language: input.language,
+          });
+
+          for await (const event of stream) {
+            if (subscriber.closed) break;
+            
+            if (event.type === 'transcript.text.delta') {
+              subscriber.next({ data: JSON.stringify({ type: 'delta', text: event.delta }) });
+            } else if (event.type === 'transcript.text.done') {
+              subscriber.next({ data: JSON.stringify({ type: 'complete', text: event.text, remainingCredits: remainingAfterCharge }) });
+              subscriber.complete();
+              settled = true;
+              return;
+            }
+          }
+
+          if (!settled) {
+            subscriber.next({ data: JSON.stringify({ type: 'error', message: 'Transcription stream ended unexpectedly' }) });
+            subscriber.complete();
+          }
+        } catch (error) {
+          if (!subscriber.closed) {
+            await this.refundCredits(userId, TRANSCRIPTION_CREDIT_COST);
+            subscriber.next({ data: JSON.stringify({ type: 'error', message: error instanceof Error ? error.message : 'Transcription failed' }) });
+            subscriber.complete();
+          }
+        }
+      };
+
+      void transcribe();
+
+      return () => {
+        settled = true;
+      };
+    });
   }
 }
