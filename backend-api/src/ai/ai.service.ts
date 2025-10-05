@@ -251,10 +251,10 @@ const LETTER_RESPONSE_SCHEMA = {
     },
     references: {
       type: 'array',
-      description: 'List of references or citation URLs.',
+      description: 'List of full, properly formatted URLs used as references. URLs must be complete with protocol (https://) and should NOT be percent-encoded - use plain characters for special symbols like #, :, ~, and = in URL fragments.',
       items: {
         type: 'string',
-        description: 'Citation or URL used as a reference in the letter.',
+        description: 'A complete, unencoded URL with protocol (e.g. https://example.com/path#:~:text=quote). Do not percent-encode special characters in URL fragments.',
       },
     },
   },
@@ -338,10 +338,10 @@ Goals:
 1. Return output strictly conforming to the provided JSON schema.
 2. Use stored MP profile for mp_* fields and stored sender profile for sender_*.
 3. Set date to match the schema’s regex: ^\\d{4}-\\d{2}-\\d{2}$.
-4. Put the full HTML letter in letter_content. Use semantic HTML only (<p>, <strong>, <em>, lists).
+4. Put the full HTML letter in letter_content. Use semantic HTML only (<p>, <strong>, <em>, lists). Use standard ASCII characters: plain single quotes ('), double quotes ("), and hyphens (-) instead of smart quotes or em-dashes.
 5. Write in the tone selected by the user.
 6. Draw on all prior inputs: user_intake (issue, who is affected, background, requested action); follow_ups (clarifications); deep_research (facts, citations, URLs).
-7. Include only accurate, supportable statements. Add actual URLs used into the references array.
+7. Include only accurate, supportable statements. Add actual URLs used into the references array. IMPORTANT: URLs must be unencoded - use plain text characters for special symbols (# : ~ =) in URL fragments, not percent-encoded versions (%20 %2C %27 etc).
 8. If any stored values are missing, output an empty string for that field, but keep the schema valid.
 9. Set subject_line_html to a single HTML paragraph that begins with <strong>Subject:</strong> followed by the letter’s subject line.
 
@@ -480,7 +480,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         },
         tools: [],
         store: true,
-        include: ['reasoning.encrypted_content', 'web_search_call.action.sources'],
+        include: ['reasoning.encrypted_content'],
       });
 
       let parsed: { questions?: string[]; notes?: string } = {};
@@ -850,7 +850,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         },
         tools: [],
         store: true,
-        include: ['reasoning.encrypted_content', 'web_search_call.action.sources'],
+        include: ['reasoning.encrypted_content'],
       }) as ResponseStreamLike;
 
       controller = stream.controller ?? null;
@@ -889,7 +889,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 senderCity: context.senderCity,
                 senderCounty: context.senderCounty,
                 senderPostcode: context.senderPostcode,
-                references: [],
+                references: this.extractReferencesFromJson(jsonBuffer),
               });
               send({ type: 'letter_delta', html: previewDocument });
             }
@@ -918,7 +918,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               senderCity: context.senderCity,
               senderCounty: context.senderCounty,
               senderPostcode: context.senderPostcode,
-              references: [],
+              references: this.extractReferencesFromJson(jsonBuffer),
             });
             send({ type: 'letter_delta', html: previewDocument });
           }
@@ -931,7 +931,15 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
           const parsed = this.parseLetterResult(finalText);
           const merged = this.mergeLetterResultWithContext(parsed, context);
-          const references = Array.isArray(merged.references) ? merged.references : [];
+          const references = Array.isArray(merged.references) 
+            ? merged.references.map((ref) => {
+                try {
+                  return decodeURIComponent(ref);
+                } catch {
+                  return ref;
+                }
+              })
+            : [];
           const finalDocument = this.buildLetterDocumentHtml({
             mpName: merged.mp_name,
             mpAddress1: merged.mp_address_1,
@@ -2233,8 +2241,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           .map((ref) => {
             const trimmed = ref.trim();
             if (!trimmed) return '';
-            const escaped = this.escapeLetterHtml(trimmed);
-            return `<li><a href="${escaped}" target="_blank" rel="noreferrer noopener">${escaped}</a></li>`;
+            // Don't escape the URL for the href attribute, but escape the display text
+            const displayText = this.escapeLetterHtml(trimmed);
+            return `<li><a href="${trimmed}" target="_blank" rel="noreferrer noopener">${displayText}</a></li>`;
           })
           .filter((entry) => entry.length > 0)
           .join('')}</ul>`,
@@ -2516,6 +2525,24 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
   private extractSubjectLinePreview(buffer: string): string | null {
     return this.extractStringPreviewField(buffer, 'subject_line_html');
+  }
+
+  private extractReferencesFromJson(buffer: string): string[] {
+    try {
+      const parsed = JSON.parse(buffer);
+      const refs = Array.isArray(parsed.references) ? parsed.references : [];
+      // Decode percent-encoded URLs
+      return refs.map((ref) => {
+        if (typeof ref !== 'string') return '';
+        try {
+          return decodeURIComponent(ref);
+        } catch {
+          return ref;
+        }
+      }).filter(ref => ref.length > 0);
+    } catch {
+      return [];
+    }
   }
 
   private async persistLetterState(

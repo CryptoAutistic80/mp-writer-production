@@ -764,7 +764,7 @@ export default function WritingDeskClient() {
           setLetterStatus('completed');
           setLetterPhase('completed');
           setLetterStatusMessage('Letter ready');
-          setLetterContentHtml(payload.letter.letterContent);
+          // Don't overwrite letterContentHtml - it should already contain the final HTML from letter_delta events
           setLetterReferences(payload.letter.references ?? []);
           setLetterResponseId(payload.letter.responseId ?? null);
           setLetterRawJson(payload.letter.rawJson ?? null);
