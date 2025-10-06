@@ -1,16 +1,15 @@
 "use client";
 
+import Link from 'next/link';
+
 type Props = {
   firstName: string;
   credits: number;
-  onAddCredit?: () => void;
   demoPurchasesEnabled?: boolean;
 };
 
-export default function DashboardWelcome({ firstName, credits, onAddCredit, demoPurchasesEnabled }: Props) {
-  const pricePence = Number(process.env.NEXT_PUBLIC_CREDIT_PRICE_PENCE ?? '500');
-  const priceText = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format((pricePence || 500) / 100);
-  const showPurchase = (demoPurchasesEnabled ?? true) && typeof onAddCredit === 'function';
+export default function DashboardWelcome({ firstName, credits, demoPurchasesEnabled }: Props) {
+  const showCreditShop = demoPurchasesEnabled ?? true;
   const formatCredits = (value: number) => {
     const rounded = Math.round(value * 100) / 100;
     return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -25,10 +24,10 @@ export default function DashboardWelcome({ firstName, credits, onAddCredit, demo
           <p><em className="fineprint">(Saved addresses are encrypted and can only be read by you.)</em></p>
         </div>
         <div className="credits-info">
-          {showPurchase && (
-            <button type="button" className="btn-primary btn-wide" onClick={onAddCredit}>
-              Buy 1 credit ({priceText})
-            </button>
+          {showCreditShop && (
+            <Link className="btn-primary btn-wide" href="/credit-shop">
+              Visit credit shop
+            </Link>
           )}
           <div className="credit-balance" aria-label={`You have ${formatCredits(credits)} credits available`}>
             <svg

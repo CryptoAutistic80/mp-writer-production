@@ -34,28 +34,11 @@ export default function DashboardPage() {
     };
   }, []);
 
-  async function handleCreditShopClick() {
-    if (!demoPurchasesEnabled) return;
-    try {
-      const res = await fetch('/api/user/credits/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: 1 }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (typeof data?.credits === 'number') setCredits(data.credits);
-    } catch {
-      // ignore temporary demo errors
-    }
-  }
-
   return (
     <main className="hero-section">
       <DashboardWelcome
         firstName={firstName}
         credits={credits}
-        onAddCredit={demoPurchasesEnabled ? handleCreditShopClick : undefined}
         demoPurchasesEnabled={demoPurchasesEnabled}
       />
       <section className="card" style={{ marginTop: 16 }}>
