@@ -505,6 +505,15 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         notes: parsed.notes,
       };
       this.logger.log(`[writing-desk step1] ${JSON.stringify(bundle)}`);
+      const usage = (response as any)?.usage ?? null;
+      this.logger.log(
+        `[writing-desk step1-usage] ${JSON.stringify({
+          userId,
+          model,
+          responseId: bundle.responseId,
+          usage,
+        })}`,
+      );
 
       return {
         model,
@@ -928,6 +937,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         if (eventType === 'response.completed') {
           const responseId = (normalised as any)?.response?.id ?? null;
           run.responseId = typeof responseId === 'string' ? responseId : null;
+          const usage = (normalised as any)?.response?.usage ?? null;
+          this.logger.log(
+            `[writing-desk letter-usage] ${JSON.stringify({
+              userId,
+              jobId: baselineJob.jobId,
+              model,
+              tone,
+              responseId: run.responseId,
+              usage,
+            })}`,
+          );
           const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
           const parsed = this.parseLetterResult(finalText);
           const merged = this.mergeLetterResultWithContext(parsed, context);
@@ -1304,6 +1324,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                   responseId: resolvedResponseId,
                   status: 'completed',
                 });
+                const usage = (finalResponse as any)?.usage ?? null;
+                this.logger.log(
+                  `[writing-desk research-usage] ${JSON.stringify({
+                    userId,
+                    jobId: baselineJob.jobId,
+                    model,
+                    responseId: resolvedResponseId,
+                    usage,
+                  })}`,
+                );
                 run.status = 'completed';
                 settled = true;
                 send({
@@ -1404,6 +1434,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             responseId,
             status: 'completed',
           });
+          const usage = (finalResponse as any)?.usage ?? null;
+          this.logger.log(
+            `[writing-desk research-usage] ${JSON.stringify({
+              userId,
+              jobId: baselineJob.jobId,
+              model,
+              responseId,
+              usage,
+            })}`,
+          );
           run.status = 'completed';
           settled = true;
           send({
