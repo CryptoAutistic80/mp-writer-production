@@ -343,7 +343,7 @@ Goals:
 6. Draw on all prior inputs: user_intake (issue, who is affected, background, requested action); follow_ups (clarifications); deep_research (facts, citations, URLs).
 7. Include only accurate, supportable statements. Add actual URLs used into the references array. IMPORTANT: URLs must be unencoded - use plain text characters for special symbols (# : ~ =) in URL fragments, not percent-encoded versions (%20 %2C %27 etc).
 8. If any stored values are missing, output an empty string for that field, but keep the schema valid.
-9. Set subject_line_html to a single HTML paragraph that begins with <strong>Subject:</strong> followed by the letter’s subject line.
+9. Set subject_line_html to a single HTML paragraph that begins with <strong>Subject:</strong> followed immediately by the subject text. Do not prepend extra labels (for example "Urgent:", "Subject -", "For review:"); start with the key topic directly.
 
 Letter content requirements:
 
@@ -2073,8 +2073,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
   private buildLetterResponseSchema(context: LetterContext) {
     const schema = JSON.parse(JSON.stringify(LETTER_RESPONSE_SCHEMA)) as Record<string, any>;
-    const normalise = (value: string | null | undefined): string =>
-      typeof value === 'string' ? value.trim() : '';
+    const normalise = (value: string | null | undefined): string => {
+      if (typeof value !== 'string') return '';
+      return this.normaliseLetterTypography(value.trim());
+    };
 
     schema.properties.mp_name.const = normalise(context.mpName);
     schema.properties.mp_address_1.const = normalise(context.mpAddress1);
@@ -2227,52 +2229,58 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
   }
 
   private buildLetterDocumentHtml(input: LetterDocumentInput): string {
+    const normalise = (value: string | null | undefined): string =>
+      typeof value === 'string' ? this.normaliseLetterTypography(value) : '';
+
     const sections: string[] = [];
     const mpLines = this.buildAddressLines({
-      name: input.mpName,
-      line1: input.mpAddress1,
-      line2: input.mpAddress2,
+      name: normalise(input.mpName),
+      line1: normalise(input.mpAddress1),
+      line2: normalise(input.mpAddress2),
       line3: null,
-      city: input.mpCity,
-      county: input.mpCounty,
-      postcode: input.mpPostcode,
+      city: normalise(input.mpCity),
+      county: normalise(input.mpCounty),
+      postcode: normalise(input.mpPostcode),
     });
     if (mpLines.length > 0) {
       sections.push(`<p>${mpLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
     }
 
-    const formattedDate = this.formatLetterDisplayDate(input.date);
+    const formattedDate = this.formatLetterDisplayDate(normalise(input.date));
     if (formattedDate) {
       sections.push(`<p>${this.escapeLetterHtml(formattedDate)}</p>`);
     }
 
-    const subjectLineHtml = typeof input.subjectLineHtml === 'string' ? input.subjectLineHtml.trim() : '';
+    const subjectLineHtml = normalise(input.subjectLineHtml).trim();
     if (subjectLineHtml.length > 0) {
       sections.push(subjectLineHtml);
     }
 
-    if (input.letterContentHtml) {
-      sections.push(input.letterContentHtml);
+    const letterContentHtml = normalise(input.letterContentHtml);
+    if (letterContentHtml) {
+      sections.push(letterContentHtml);
     }
 
-    const senderName = typeof input.senderName === 'string' ? input.senderName.trim() : '';
+    const senderName = normalise(input.senderName).trim();
     const senderLines = this.buildAddressLines({
       name: null,
-      line1: input.senderAddress1,
-      line2: input.senderAddress2,
-      line3: input.senderAddress3,
-      city: input.senderCity,
-      county: input.senderCounty,
-      postcode: input.senderPostcode,
+      line1: normalise(input.senderAddress1),
+      line2: normalise(input.senderAddress2),
+      line3: normalise(input.senderAddress3),
+      city: normalise(input.senderCity),
+      county: normalise(input.senderCounty),
+      postcode: normalise(input.senderPostcode),
     });
 
     const hasAddressDetail = senderLines.some((line) => line.trim().length > 0);
-    if (hasAddressDetail && this.shouldAppendSenderAddress(input.letterContentHtml ?? '', senderLines, senderName)) {
+    if (hasAddressDetail && this.shouldAppendSenderAddress(letterContentHtml, senderLines, senderName)) {
       sections.push(`<p>${senderLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
     }
 
     const references = Array.isArray(input.references)
-      ? input.references.filter((ref) => typeof ref === 'string' && ref.trim().length > 0)
+      ? input.references
+          .filter((ref) => typeof ref === 'string' && ref.trim().length > 0)
+          .map((ref) => this.normaliseLetterTypography(ref))
       : [];
     if (references.length > 0) {
       sections.push('<p><strong>References</strong></p>');
@@ -2390,7 +2398,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
   private normaliseLetterPlainText(value: string | null | undefined): string {
     if (typeof value !== 'string') return '';
-    return value
+    const normalised = this.normaliseLetterTypography(value);
+    return normalised
       .replace(/<br\s*\/?\s*>/gi, '\n')
       .replace(/<\/(p|div|h\d)>/gi, '\n')
       .replace(/<[^>]+>/g, ' ')
@@ -2438,7 +2447,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       if (!parsed || typeof parsed !== 'object') {
         throw new Error('Letter response was not an object');
       }
-      return {
+      return this.normaliseLetterResultTypography({
         mp_name: parsed.mp_name ?? '',
         mp_address_1: parsed.mp_address_1 ?? '',
         mp_address_2: parsed.mp_address_2 ?? '',
@@ -2456,7 +2465,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         sender_county: parsed.sender_county ?? '',
         sender_postcode: parsed.sender_postcode ?? '',
         references: Array.isArray(parsed.references) ? parsed.references : [],
-      };
+      });
     } catch (error) {
       throw new Error(`Failed to parse letter JSON: ${(error as Error)?.message ?? error}`);
     }
@@ -2466,10 +2475,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     result: WritingDeskLetterResult,
     context: LetterContext,
   ): WritingDeskLetterResult {
-    const normalise = (value: string | null | undefined): string =>
-      typeof value === 'string' ? value.trim() : '';
+    const normalise = (value: string | null | undefined): string => {
+      if (typeof value !== 'string') return '';
+      return this.normaliseLetterTypography(value.trim());
+    };
 
-    return {
+    return this.normaliseLetterResultTypography({
       ...result,
       mp_name: normalise(context.mpName),
       mp_address_1: normalise(context.mpAddress1),
@@ -2485,7 +2496,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       sender_city: normalise(context.senderCity),
       sender_county: normalise(context.senderCounty),
       sender_postcode: normalise(context.senderPostcode),
-    };
+    });
   }
 
   private extractOutputTextDelta(event: Record<string, unknown>): string | null {
@@ -2583,6 +2594,112 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     } catch {
       return [];
     }
+  }
+
+  private normaliseLetterResultTypography(result: WritingDeskLetterResult): WritingDeskLetterResult {
+    const normalise = (value: string | null | undefined): string => {
+      if (typeof value !== 'string') return '';
+      return this.normaliseLetterTypography(value);
+    };
+
+    return {
+      ...result,
+      mp_name: normalise(result.mp_name),
+      mp_address_1: normalise(result.mp_address_1),
+      mp_address_2: normalise(result.mp_address_2),
+      mp_city: normalise(result.mp_city),
+      mp_county: normalise(result.mp_county),
+      mp_postcode: normalise(result.mp_postcode),
+      date: normalise(result.date),
+      subject_line_html: normalise(result.subject_line_html),
+      letter_content: normalise(result.letter_content),
+      sender_name: normalise(result.sender_name),
+      sender_address_1: normalise(result.sender_address_1),
+      sender_address_2: normalise(result.sender_address_2),
+      sender_address_3: normalise(result.sender_address_3),
+      sender_city: normalise(result.sender_city),
+      sender_county: normalise(result.sender_county),
+      sender_postcode: normalise(result.sender_postcode),
+      references: Array.isArray(result.references)
+        ? result.references
+            .map((value) => (typeof value === 'string' ? this.normaliseLetterTypography(value) : ''))
+            .filter((value) => value.length > 0)
+        : [],
+    };
+  }
+
+  private normaliseLetterTypography(value: string): string {
+    if (!value) {
+      return '';
+    }
+
+    let output = value;
+
+    const punctuationReplacements: Array<[string, string]> = [
+      ['\u2018', "'"],
+      ['\u2019', "'"],
+      ['\u201A', "'"],
+      ['\u201B', "'"],
+      ['\u2032', "'"],
+      ['\u2035', "'"],
+      ['\u02BB', "'"],
+      ['\u02BC', "'"],
+      ['\u0091', "'"],
+      ['\u0092', "'"],
+      ['\u201C', '"'],
+      ['\u201D', '"'],
+      ['\u201E', '"'],
+      ['\u201F', '"'],
+      ['\u2033', '"'],
+      ['\u2036', '"'],
+      ['\u0093', '"'],
+      ['\u0094', '"'],
+      ['\u2010', '-'],
+      ['\u2011', '-'],
+      ['\u2012', '-'],
+      ['\u2013', '-'],
+      ['\u2014', '-'],
+      ['\u2015', '-'],
+      ['\u2212', '-'],
+      ['\u0096', '-'],
+      ['\u0097', '-'],
+      ['\u2022', '*'],
+      ['\u2026', '...'],
+    ];
+
+    for (const [target, replacement] of punctuationReplacements) {
+      output = output.split(target).join(replacement);
+    }
+
+    const spaceLikeCharacters = [
+      '\u00A0',
+      '\u1680',
+      '\u2000',
+      '\u2001',
+      '\u2002',
+      '\u2003',
+      '\u2004',
+      '\u2005',
+      '\u2006',
+      '\u2007',
+      '\u2008',
+      '\u2009',
+      '\u200A',
+      '\u202F',
+      '\u205F',
+      '\u3000',
+    ];
+
+    for (const char of spaceLikeCharacters) {
+      output = output.split(char).join(' ');
+    }
+
+    const zeroWidthCharacters = ['\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF'];
+    for (const char of zeroWidthCharacters) {
+      output = output.split(char).join('');
+    }
+
+    return output;
   }
 
   private async persistLetterState(

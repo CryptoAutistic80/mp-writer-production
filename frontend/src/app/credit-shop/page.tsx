@@ -7,15 +7,24 @@ type CreditState = {
   credits: number | null;
   status: 'idle' | 'loading' | 'success' | 'error';
   message: string | null;
+  pendingCredits: number | null;
 };
 
-const DEAL_AMOUNT = 5;
-const DEAL_PRICE = 3.99;
+const DEALS = [
+  { credits: 3, price: 2.99 },
+  { credits: 5, price: 4.99 },
+  { credits: 10, price: 9.99 },
+];
 
 const currencyFormatter = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
 
 export default function CreditShopPage() {
-  const [state, setState] = useState<CreditState>({ credits: null, status: 'idle', message: null });
+  const [state, setState] = useState<CreditState>({
+    credits: null,
+    status: 'idle',
+    message: null,
+    pendingCredits: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -36,39 +45,48 @@ export default function CreditShopPage() {
     };
   }, []);
 
-  const handlePurchase = async () => {
-    setState((prev) => ({ ...prev, status: 'loading', message: null }));
+  const handlePurchase = async (dealCredits: number) => {
+    setState((prev) => ({
+      ...prev,
+      status: 'loading',
+      message: null,
+      pendingCredits: dealCredits,
+    }));
     try {
       const res = await fetch('/api/user/credits/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: DEAL_AMOUNT }),
+        body: JSON.stringify({ amount: dealCredits }),
       });
       if (!res.ok) {
         setState((prev) => ({
           ...prev,
           status: 'error',
           message: 'Unable to complete your purchase right now. Please try again shortly.',
+          pendingCredits: null,
         }));
         return;
       }
       const data = await res.json();
-      const credits = typeof data?.credits === 'number' ? data.credits : prevCreditsAfterPurchase(state.credits, DEAL_AMOUNT);
-      setState({
-        credits,
-        status: 'success',
-        message: `Success! ${DEAL_AMOUNT} credits have been added to your account.`,
+      setState((prev) => {
+        const credits =
+          typeof data?.credits === 'number' ? data.credits : prevCreditsAfterPurchase(prev.credits, dealCredits);
+        return {
+          credits,
+          status: 'success',
+          message: `Success! ${dealCredits} credits have been added to your account.`,
+          pendingCredits: null,
+        };
       });
     } catch {
       setState((prev) => ({
         ...prev,
         status: 'error',
         message: 'Unable to complete your purchase right now. Please try again shortly.',
+        pendingCredits: null,
       }));
     }
   };
-
-  const buttonLabel = state.status === 'loading' ? 'Processing purchase…' : `Buy now for ${currencyFormatter.format(DEAL_PRICE)}`;
 
   return (
     <main className="hero-section">
@@ -80,20 +98,43 @@ export default function CreditShopPage() {
           </header>
           <div className="card" style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
             <div className="container" style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'flex-start' }}>
-              <p style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, color: '#2563eb' }}>Today&apos;s deal</p>
-              <h2 style={{ fontSize: '1.75rem', margin: 0 }}>
-                {DEAL_AMOUNT} credits for {currencyFormatter.format(DEAL_PRICE)}
-              </h2>
-              <p style={{ margin: 0, fontSize: '1.125rem' }}>Top up instantly and keep writing.</p>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handlePurchase}
-                disabled={state.status === 'loading'}
-                style={{ minWidth: 200 }}
+              <p style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, color: '#2563eb' }}>
+                Choose your top-up
+              </p>
+              <p style={{ margin: 0, fontSize: '1.125rem' }}>Pick the package that suits your writing needs.</p>
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 16,
+                  width: '100%',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                }}
               >
-                {buttonLabel}
-              </button>
+                {DEALS.map((deal) => {
+                  const isProcessing = state.status === 'loading' && state.pendingCredits === deal.credits;
+                  return (
+                    <div
+                      key={deal.credits}
+                      className="card"
+                      style={{ border: '1px solid #e2e8f0', background: '#fff', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}
+                    >
+                      <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{deal.credits} credits</h2>
+                      <p style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
+                        {currencyFormatter.format(deal.price)}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => handlePurchase(deal.credits)}
+                        disabled={state.status === 'loading'}
+                        style={{ marginTop: 'auto' }}
+                      >
+                        {isProcessing ? 'Processing purchase…' : `Buy for ${currencyFormatter.format(deal.price)}`}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
               {state.message && (
                 <p
                   role={state.status === 'error' ? 'alert' : undefined}
