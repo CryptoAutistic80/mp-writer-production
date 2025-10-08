@@ -16,6 +16,8 @@ const DEALS = [
   { credits: 10, price: 9.99 },
 ];
 
+const STRIPE_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED !== '0';
+
 const currencyFormatter = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
 
 export default function CreditShopPage() {
@@ -49,10 +51,24 @@ export default function CreditShopPage() {
     setState((prev) => ({
       ...prev,
       status: 'loading',
-      message: null,
+      message: STRIPE_CHECKOUT_ENABLED ? 'Redirecting you to our secure checkout…' : null,
       pendingCredits: dealCredits,
     }));
     try {
+      if (STRIPE_CHECKOUT_ENABLED) {
+        const res = await fetch('/api/checkout/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credits: dealCredits }),
+        });
+        if (!res.ok) throw new Error('Failed to create checkout session');
+        const data = await res.json();
+        const url = typeof data?.url === 'string' ? data.url : null;
+        if (!url) throw new Error('Checkout session response missing redirect URL');
+        window.location.assign(url);
+        return;
+      }
+
       const res = await fetch('/api/user/credits/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -78,11 +94,14 @@ export default function CreditShopPage() {
           pendingCredits: null,
         };
       });
-    } catch {
+    } catch (error) {
+      console.error('Unable to process credit purchase', error);
       setState((prev) => ({
         ...prev,
         status: 'error',
-        message: 'Unable to complete your purchase right now. Please try again shortly.',
+        message: STRIPE_CHECKOUT_ENABLED
+          ? 'Unable to start checkout. Please try again shortly.'
+          : 'Unable to complete your purchase right now. Please try again shortly.',
         pendingCredits: null,
       }));
     }
@@ -112,6 +131,7 @@ export default function CreditShopPage() {
               >
                 {DEALS.map((deal) => {
                   const isProcessing = state.status === 'loading' && state.pendingCredits === deal.credits;
+                  const processingLabel = STRIPE_CHECKOUT_ENABLED ? 'Redirecting to checkout…' : 'Processing purchase…';
                   return (
                     <div
                       key={deal.credits}
@@ -129,12 +149,17 @@ export default function CreditShopPage() {
                         disabled={state.status === 'loading'}
                         style={{ marginTop: 'auto' }}
                       >
-                        {isProcessing ? 'Processing purchase…' : `Buy for ${currencyFormatter.format(deal.price)}`}
+                        {isProcessing ? processingLabel : `Buy for ${currencyFormatter.format(deal.price)}`}
                       </button>
                     </div>
                   );
                 })}
               </div>
+              {STRIPE_CHECKOUT_ENABLED && (
+                <p style={{ margin: 0, color: '#475569', fontSize: '0.875rem' }}>
+                  Payments are securely processed by Stripe. You will be redirected to checkout to complete your purchase.
+                </p>
+              )}
               {state.message && (
                 <p
                   role={state.status === 'error' ? 'alert' : undefined}

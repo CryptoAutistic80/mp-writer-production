@@ -10,6 +10,6 @@ import { Purchase, PurchaseSchema } from './schemas/purchase.schema';
   ],
   controllers: [PurchasesController],
   providers: [PurchasesService],
+  exports: [PurchasesService],
 })
 export class PurchasesModule {}
-

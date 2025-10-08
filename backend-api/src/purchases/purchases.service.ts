@@ -13,6 +13,11 @@ export class PurchasesService {
     return this.purchaseModel.create({ user: userId, ...input, status: 'succeeded' });
   }
 
+  async findByStripeSession(userId: string, sessionId: string) {
+    if (!sessionId) return null;
+    return this.purchaseModel.findOne({ user: userId, 'metadata.stripeSessionId': sessionId }).lean();
+  }
+
   async findMine(userId: string) {
     return this.purchaseModel.find({ user: userId }).sort({ createdAt: -1 }).lean();
   }
@@ -21,4 +26,3 @@ export class PurchasesService {
     return this.purchaseModel.findOne({ _id: id, user: userId }).lean();
   }
 }
-
