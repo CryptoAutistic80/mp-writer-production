@@ -3,25 +3,30 @@ import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { UserCreditsService } from '../user-credits/user-credits.service';
 import { PurchasesService } from '../purchases/purchases.service';
-
-type CheckoutUser = { id: string; email?: string | null };
+import { PurchaseMetadata } from '../purchases/dto/create-purchase.dto';
+import { CheckoutUser, CreditPackage } from './types';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
 
 @Injectable()
 export class CheckoutService {
   private readonly stripe: Stripe | null;
   private readonly checkoutEnabled: boolean;
   private readonly priceMap: Record<number, string>;
+  private readonly amountMap: Record<number, number>; // Amount in minor units (e.g., cents)
   private readonly logger = new Logger(CheckoutService.name);
 
   constructor(
     private readonly config: ConfigService,
     private readonly userCredits: UserCreditsService,
     private readonly purchases: PurchasesService,
+    @InjectConnection() private readonly connection: Connection,
   ) {
     this.checkoutEnabled = this.parseBoolean(this.config.get('STRIPE_CHECKOUT_ENABLED'));
     const secretKey = this.config.get<string>('STRIPE_SECRET_KEY');
     this.stripe = secretKey ? new Stripe(secretKey) : null;
     this.priceMap = this.loadPriceMap();
+    this.amountMap = this.loadAmountMap();
   }
 
   async createSession(user: CheckoutUser, credits: number) {
@@ -85,6 +90,7 @@ export class CheckoutService {
       throw new BadRequestException('Checkout session is missing credit information.');
     }
 
+    // Validate price ID matches expected
     const expectedPriceId = this.resolvePriceId(credits);
     const priceFromMetadata = session.metadata?.priceId;
     const priceFromLineItem = session.line_items?.data?.[0]?.price?.id;
@@ -96,43 +102,211 @@ export class CheckoutService {
       throw new BadRequestException('Checkout session price does not match the selected package.');
     }
 
+    // NEW: Validate amount paid matches expected amount
+    const expectedAmount = this.amountMap[credits];
+    if (expectedAmount !== undefined) {
+      const amountPaid = typeof session.amount_total === 'number' 
+        ? session.amount_total 
+        : session.line_items?.data?.[0]?.amount_total ?? 0;
+      
+      if (amountPaid !== expectedAmount) {
+        this.logger.error(
+          `Amount mismatch for session ${session.id}: expected ${expectedAmount}, got ${amountPaid}`
+        );
+        throw new BadRequestException('Payment amount does not match the selected package.');
+      }
+    }
+
     if (session.payment_status !== 'paid') {
       throw new BadRequestException('Checkout session has not completed payment.');
     }
 
+    return await this.fulfillOrder(session, credits);
+  }
+
+  /**
+   * Handle Stripe webhook events
+   */
+  async handleWebhook(signature: string, payload: Buffer): Promise<{ received: boolean }> {
+    const stripe = this.requireStripe();
+    const webhookSecret = this.config.get<string>('STRIPE_WEBHOOK_SECRET');
+    
+    if (!webhookSecret) {
+      this.logger.error('STRIPE_WEBHOOK_SECRET is not configured');
+      throw new InternalServerErrorException('Webhook secret not configured');
+    }
+
+    let event: Stripe.Event;
+    try {
+      event = stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+    } catch (err) {
+      this.logger.error(`Webhook signature verification failed: ${(err as Error).message}`);
+      throw new BadRequestException('Invalid webhook signature');
+    }
+
+    this.logger.log(`Received webhook event: ${event.type} (${event.id})`);
+
+    // Handle different event types
+    switch (event.type) {
+      case 'checkout.session.completed':
+        await this.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+        break;
+      case 'checkout.session.async_payment_succeeded':
+        await this.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+        break;
+      case 'checkout.session.async_payment_failed':
+        this.logger.warn(`Async payment failed for session: ${event.data.object.id}`);
+        break;
+      default:
+        this.logger.log(`Unhandled event type: ${event.type}`);
+    }
+
+    return { received: true };
+  }
+
+  /**
+   * Get available credit packages
+   */
+  getCreditPackages(): CreditPackage[] {
+    const currency = this.config.get<string>('STRIPE_CURRENCY') || 'gbp';
+    const packages: CreditPackage[] = [];
+
+    for (const [credits, priceId] of Object.entries(this.priceMap)) {
+      const creditsNum = Number(credits);
+      const amount = this.amountMap[creditsNum];
+      if (amount !== undefined) {
+        packages.push({
+          credits: creditsNum,
+          priceId,
+          amount,
+          currency,
+        });
+      }
+    }
+
+    return packages.sort((a, b) => a.credits - b.credits);
+  }
+
+  /**
+   * Handle checkout.session.completed webhook
+   */
+  private async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+    this.logger.log(`Processing completed checkout session: ${session.id}`);
+
+    // Check if already fulfilled
+    if (session.metadata?.fulfilled === 'true') {
+      this.logger.log(`Session ${session.id} already marked as fulfilled`);
+      return;
+    }
+
+    const userId = session.metadata?.userId || session.client_reference_id;
+    if (!userId) {
+      this.logger.error(`No userId found in session ${session.id}`);
+      return;
+    }
+
+    // Check if already processed in our database
+    const existing = await this.purchases.findByStripeSession(userId, session.id);
+    if (existing) {
+      this.logger.log(`Session ${session.id} already processed in database`);
+      return;
+    }
+
+    // Validate payment status
+    if (session.payment_status !== 'paid') {
+      this.logger.warn(`Session ${session.id} is not paid (status: ${session.payment_status})`);
+      return;
+    }
+
+    const credits = Number(session.metadata?.credits ?? 0);
+    if (!Number.isFinite(credits) || credits <= 0) {
+      this.logger.error(`Invalid credits in session ${session.id}: ${session.metadata?.credits}`);
+      return;
+    }
+
+    try {
+      // Retrieve full session with line items
+      const stripe = this.requireStripe();
+      const fullSession = await stripe.checkout.sessions.retrieve(session.id, {
+        expand: ['line_items', 'line_items.data.price'],
+      });
+
+      await this.fulfillOrder(fullSession, credits);
+      this.logger.log(`Successfully fulfilled order for session ${session.id}`);
+    } catch (error) {
+      this.logger.error(`Failed to fulfill order for session ${session.id}: ${(error as Error).message}`);
+      // Don't throw - we'll retry on next webhook delivery
+    }
+  }
+
+  /**
+   * Fulfill the order: add credits and create purchase record
+   * Uses MongoDB transaction for atomicity
+   */
+  private async fulfillOrder(session: Stripe.Checkout.Session, credits: number) {
+    const userId = session.metadata?.userId || session.client_reference_id;
+    if (!userId) {
+      throw new BadRequestException('User ID not found in session');
+    }
+
     const defaultCurrency = (this.config.get<string>('STRIPE_CURRENCY') || 'gbp').toLowerCase();
-    const amountMinor = typeof session.amount_total === 'number' ? session.amount_total : session.line_items?.data?.[0]?.amount_total ?? 0;
+    const amountMinor = typeof session.amount_total === 'number' 
+      ? session.amount_total 
+      : session.line_items?.data?.[0]?.amount_total ?? 0;
 
-    const balance = await this.userCredits.addToMine(user.id, credits);
-    try {
-      await this.purchases.create(user.id, {
-        plan: `credit_pack_${credits}`,
-        amount: amountMinor,
-        currency: session.currency ?? defaultCurrency,
-        metadata: {
-          stripeSessionId: session.id,
-          stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id,
-          credits,
-          priceId: resolvedPriceId,
-        },
-      });
-    } catch (error) {
-      this.logger.error(`Unable to record purchase for session ${session.id}: ${(error as Error).message}`);
-    }
-    try {
-      await stripe.checkout.sessions.update(session.id, {
-        metadata: {
-          userId: user.id,
-          credits: String(credits),
-          priceId: resolvedPriceId,
-          fulfilled: 'true',
-        },
-      });
-    } catch (error) {
-      this.logger.warn(`Unable to mark checkout session ${session.id} as fulfilled: ${(error as Error).message}`);
-    }
+    const priceId = session.metadata?.priceId || session.line_items?.data?.[0]?.price?.id || '';
 
-    return { alreadyProcessed: false, creditsAdded: credits, balance: balance.credits };
+    const metadata: PurchaseMetadata = {
+      stripeSessionId: session.id,
+      stripePaymentIntentId: typeof session.payment_intent === 'string' 
+        ? session.payment_intent 
+        : session.payment_intent?.id,
+      credits,
+      priceId,
+    };
+
+    // Use transaction for atomicity
+    const mongoSession = await this.connection.startSession();
+    let balance;
+
+    try {
+      await mongoSession.withTransaction(async () => {
+        // Add credits
+        balance = await this.userCredits.addToMine(userId, credits);
+        
+        // Create purchase record
+        await this.purchases.create(userId, {
+          plan: `credit_pack_${credits}`,
+          amount: amountMinor,
+          currency: session.currency ?? defaultCurrency,
+          metadata,
+        });
+      });
+
+      // Mark session as fulfilled in Stripe (outside transaction)
+      try {
+        const stripe = this.requireStripe();
+        await stripe.checkout.sessions.update(session.id, {
+          metadata: {
+            ...session.metadata,
+            fulfilled: 'true',
+          },
+        });
+      } catch (error) {
+        this.logger.warn(`Unable to mark session ${session.id} as fulfilled in Stripe: ${(error as Error).message}`);
+      }
+
+      return { 
+        alreadyProcessed: false, 
+        creditsAdded: credits, 
+        balance: balance.credits 
+      };
+    } catch (error) {
+      this.logger.error(`Transaction failed for session ${session.id}: ${(error as Error).message}`);
+      throw error;
+    } finally {
+      await mongoSession.endSession();
+    }
   }
 
   private assertCheckoutEnabled() {
@@ -163,7 +337,7 @@ export class CheckoutService {
     return false;
   }
 
-  private loadPriceMap() {
+  private loadPriceMap(): Record<number, string> {
     const entries: Array<[number, string | undefined]> = [
       [3, this.config.get<string>('STRIPE_PRICE_ID_CREDITS_3')],
       [5, this.config.get<string>('STRIPE_PRICE_ID_CREDITS_5')],
@@ -174,6 +348,26 @@ export class CheckoutService {
     for (const [credits, priceId] of entries) {
       if (priceId) {
         map[credits] = priceId;
+      }
+    }
+    return map;
+  }
+
+  private loadAmountMap(): Record<number, number> {
+    // Amounts in minor units (pence for GBP, cents for USD, etc.)
+    const entries: Array<[number, string | undefined]> = [
+      [3, this.config.get<string>('STRIPE_AMOUNT_CREDITS_3')],
+      [5, this.config.get<string>('STRIPE_AMOUNT_CREDITS_5')],
+      [10, this.config.get<string>('STRIPE_AMOUNT_CREDITS_10')],
+    ];
+
+    const map: Record<number, number> = {};
+    for (const [credits, amountStr] of entries) {
+      if (amountStr) {
+        const amount = Number(amountStr);
+        if (Number.isFinite(amount) && amount > 0) {
+          map[credits] = amount;
+        }
       }
     }
     return map;

@@ -10,15 +10,29 @@ type CreditState = {
   pendingCredits: number | null;
 };
 
-const DEALS = [
-  { credits: 3, price: 2.99 },
-  { credits: 5, price: 4.99 },
-  { credits: 10, price: 9.99 },
+type CreditPackage = {
+  credits: number;
+  priceId: string;
+  amount: number;
+  currency: string;
+};
+
+const STRIPE_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED !== '0' && 
+                                 process.env.NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED !== 'false';
+
+// Fallback packages if backend is unavailable
+const FALLBACK_PACKAGES: CreditPackage[] = [
+  { credits: 3, priceId: '', amount: 299, currency: 'gbp' },
+  { credits: 5, priceId: '', amount: 499, currency: 'gbp' },
+  { credits: 10, priceId: '', amount: 999, currency: 'gbp' },
 ];
 
-const STRIPE_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED !== '0';
-
-const currencyFormatter = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
+function formatPrice(amount: number, currency: string) {
+  return new Intl.NumberFormat('en-GB', { 
+    style: 'currency', 
+    currency: currency.toUpperCase() 
+  }).format(amount / 100); // Amount is in minor units
+}
 
 export default function CreditShopPage() {
   const [state, setState] = useState<CreditState>({
@@ -27,7 +41,37 @@ export default function CreditShopPage() {
     message: null,
     pendingCredits: null,
   });
+  const [packages, setPackages] = useState<CreditPackage[]>(FALLBACK_PACKAGES);
+  const [packagesLoading, setPackagesLoading] = useState(true);
 
+  // Fetch available packages from backend
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/checkout/packages', { cache: 'no-store' });
+        if (!res.ok) {
+          setPackagesLoading(false);
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data) && data.length > 0) {
+          setPackages(data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch credit packages:', error);
+      } finally {
+        if (!cancelled) {
+          setPackagesLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch current credit balance
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -121,40 +165,44 @@ export default function CreditShopPage() {
                 Choose your top-up
               </p>
               <p style={{ margin: 0, fontSize: '1.125rem' }}>Pick the package that suits your writing needs.</p>
-              <div
-                style={{
-                  display: 'grid',
-                  gap: 16,
-                  width: '100%',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                }}
-              >
-                {DEALS.map((deal) => {
-                  const isProcessing = state.status === 'loading' && state.pendingCredits === deal.credits;
-                  const processingLabel = STRIPE_CHECKOUT_ENABLED ? 'Redirecting to checkout…' : 'Processing purchase…';
-                  return (
-                    <div
-                      key={deal.credits}
-                      className="card"
-                      style={{ border: '1px solid #e2e8f0', background: '#fff', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}
-                    >
-                      <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{deal.credits} credits</h2>
-                      <p style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
-                        {currencyFormatter.format(deal.price)}
-                      </p>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => handlePurchase(deal.credits)}
-                        disabled={state.status === 'loading'}
-                        style={{ marginTop: 'auto' }}
+              {packagesLoading ? (
+                <p style={{ margin: 0, color: '#64748b' }}>Loading packages...</p>
+              ) : (
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 16,
+                    width: '100%',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  }}
+                >
+                  {packages.map((pkg) => {
+                    const isProcessing = state.status === 'loading' && state.pendingCredits === pkg.credits;
+                    const processingLabel = STRIPE_CHECKOUT_ENABLED ? 'Redirecting to checkout…' : 'Processing purchase…';
+                    return (
+                      <div
+                        key={pkg.credits}
+                        className="card"
+                        style={{ border: '1px solid #e2e8f0', background: '#fff', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}
                       >
-                        {isProcessing ? processingLabel : `Buy for ${currencyFormatter.format(deal.price)}`}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                        <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{pkg.credits} credits</h2>
+                        <p style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
+                          {formatPrice(pkg.amount, pkg.currency)}
+                        </p>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => handlePurchase(pkg.credits)}
+                          disabled={state.status === 'loading'}
+                          style={{ marginTop: 'auto' }}
+                        >
+                          {isProcessing ? processingLabel : `Buy for ${formatPrice(pkg.amount, pkg.currency)}`}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {STRIPE_CHECKOUT_ENABLED && (
                 <p style={{ margin: 0, color: '#475569', fontSize: '0.875rem' }}>
                   Payments are securely processed by Stripe. You will be redirected to checkout to complete your purchase.

@@ -1,19 +1,25 @@
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsPositive, IsString } from 'class-validator';
+import { IsNumber, IsString, IsOptional, Min, IsObject } from 'class-validator';
+
+export interface PurchaseMetadata {
+  stripeSessionId: string;
+  stripePaymentIntentId?: string;
+  credits: number;
+  priceId: string;
+}
 
 export class CreatePurchaseDto {
   @IsString()
-  @IsNotEmpty()
   plan!: string;
 
-  @IsInt()
-  @IsPositive()
+  @IsNumber()
+  @Min(0)
   amount!: number;
 
   @IsString()
   @IsOptional()
-  currency?: string = 'usd';
+  currency?: string;
 
+  @IsObject()
   @IsOptional()
-  metadata?: Record<string, any>;
+  metadata?: PurchaseMetadata;
 }
-

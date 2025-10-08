@@ -118,7 +118,7 @@ interface LetterStreamLetterPayload {
   senderPostcode: string;
   references: string[];
   responseId: string | null;
-  tone: WritingDeskLetterTone;
+  tone: WritingDeskLetterTone | null;
   rawJson: string;
 }
 
@@ -266,7 +266,7 @@ export default function WritingDeskClient() {
   const [researchError, setResearchError] = useState<string | null>(null);
   const [pendingAutoResume, setPendingAutoResume] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
-  const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary'>();
+  const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary' | null>(null);
   const lastResearchEventRef = useRef<number>(0);
   const lastResearchResumeAttemptRef = useRef<number>(0);
   const [letterStatus, setLetterStatus] = useState<WritingDeskLetterStatus>('idle');
@@ -1813,7 +1813,7 @@ export default function WritingDeskClient() {
                     <button
                       type="button"
                       className="btn-primary"
-                      onClick={startDeepResearch}
+                      onClick={() => void startDeepResearch()}
                       disabled={researchButtonDisabled}
                     >
                       {researchButtonLabel}

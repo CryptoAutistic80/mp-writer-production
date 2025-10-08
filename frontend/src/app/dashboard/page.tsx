@@ -11,7 +11,6 @@ export default function DashboardPage() {
   const [sharedPostcode, setSharedPostcode] = useState('');
   const [firstName, setFirstName] = useState('User');
   const [credits, setCredits] = useState(0);
-  const demoPurchasesEnabled = process.env.NEXT_PUBLIC_ENABLE_DEMO_PURCHASE !== '0';
 
   useEffect(() => {
     let cancelled = false;
@@ -39,7 +38,6 @@ export default function DashboardPage() {
       <DashboardWelcome
         firstName={firstName}
         credits={credits}
-        demoPurchasesEnabled={demoPurchasesEnabled}
       />
       <section className="card" style={{ marginTop: 16 }}>
         <MpFetch onPostcodeChange={setSharedPostcode} />
