@@ -16,7 +16,7 @@ export function WaveformVisualizer({
   className = '' 
 }: WaveformVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number | null>(null);
   const [bars, setBars] = useState<number[]>([]);
 
   useEffect(() => {
@@ -65,8 +65,9 @@ export function WaveformVisualizer({
     draw();
 
     return () => {
-      if (animationFrameRef.current) {
+      if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
     };
   }, [isRecording, analyser, audioContext]);

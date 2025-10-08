@@ -7,15 +7,23 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app/app.module';
-import { json, urlencoded } from 'express';
+import { json, urlencoded, Request, Response, NextFunction } from 'express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
   
-  // Increase payload size limit for audio transcription
-  app.use(json({ limit: '10mb' }));
+  // Stripe webhook requires raw body, but other routes need parsed JSON
+  // We'll apply JSON parsing conditionally
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.originalUrl === '/api/checkout/webhook') {
+      // Skip JSON parsing for webhook - raw body is already available via rawBody: true
+      next();
+    } else {
+      json({ limit: '10mb' })(req, res, next);
+    }
+  });
   app.use(urlencoded({ extended: true, limit: '10mb' }));
   
   app.useGlobalPipes(

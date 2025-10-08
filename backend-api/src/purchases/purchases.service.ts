@@ -1,24 +1,24 @@
-import { InjectModel } from '@nestjs/mongoose';
 import { Injectable } from '@nestjs/common';
-import { Model } from 'mongoose';
-import { Purchase } from './schemas/purchase.schema';
+import { PurchasesRepository } from './purchases.repository';
+import { CreatePurchaseDto } from './dto/create-purchase.dto';
 
 @Injectable()
 export class PurchasesService {
-  constructor(
-    @InjectModel(Purchase.name) private readonly purchaseModel: Model<Purchase>,
-  ) {}
+  constructor(private readonly repository: PurchasesRepository) {}
 
-  async create(userId: string, input: { plan: string; amount: number; currency?: string; metadata?: any }) {
-    return this.purchaseModel.create({ user: userId, ...input, status: 'succeeded' });
+  async create(userId: string, dto: CreatePurchaseDto) {
+    return this.repository.create(userId, dto);
+  }
+
+  async findByStripeSession(userId: string, sessionId: string) {
+    return this.repository.findByStripeSession(userId, sessionId);
   }
 
   async findMine(userId: string) {
-    return this.purchaseModel.find({ user: userId }).sort({ createdAt: -1 }).lean();
+    return this.repository.findByUser(userId);
   }
 
   async getById(userId: string, id: string) {
-    return this.purchaseModel.findOne({ _id: id, user: userId }).lean();
+    return this.repository.findById(userId, id);
   }
 }
-

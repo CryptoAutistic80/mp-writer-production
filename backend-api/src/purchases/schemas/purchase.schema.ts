@@ -30,4 +30,5 @@ export class Purchase {
 
 export const PurchaseSchema = SchemaFactory.createForClass(Purchase);
 PurchaseSchema.index({ user: 1, createdAt: -1 });
+PurchaseSchema.index({ 'metadata.stripeSessionId': 1 });
 

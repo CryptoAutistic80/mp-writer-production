@@ -19,6 +19,7 @@ import { UserAddressModule } from '../user-address-store/user-address.module';
 import { UserCreditsModule } from '../user-credits/user-credits.module';
 import { EncryptionService } from '../crypto/encryption.service';
 import { WritingDeskJobsModule } from '../writing-desk-jobs/writing-desk-jobs.module';
+import { CheckoutModule } from '../checkout/checkout.module';
 
 function validateConfig(config: Record<string, unknown>) {
   const errors: string[] = [];
@@ -83,6 +84,7 @@ function validateConfig(config: Record<string, unknown>) {
     UsersModule,
     AuthModule,
     PurchasesModule,
+    CheckoutModule,
     AiModule,
     MpsModule,
     UserMpModule,

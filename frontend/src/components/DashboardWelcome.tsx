@@ -5,11 +5,9 @@ import Link from 'next/link';
 type Props = {
   firstName: string;
   credits: number;
-  demoPurchasesEnabled?: boolean;
 };
 
-export default function DashboardWelcome({ firstName, credits, demoPurchasesEnabled }: Props) {
-  const showCreditShop = demoPurchasesEnabled ?? true;
+export default function DashboardWelcome({ firstName, credits }: Props) {
   const formatCredits = (value: number) => {
     const rounded = Math.round(value * 100) / 100;
     return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -24,11 +22,9 @@ export default function DashboardWelcome({ firstName, credits, demoPurchasesEnab
           <p><em className="fineprint">(Saved addresses are encrypted and can only be read by you.)</em></p>
         </div>
         <div className="credits-info">
-          {showCreditShop && (
-            <Link className="btn-primary btn-wide" href="/credit-shop">
-              Visit credit shop
-            </Link>
-          )}
+          <Link className="btn-primary btn-wide" href="/credit-shop">
+            Visit credit shop
+          </Link>
           <div className="credit-balance" aria-label={`You have ${formatCredits(credits)} credits available`}>
             <svg
               className="credit-balance__icon"

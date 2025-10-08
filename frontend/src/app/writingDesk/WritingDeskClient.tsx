@@ -118,7 +118,7 @@ interface LetterStreamLetterPayload {
   senderPostcode: string;
   references: string[];
   responseId: string | null;
-  tone: WritingDeskLetterTone;
+  tone: WritingDeskLetterTone | null;
   rawJson: string;
 }
 
@@ -266,7 +266,7 @@ export default function WritingDeskClient() {
   const [researchError, setResearchError] = useState<string | null>(null);
   const [pendingAutoResume, setPendingAutoResume] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
-  const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary'>();
+  const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary' | null>(null);
   const lastResearchEventRef = useRef<number>(0);
   const lastResearchResumeAttemptRef = useRef<number>(0);
   const [letterStatus, setLetterStatus] = useState<WritingDeskLetterStatus>('idle');
@@ -1649,12 +1649,11 @@ export default function WritingDeskClient() {
             )}
 
             <div
-              className="actions"
+              className={`actions${stepIndex === 0 ? ' actions--primary-only' : ''}`}
               style={{
                 marginTop: 12,
-                display: 'flex',
                 gap: 12,
-                justifyContent: stepIndex === 0 ? 'flex-end' : undefined,
+                display: 'flex',
               }}
             >
               {stepIndex > 0 && (
@@ -1813,7 +1812,7 @@ export default function WritingDeskClient() {
                     <button
                       type="button"
                       className="btn-primary"
-                      onClick={startDeepResearch}
+                      onClick={() => void startDeepResearch()}
                       disabled={researchButtonDisabled}
                     >
                       {researchButtonLabel}
@@ -2340,16 +2339,41 @@ export default function WritingDeskClient() {
           margin-bottom: 8px;
         }
 
+        .actions--primary-only {
+          justify-content: flex-end;
+        }
+
         @media (max-width: 640px) {
           .input-with-mic {
-            flex-direction: column;
-            align-items: stretch;
+            display: block;
+          }
+
+          .input-with-mic .input {
+            width: 100%;
+            padding-right: 72px;
+            padding-bottom: 72px;
           }
 
           .input-mic-button {
-            align-self: flex-end;
-            margin-bottom: 0;
+            position: absolute;
+            right: 16px;
+            bottom: 16px;
+            transform: none;
+            margin: 0;
+          }
+
+          .input-mic-button :global(.mic-button-container) {
+            align-items: flex-end;
+          }
+
+          .input-mic-button :global(.mic-button__error) {
             margin-top: 8px;
+            text-align: right;
+            max-width: min(220px, 70vw);
+          }
+
+          .actions--primary-only {
+            justify-content: center;
           }
         }
       `}</style>

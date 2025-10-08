@@ -232,8 +232,8 @@ export function MicButton({
           <div className="mic-button__waveform">
             <WaveformVisualizer
               isRecording={isRecording}
-              audioContext={audioContext}
-              analyser={analyser}
+              audioContext={audioContext ?? undefined}
+              analyser={analyser ?? undefined}
             />
           </div>
         )}
