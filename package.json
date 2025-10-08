@@ -69,6 +69,6 @@
     "react-markdown": "^9.0.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "stripe": "^16.9.0"
+    "stripe": "^16.12.0"
   }
 }
