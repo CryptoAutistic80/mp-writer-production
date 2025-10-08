@@ -20,11 +20,11 @@ export class TranscriptionDto {
 
   @IsOptional()
   @IsEnum(TranscriptionModel)
-  model?: TranscriptionModel = TranscriptionModel.GPT_4O_MINI_TRANSCRIBE;
+  model?: TranscriptionModel;
 
   @IsOptional()
   @IsEnum(TranscriptionResponseFormat)
-  responseFormat?: TranscriptionResponseFormat = TranscriptionResponseFormat.TEXT;
+  responseFormat?: TranscriptionResponseFormat;
 
   @IsOptional()
   @IsString()
@@ -41,7 +41,7 @@ export class StreamingTranscriptionDto {
 
   @IsOptional()
   @IsEnum(TranscriptionModel)
-  model?: TranscriptionModel = TranscriptionModel.GPT_4O_MINI_TRANSCRIBE;
+  model?: TranscriptionModel;
 
   @IsOptional()
   @IsString()

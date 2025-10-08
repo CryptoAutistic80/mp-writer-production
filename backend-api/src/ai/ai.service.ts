@@ -378,6 +378,27 @@ export class AiService {
     return this.openaiClient;
   }
 
+  private resolveTranscriptionModel(modelFromRequest?: TranscriptionModel): TranscriptionModel {
+    if (modelFromRequest) {
+      return modelFromRequest;
+    }
+
+    const configuredModel = this.config.get<string>('OPENAI_TRANSCRIPTION_MODEL')?.trim();
+    const allowedModels = Object.values(TranscriptionModel) as string[];
+
+    if (configuredModel && allowedModels.includes(configuredModel)) {
+      return configuredModel as TranscriptionModel;
+    }
+
+    if (configuredModel && !allowedModels.includes(configuredModel)) {
+      this.logger.warn(
+        `Unsupported OPENAI_TRANSCRIPTION_MODEL "${configuredModel}" provided. Falling back to "${TranscriptionModel.GPT_4O_MINI_TRANSCRIBE}".`,
+      );
+    }
+
+    return TranscriptionModel.GPT_4O_MINI_TRANSCRIBE;
+  }
+
   async generate(input: { prompt: string; model?: string }) {
     const apiKey = this.config.get<string>('OPENAI_API_KEY');
     const model = input.model || this.config.get<string>('OPENAI_MODEL', 'gpt-4o-mini');
@@ -2915,6 +2936,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       const client = await this.getOpenAiClient(apiKey);
+      const model = this.resolveTranscriptionModel(input.model);
+      const responseFormat = input.responseFormat ?? TranscriptionResponseFormat.TEXT;
       
       // Convert base64 to buffer
       const audioBuffer = Buffer.from(input.audioData, 'base64');
@@ -2924,8 +2947,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       const transcription = await client.audio.transcriptions.create({
         file: audioFile,
-        model: input.model || TranscriptionModel.GPT_4O_MINI_TRANSCRIBE,
-        response_format: input.responseFormat || TranscriptionResponseFormat.TEXT,
+        model,
+        response_format: responseFormat,
         prompt: input.prompt,
         language: input.language,
       });
@@ -2933,7 +2956,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       this.logger.log(`[transcription] Raw response: ${JSON.stringify(transcription)}`);
 
       const bundle = {
-        model: input.model || TranscriptionModel.GPT_4O_MINI_TRANSCRIBE,
+        model,
         text: transcription.text || transcription || 'No transcription text received',
         remainingCredits: remainingAfterCharge,
       };
@@ -2970,6 +2993,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           }
 
           const client = await this.getOpenAiClient(apiKey);
+          const model = this.resolveTranscriptionModel(input.model);
           
           // Convert base64 to buffer
           const audioBuffer = Buffer.from(input.audioData, 'base64');
@@ -2979,7 +3003,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
           const stream = await client.audio.transcriptions.create({
             file: audioFile,
-            model: input.model || TranscriptionModel.GPT_4O_MINI_TRANSCRIBE,
+            model,
             response_format: TranscriptionResponseFormat.TEXT,
             stream: true,
             prompt: input.prompt,
