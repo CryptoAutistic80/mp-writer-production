@@ -792,6 +792,8 @@ body {
   display: block;
   width: 100%;
   height: auto;
+  border-radius: 50%;
+  object-fit: cover;
 }
 
 .hero-title {
@@ -856,11 +858,13 @@ body {
   }
   .hero-graphic {
     display: block;
+    margin-left: auto;
+    max-width: 420px;
+    aspect-ratio: 1 / 1;
   }
   .hero-graphic img {
     width: 100%;
-    max-width: 420px;
-    margin-left: auto;
+    height: 100%;
   }
   .stepper {
     padding: 20px;

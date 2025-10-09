@@ -14,6 +14,7 @@ export interface LetterRenderInput {
   senderCity?: string | null;
   senderCounty?: string | null;
   senderPostcode?: string | null;
+  senderTelephone?: string | null;
   references?: string[] | null;
 }
 
@@ -56,6 +57,11 @@ export const composeLetterHtml = (input: LetterRenderInput): string => {
   const hasAddressDetail = senderLines.some((line) => line.trim().length > 0);
   if (hasAddressDetail && shouldAppendSenderAddress(input.letterContentHtml ?? '', senderLines, senderName)) {
     sections.push(`<p>${senderLines.map(escapeHtml).join('<br />')}</p>`);
+  }
+
+  const senderTelephone = typeof input.senderTelephone === 'string' ? input.senderTelephone.trim() : '';
+  if (senderTelephone.length > 0) {
+    sections.push(`<p>Tel: ${escapeHtml(senderTelephone)}</p>`);
   }
 
   const references = Array.isArray(input.references)

@@ -32,6 +32,7 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
   const [manual, setManual] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [telephone, setTelephone] = useState('');
 
   const valid = useMemo(() => !!normalisePostcode(postcode), [postcode]);
 
@@ -176,6 +177,7 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
           const addr: Address = { id: 'saved', line1: a.line1 || '', line2: a.line2 || '', city: a.city || '', county: a.county || '', postcode: a.postcode || '', label: '' };
           setSelected(addr);
           setPostcode(a.postcode || '');
+          setTelephone(a.telephone || '');
         }
       } catch {}
     })();
@@ -186,12 +188,14 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
     setSaving(true);
     setSavedMsg(null);
     try {
+      const trimmedTelephone = telephone.trim();
       const body = {
         line1: current.line1,
         line2: current.line2 || '',
         city: current.city || '',
         county: current.county || '',
         postcode: current.postcode,
+        telephone: trimmedTelephone,
       };
       const res = await fetch('/api/user/address', {
         method: 'PUT',
@@ -203,19 +207,20 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
         const msg = await res.text().catch(() => '');
         throw new Error(msg || `Save failed (${res.status})`);
       }
-      setSavedMsg('Address saved');
+      setSavedMsg('Details saved');
     } catch (e: any) {
       setSavedMsg(e?.message || 'Save failed');
     } finally {
       setSaving(false);
     }
-  }, [current]);
+  }, [current, telephone]);
 
   const clearSaved = useCallback(async () => {
     setSavedMsg(null);
     try {
       await fetch('/api/user/address', { method: 'DELETE', credentials: 'include' });
       setSelected(null);
+      setTelephone('');
     } catch {}
   }, []);
 
@@ -225,6 +230,9 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
         <div>
           <h2 className="section-title">Your address</h2>
           <p className="section-sub">Enter the address you want to use when writing to your MP.</p>
+          <p className="section-sub fineprint">
+            Saved addresses and telephone numbers are encrypted for your privacy. Singularity Shift Ltd cannot access or use these details.
+          </p>
         </div>
       </div>
 
@@ -291,6 +299,18 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
               <label htmlFor="addr-pc" className="label">Postcode</label>
               <input id="addr-pc" className="input" value={current.postcode}
                 onChange={(e) => setSelected({ ...(current as Address), postcode: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="addr-tel" className="label">Telephone number</label>
+              <input
+                id="addr-tel"
+                className="input"
+                placeholder="e.g. 07000 123456"
+                autoComplete="tel"
+                inputMode="tel"
+                value={telephone}
+                onChange={(e) => setTelephone(e.target.value)}
+              />
             </div>
             <div className="actions" style={{ marginTop: 10 }}>
               <button type="button" className="btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save address'}</button>
