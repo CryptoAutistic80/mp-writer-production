@@ -131,6 +131,54 @@ type LetterStreamMessage =
   | { type: 'complete'; letter: LetterStreamLetterPayload; remainingCredits: number | null }
   | { type: 'error'; message: string; remainingCredits?: number | null };
 
+const LETTER_DOCUMENT_CSS = `
+  @page {
+    margin: 15mm;
+  }
+
+  body {
+    font-family: "Times New Roman", serif;
+    font-size: 12pt;
+    line-height: 1.5;
+    color: #111827;
+    margin: 0;
+    background: #ffffff;
+  }
+
+  .letter-document {
+    box-sizing: border-box;
+    max-width: 180mm;
+    margin: 0 auto;
+    padding: 15mm;
+  }
+
+  .letter-document p {
+    margin: 0 0 12pt 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .letter-document ul,
+  .letter-document ol {
+    margin: 0 0 12pt 20pt;
+    padding: 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .letter-document li {
+    margin: 0 0 6pt 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .letter-document a {
+    color: #1d4ed8;
+    text-decoration: underline;
+    word-break: break-word;
+  }
+`;
+
 const createLetterRunId = () => {
   if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
     return window.crypto.randomUUID();
@@ -285,8 +333,73 @@ export default function WritingDeskClient() {
   const [letterReasoningVisible, setLetterReasoningVisible] = useState(true);
   const [letterMetadata, setLetterMetadata] = useState<LetterStreamLetterPayload | null>(null);
   const [letterPendingAutoResume, setLetterPendingAutoResume] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
   const letterJsonBufferRef = useRef<string>('');
+
+  const letterHtmlForExport = useMemo(() => {
+    if (typeof letterContentHtml !== 'string' || letterContentHtml.trim().length === 0) {
+      return '<p>No content available.</p>';
+    }
+    return letterContentHtml;
+  }, [letterContentHtml]);
+
+  const letterDocumentBodyHtml = useMemo(
+    () => `<div class="letter-document">${letterHtmlForExport}</div>`,
+    [letterHtmlForExport],
+  );
+
+  const letterDocxHtml = useMemo(
+    () =>
+      `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+${LETTER_DOCUMENT_CSS}
+</style>
+</head>
+<body>
+${letterDocumentBodyHtml}
+</body>
+</html>`,
+    [letterDocumentBodyHtml],
+  );
+
+  const resolveDownloadFilename = useCallback(
+    (extension: 'pdf' | 'docx') => {
+      const mpName =
+        typeof letterMetadata?.mpName === 'string' ? letterMetadata.mpName.trim() : '';
+      const dateValue =
+        typeof letterMetadata?.date === 'string' && letterMetadata.date.trim().length > 0
+          ? letterMetadata.date.trim()
+          : new Date().toISOString().slice(0, 10);
+      const baseParts = [mpName, dateValue].filter((part) => part.length > 0);
+      const baseRaw = baseParts.join('-') || 'mp-letter';
+      const slug = baseRaw
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      const safeBase = slug.length > 0 ? slug : 'mp-letter';
+      return `${safeBase}.${extension}`;
+    },
+    [letterMetadata],
+  );
+
+  const triggerBlobDownload = useCallback((blob: Blob, filename: string) => {
+    if (typeof window === 'undefined') return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 0);
+  }, []);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -1542,6 +1655,65 @@ export default function WritingDeskClient() {
     }
   }, [letterContentHtml]);
 
+  const handleDownloadDocx = useCallback(async () => {
+    if (isDownloadingDocx || typeof window === 'undefined') return;
+    setIsDownloadingDocx(true);
+    try {
+      const htmlDocxModule = await import('html-docx-js/dist/html-docx.js');
+      const htmlDocx = (htmlDocxModule.default ?? htmlDocxModule) as { asBlob: (input: string) => Blob };
+      const blob = htmlDocx.asBlob(letterDocxHtml);
+      triggerBlobDownload(blob, resolveDownloadFilename('docx'));
+    } catch (error) {
+      console.error('Failed to generate DOCX export', error);
+    } finally {
+      setIsDownloadingDocx(false);
+    }
+  }, [isDownloadingDocx, letterDocxHtml, resolveDownloadFilename, triggerBlobDownload]);
+
+  const handleDownloadPdf = useCallback(async () => {
+    if (isDownloadingPdf || typeof window === 'undefined') return;
+    setIsDownloadingPdf(true);
+    const container = document.createElement('div');
+    let appended = false;
+    try {
+      container.style.position = 'fixed';
+      container.style.left = '-9999px';
+      container.style.top = '0';
+      container.style.width = '210mm';
+      container.style.padding = '0';
+      container.style.margin = '0';
+      container.style.background = '#ffffff';
+      container.style.zIndex = '-1';
+      container.setAttribute('aria-hidden', 'true');
+      container.innerHTML = `<style>${LETTER_DOCUMENT_CSS}</style>${letterDocumentBodyHtml}`;
+      document.body.appendChild(container);
+      appended = true;
+      const target = container.querySelector('.letter-document') as HTMLElement | null;
+      if (!target) {
+        throw new Error('Unable to locate letter content for export');
+      }
+      const html2pdfModule = (await import('html2pdf.js')) as any;
+      const html2pdf = html2pdfModule.default ?? html2pdfModule;
+      await html2pdf()
+        .set({
+          margin: [15, 15, 15, 15],
+          filename: resolveDownloadFilename('pdf'),
+          pagebreak: { mode: ['css', 'legacy'] },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .from(target)
+        .save();
+    } catch (error) {
+      console.error('Failed to generate PDF export', error);
+    } finally {
+      if (appended && container.parentNode) {
+        container.parentNode.removeChild(container);
+      }
+      setIsDownloadingPdf(false);
+    }
+  }, [isDownloadingPdf, letterDocumentBodyHtml, resolveDownloadFilename]);
+
   return (
     <>
       <StartOverConfirmModal
@@ -2106,7 +2278,25 @@ export default function WritingDeskClient() {
                 />
                 <div className="actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
                   <button type="button" className="btn-primary" onClick={handleCopyLetter}>
-                    {letterCopyState === 'copied' ? 'Copied!' : letterCopyState === 'error' ? 'Copy failed — try again' : 'Copy letter as HTML'}
+                    {letterCopyState === 'copied' ? 'Copied!' : letterCopyState === 'error' ? 'Copy failed — try again' : 'Copy for email'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleDownloadPdf}
+                    disabled={isDownloadingPdf}
+                    aria-busy={isDownloadingPdf}
+                  >
+                    {isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleDownloadDocx}
+                    disabled={isDownloadingDocx}
+                    aria-busy={isDownloadingDocx}
+                  >
+                    {isDownloadingDocx ? 'Preparing DOCX...' : 'Download DOCX'}
                   </button>
                   <button type="button" className="btn-secondary" onClick={handleShowToneSelection}>
                     Compose another letter
