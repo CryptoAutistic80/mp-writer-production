@@ -100,6 +100,7 @@ interface WritingDeskLetterResult {
   sender_city: string;
   sender_county: string;
   sender_postcode: string;
+  sender_phone: string;
   references: string[];
 }
 
@@ -120,6 +121,7 @@ interface LetterCompletePayload {
   senderCity: string;
   senderCounty: string;
   senderPostcode: string;
+  senderTelephone: string;
   references: string[];
   responseId: string | null;
   tone: WritingDeskLetterTone;
@@ -159,6 +161,7 @@ interface LetterDocumentInput {
   senderCity?: string | null;
   senderCounty?: string | null;
   senderPostcode?: string | null;
+  senderTelephone?: string | null;
   references?: string[] | null;
 }
 
@@ -177,6 +180,7 @@ interface LetterContext {
   senderCity: string;
   senderCounty: string;
   senderPostcode: string;
+  senderTelephone: string;
   today: string;
 }
 
@@ -249,6 +253,10 @@ const LETTER_RESPONSE_SCHEMA = {
       type: 'string',
       description: "Post code of the sender's address.",
     },
+    sender_phone: {
+      type: 'string',
+      description: "Telephone number for the sender, shown beneath the postal address.",
+    },
     references: {
       type: 'array',
       description: 'List of full, properly formatted URLs used as references. URLs must be complete with protocol (https://) and should NOT be percent-encoded - use plain characters for special symbols like #, :, ~, and = in URL fragments.',
@@ -275,6 +283,7 @@ const LETTER_RESPONSE_SCHEMA = {
     'sender_city',
     'sender_county',
     'sender_postcode',
+    'sender_phone',
     'references',
   ],
   additionalProperties: false,
@@ -833,6 +842,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           senderCity: stub.sender_city,
           senderCounty: stub.sender_county,
           senderPostcode: stub.sender_postcode,
+          senderTelephone: stub.sender_phone,
           references: stub.references,
         });
         const rawJson = JSON.stringify(stub);
@@ -914,13 +924,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 letterContentHtml: preview,
                 senderName: context.senderName,
                 senderAddress1: context.senderAddress1,
-                senderAddress2: context.senderAddress2,
-                senderAddress3: context.senderAddress3,
-                senderCity: context.senderCity,
-                senderCounty: context.senderCounty,
-                senderPostcode: context.senderPostcode,
-                references: this.extractReferencesFromJson(jsonBuffer),
-              });
+              senderAddress2: context.senderAddress2,
+              senderAddress3: context.senderAddress3,
+              senderCity: context.senderCity,
+              senderCounty: context.senderCounty,
+              senderPostcode: context.senderPostcode,
+              senderTelephone: context.senderTelephone,
+              references: this.extractReferencesFromJson(jsonBuffer),
+            });
               send({ type: 'letter_delta', html: previewDocument });
             }
           }
@@ -948,6 +959,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               senderCity: context.senderCity,
               senderCounty: context.senderCounty,
               senderPostcode: context.senderPostcode,
+              senderTelephone: context.senderTelephone,
               references: this.extractReferencesFromJson(jsonBuffer),
             });
             send({ type: 'letter_delta', html: previewDocument });
@@ -998,6 +1010,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             senderCity: merged.sender_city,
             senderCounty: merged.sender_county,
             senderPostcode: merged.sender_postcode,
+            senderTelephone: merged.sender_phone,
             references,
           });
 
@@ -2018,6 +2031,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const senderCity = typeof senderAddress?.city === 'string' ? senderAddress.city : '';
     const senderCounty = typeof senderAddress?.county === 'string' ? senderAddress.county : '';
     const senderPostcode = typeof senderAddress?.postcode === 'string' ? senderAddress.postcode : '';
+    const senderTelephone = typeof senderAddress?.telephone === 'string' ? senderAddress.telephone : '';
 
     const mpName =
       typeof (mpRecord as any)?.mp?.name === 'string' && (mpRecord as any).mp.name.trim().length > 0
@@ -2047,6 +2061,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       senderCity,
       senderCounty,
       senderPostcode,
+      senderTelephone,
       today,
     };
   }
@@ -2080,6 +2095,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       `Today's date: ${context.today}`,
       `MP profile:\n- Name: ${context.mpName || 'Unknown'}\n- Constituency: ${context.constituency || 'Unknown'}\n- Parliamentary address line 1: ${context.mpAddress1 || ''}\n- Parliamentary address line 2: ${context.mpAddress2 || ''}\n- Parliamentary city: ${context.mpCity || ''}\n- Parliamentary county: ${context.mpCounty || ''}\n- Parliamentary postcode: ${context.mpPostcode || ''}`,
       `Sender profile:\n- Name: ${context.senderName || ''}\n- Address line 1: ${context.senderAddress1 || ''}\n- Address line 2: ${context.senderAddress2 || ''}\n- Address line 3: ${context.senderAddress3 || ''}\n- City: ${context.senderCity || ''}\n- County: ${context.senderCounty || ''}\n- Postcode: ${context.senderPostcode || ''}`,
+      `Sender profile:\n- Name: ${context.senderName || ''}\n- Address line 1: ${context.senderAddress1 || ''}\n- Address line 2: ${context.senderAddress2 || ''}\n- Address line 3: ${context.senderAddress3 || ''}\n- City: ${context.senderCity || ''}\n- County: ${context.senderCounty || ''}\n- Postcode: ${context.senderPostcode || ''}\n- Telephone: ${context.senderTelephone || ''}`,
       `User intake description:\n${intake}`,
       `Follow-up details:\n${followUpSection}`,
       `Deep research findings:\n${researchSection}`,
@@ -2113,6 +2129,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     schema.properties.sender_city.const = normalise(context.senderCity);
     schema.properties.sender_county.const = normalise(context.senderCounty);
     schema.properties.sender_postcode.const = normalise(context.senderPostcode);
+    schema.properties.sender_phone.const = normalise(context.senderTelephone);
 
     return schema;
   }
@@ -2245,6 +2262,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       sender_city: context.senderCity || '',
       sender_county: context.senderCounty || '',
       sender_postcode: context.senderPostcode || '',
+      sender_phone: context.senderTelephone || '',
       references: [],
     };
   }
@@ -2296,6 +2314,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const hasAddressDetail = senderLines.some((line) => line.trim().length > 0);
     if (hasAddressDetail && this.shouldAppendSenderAddress(letterContentHtml, senderLines, senderName)) {
       sections.push(`<p>${senderLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
+    }
+
+    const telephone = normalise(input.senderTelephone).trim();
+    if (telephone.length > 0) {
+      sections.push(`<p>Tel: ${this.escapeLetterHtml(telephone)}</p>`);
     }
 
     const references = Array.isArray(input.references)
@@ -2455,6 +2478,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       senderCity: result.sender_city ?? '',
       senderCounty: result.sender_county ?? '',
       senderPostcode: result.sender_postcode ?? '',
+      senderTelephone: result.sender_phone ?? '',
       references: Array.isArray(result.references) ? result.references : [],
       responseId: extras.responseId ?? null,
       tone: extras.tone,
@@ -2485,6 +2509,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         sender_city: parsed.sender_city ?? '',
         sender_county: parsed.sender_county ?? '',
         sender_postcode: parsed.sender_postcode ?? '',
+        sender_phone: parsed.sender_phone ?? '',
         references: Array.isArray(parsed.references) ? parsed.references : [],
       });
     } catch (error) {
@@ -2517,6 +2542,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       sender_city: normalise(context.senderCity),
       sender_county: normalise(context.senderCounty),
       sender_postcode: normalise(context.senderPostcode),
+      sender_phone: normalise(context.senderTelephone),
     });
   }
 
@@ -2641,6 +2667,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       sender_city: normalise(result.sender_city),
       sender_county: normalise(result.sender_county),
       sender_postcode: normalise(result.sender_postcode),
+      sender_phone: normalise(result.sender_phone),
       references: Array.isArray(result.references)
         ? result.references
             .map((value) => (typeof value === 'string' ? this.normaliseLetterTypography(value) : ''))

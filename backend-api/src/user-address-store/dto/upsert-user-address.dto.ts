@@ -25,5 +25,10 @@ export class UpsertUserAddressDto {
   @IsNotEmpty()
   @MaxLength(16)
   postcode!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  telephone?: string;
 }
 

@@ -116,6 +116,7 @@ interface LetterStreamLetterPayload {
   senderCity: string;
   senderCounty: string;
   senderPostcode: string;
+  senderTelephone: string;
   references: string[];
   responseId: string | null;
   tone: WritingDeskLetterTone | null;
@@ -954,6 +955,7 @@ export default function WritingDeskClient() {
             senderCity: parsed.sender_city ?? '',
             senderCounty: parsed.sender_county ?? '',
             senderPostcode: parsed.sender_postcode ?? '',
+            senderTelephone: parsed.sender_phone ?? '',
             references: parsedReferences,
           });
           setLetterMetadata({
@@ -972,6 +974,7 @@ export default function WritingDeskClient() {
             senderCity: parsed.sender_city ?? '',
             senderCounty: parsed.sender_county ?? '',
             senderPostcode: parsed.sender_postcode ?? '',
+            senderTelephone: parsed.sender_phone ?? '',
             references: parsedReferences,
             responseId: job.letterResponseId ?? null,
             tone: job.letterTone ?? null,

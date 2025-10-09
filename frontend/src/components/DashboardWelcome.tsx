@@ -19,7 +19,11 @@ export default function DashboardWelcome({ firstName, credits }: Props) {
           <h2 className="section-title">Welcome to your dashboard {firstName}!</h2>
           <p>Please enter your postcode below to locate your MP and select your address.</p>
           <p>Then you are ready to write your letter!</p>
-          <p><em className="fineprint">(Saved addresses are encrypted and can only be read by you.)</em></p>
+          <p>
+            <em className="fineprint">
+              (Saved addresses and telephone numbers are encrypted so only you can read them. Singularity Shift Ltd does not access or use these details.)
+            </em>
+          </p>
         </div>
         <div className="credits-info">
           <Link className="btn-primary btn-wide" href="/credit-shop">
