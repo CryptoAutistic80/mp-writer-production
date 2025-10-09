@@ -27,7 +27,7 @@ export default function DashboardWelcome({ firstName, credits }: Props) {
         </div>
         <div className="credits-info">
           <Link className="btn-primary btn-wide" href="/credit-shop">
-            Visit credit shop
+            Credit shop
           </Link>
           <div className="credit-balance" aria-label={`You have ${formatCredits(credits)} credits available`}>
             <svg
