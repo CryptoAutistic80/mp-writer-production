@@ -790,9 +790,37 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     let remainingCredits: number | null = null;
     let controller: { abort: () => void } | null = null;
     let jsonBuffer = '';
+    let quietPeriodTimer: NodeJS.Timeout | null = null;
+    let settled = false;
+    let lastPersistedContent: string | null = null;
+    let lastPersistedAt = 0;
 
     const send = (payload: LetterStreamPayload) => {
       subject.next(payload);
+    };
+
+    const persistProgressIfNeeded = async (html: string) => {
+      const now = Date.now();
+      const hasChanged = html !== lastPersistedContent;
+      const shouldPersist = hasChanged && (now - lastPersistedAt > 5000); // Every 5 seconds
+
+      if (shouldPersist) {
+        try {
+          await this.persistLetterState(userId, baselineJob, {
+            status: 'generating',
+            tone,
+            content: html,
+            responseId: run.responseId,
+            json: jsonBuffer || null,
+          });
+          lastPersistedContent = html;
+          lastPersistedAt = now;
+        } catch (error) {
+          this.logger.warn(
+            `Failed to persist letter progress for user ${userId}: ${(error as Error)?.message ?? error}`,
+          );
+        }
+      }
     };
 
     try {
@@ -855,6 +883,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           json: rawJson,
         });
         run.status = 'completed';
+        settled = true;
         send({ type: 'letter_delta', html: stubDocument });
         send({
           type: 'complete',
@@ -865,6 +894,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           remainingCredits,
         });
         subject.complete();
+        
+        // Clean up the quiet period timer
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
         return;
       }
 
@@ -895,7 +930,38 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       controller = stream.controller ?? null;
 
+      // Set up periodic status updates during quiet periods
+      const startQuietPeriodTimer = () => {
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+        }
+        quietPeriodTimer = setTimeout(() => {
+          const quietStatusMessages = [
+            'Drafting a persuasive opening…',
+            'Cross-referencing your evidence with parliamentary procedures…',
+            'Ensuring the tone matches your chosen style…',
+            'Polishing the argument structure…',
+            'Having a quick word with the parliamentary style guide…',
+            'Making sure every fact is properly cited…',
+            'Tailoring the content to your MP\'s interests…',
+            'Checking that the letter flows naturally…',
+            'Fine-tuning the closing paragraph…',
+            'Ensuring all the key points are covered…'
+          ];
+          const randomMessage = quietStatusMessages[Math.floor(Math.random() * quietStatusMessages.length)];
+          send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
+          startQuietPeriodTimer(); // Reset the timer
+        }, 5000); // 5 seconds of inactivity
+      };
+
+      startQuietPeriodTimer();
+
       for await (const event of stream) {
+        // Reset quiet period timer on any activity
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          startQuietPeriodTimer();
+        }
         const normalised = this.normaliseStreamEvent(event);
         const eventType = typeof normalised.type === 'string' ? normalised.type : null;
 
@@ -933,6 +999,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               references: this.extractReferencesFromJson(jsonBuffer),
             });
               send({ type: 'letter_delta', html: previewDocument });
+              await persistProgressIfNeeded(previewDocument);
             }
           }
           continue;
@@ -963,6 +1030,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               references: this.extractReferencesFromJson(jsonBuffer),
             });
             send({ type: 'letter_delta', html: previewDocument });
+            await persistProgressIfNeeded(previewDocument);
           }
           continue;
         }
@@ -1024,6 +1092,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           });
 
           run.status = 'completed';
+          settled = true;
           send({ type: 'letter_delta', html: finalDocument });
           send({
             type: 'complete',
@@ -1034,6 +1103,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             remainingCredits,
           });
           subject.complete();
+          
+          // Clean up the quiet period timer
+          if (quietPeriodTimer) {
+            clearTimeout(quietPeriodTimer);
+            quietPeriodTimer = null;
+          }
           return;
         }
 
@@ -1072,6 +1147,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       send({ type: 'error', message, remainingCredits });
       subject.complete();
+      
+      // Clean up the quiet period timer
+      if (quietPeriodTimer) {
+        clearTimeout(quietPeriodTimer);
+        quietPeriodTimer = null;
+      }
     } finally {
       if (controller) {
         try {
@@ -1173,6 +1254,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     let settled = false;
     let openAiStream: ResponseStreamLike | null = null;
     let responseId: string | null = run.responseId ?? null;
+    let quietPeriodTimer: NodeJS.Timeout | null = null;
 
     const captureResponseId = async (candidate: unknown) => {
       if (!candidate || typeof candidate !== 'object') return;
@@ -1280,6 +1362,71 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       let lastSequenceNumber: number | null = null;
       let currentStream: ResponseStreamLike | null = openAiStream;
       let resumeAttempts = 0;
+      let lastActivityTime = Date.now();
+
+      // Set up periodic status updates during quiet periods
+      const lastCustomMessages: string[] = []; // Track last 2 custom messages
+      const startQuietPeriodTimer = () => {
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+        }
+        quietPeriodTimer = setTimeout(() => {
+          const quietStatusMessages = [
+            'Taking a moment to absorb the evidence…',
+            'Processing the information through my democratic filters…',
+            'Having a quiet think about what I\'ve learned…',
+            'Cross-referencing with the parliamentary archives…',
+            'Taking a step back to see the bigger picture…',
+            'Having a brief consultation with the wisdom of ages…',
+            'Processing some things I\'ve discovered…',
+            'Taking a breather to let the evidence sink in…',
+            'Having a quick think about the implications…',
+            'Taking a moment to connect the dots…',
+            'Consulting the constitutional wisdom of the ages…',
+            'Weighing the evidence against parliamentary precedent…',
+            'Considering the broader implications for democracy…',
+            'Reflecting on the historical context of this issue…',
+            'Analyzing the potential impact on constituents…',
+            'Reviewing relevant legislation and policy frameworks…',
+            'Examining the evidence from multiple perspectives…',
+            'Considering the long-term democratic implications…',
+            'Processing the nuances of parliamentary procedure…',
+            'Evaluating the strength of the arguments presented…',
+            'Taking time to consider all sides of the debate…',
+            'Reflecting on the principles of representative democracy…',
+            'Considering how this affects the democratic process…',
+            'Weighing the evidence with parliamentary wisdom…',
+            'Taking a moment to consider the democratic implications…',
+            'Processing the information through constitutional lenses…',
+            'Reflecting on the broader context of governance…',
+            'Considering the impact on democratic institutions…',
+            'Taking time to absorb the complexity of the issue…',
+            'Weighing the evidence against democratic principles…'
+          ];
+          
+          // Filter out messages that match the last 2 custom emits
+          const availableMessages = quietStatusMessages.filter(
+            message => !lastCustomMessages.includes(message)
+          );
+          
+          // If all messages have been used recently, reset the tracking
+          const messagesToUse = availableMessages.length > 0 ? availableMessages : quietStatusMessages;
+          
+          const randomMessage = messagesToUse[Math.floor(Math.random() * messagesToUse.length)];
+          
+          // Update tracking: add new message and keep only last 2
+          lastCustomMessages.push(randomMessage);
+          if (lastCustomMessages.length > 2) {
+            lastCustomMessages.shift();
+          }
+          
+          send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
+          lastActivityTime = Date.now();
+          startQuietPeriodTimer(); // Reset the timer
+        }, 5000); // 5 seconds of inactivity
+      };
+
+      startQuietPeriodTimer();
 
       while (currentStream) {
         let streamError: unknown = null;
@@ -1287,6 +1434,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         try {
           for await (const event of currentStream) {
             if (!event) continue;
+
+            // Reset quiet period timer on any activity
+            lastActivityTime = Date.now();
+            if (quietPeriodTimer) {
+              clearTimeout(quietPeriodTimer);
+              startQuietPeriodTimer();
+            }
 
             const sequenceNumber = (event as any)?.sequence_number;
             if (Number.isFinite(sequenceNumber)) {
@@ -1419,6 +1573,33 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           }`,
         );
 
+        // Send a humorous status update to keep the user engaged during resume attempts
+        const resumeStatusMessages = [
+          'Consulting my medieval tomes for parliamentary precedents…',
+          'Shuffling through my official Parliament issue tarot cards…',
+          'Processing some things I\'ve learned from the evidence…',
+          'Cross-referencing with the ancient scrolls of Westminster…',
+          'Having a quick chat with the parliamentary ghosts…',
+          'Double-checking my facts against the cosmic database…',
+          'Consulting the oracle of Hansard for wisdom…',
+          'Taking a moment to absorb the gravity of the situation…',
+          'Rummaging through my collection of parliamentary tea leaves…',
+          'Having a brief conference with the spirits of democracy…',
+          'Processing the evidence through my parliamentary crystal ball…',
+          'Taking a step back to see the bigger picture…',
+          'Consulting the ancient texts of parliamentary procedure…',
+          'Having a quick think about what I\'ve discovered…',
+          'Cross-checking my findings with the parliamentary archives…',
+          'Taking a moment to connect the dots…',
+          'Having a quiet word with the parliamentary librarians…',
+          'Processing the information through my democratic filters…',
+          'Taking a breather to let the evidence sink in…',
+          'Having a brief consultation with the wisdom of ages…'
+        ];
+        
+        const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
+        send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
+
         try {
           const resumeParams: {
             response_id: string;
@@ -1500,6 +1681,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           subject.complete();
         }
       }
+
+      // Clean up the quiet period timer
+      if (quietPeriodTimer) {
+        clearTimeout(quietPeriodTimer);
+        quietPeriodTimer = null;
+      }
     } catch (error) {
       this.logger.error(
         `[writing-desk research] failure ${error instanceof Error ? error.message : 'unknown'}`,
@@ -1534,6 +1721,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         remainingCredits,
       });
       subject.complete();
+
+      // Clean up the quiet period timer
+      if (quietPeriodTimer) {
+        clearTimeout(quietPeriodTimer);
+        quietPeriodTimer = null;
+      }
     } finally {
       if (!settled && openAiStream?.controller) {
         try {
