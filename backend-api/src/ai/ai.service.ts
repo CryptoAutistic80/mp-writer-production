@@ -951,7 +951,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           const randomMessage = quietStatusMessages[Math.floor(Math.random() * quietStatusMessages.length)];
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
           startQuietPeriodTimer(); // Reset the timer
-        }, 8000); // 8 seconds of inactivity
+        }, 5000); // 5 seconds of inactivity
       };
 
       startQuietPeriodTimer();
@@ -1365,6 +1365,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       let lastActivityTime = Date.now();
 
       // Set up periodic status updates during quiet periods
+      const lastCustomMessages: string[] = []; // Track last 2 custom messages
       const startQuietPeriodTimer = () => {
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
@@ -1380,13 +1381,49 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             'Processing some things I\'ve discovered…',
             'Taking a breather to let the evidence sink in…',
             'Having a quick think about the implications…',
-            'Taking a moment to connect the dots…'
+            'Taking a moment to connect the dots…',
+            'Consulting the constitutional wisdom of the ages…',
+            'Weighing the evidence against parliamentary precedent…',
+            'Considering the broader implications for democracy…',
+            'Reflecting on the historical context of this issue…',
+            'Analyzing the potential impact on constituents…',
+            'Reviewing relevant legislation and policy frameworks…',
+            'Examining the evidence from multiple perspectives…',
+            'Considering the long-term democratic implications…',
+            'Processing the nuances of parliamentary procedure…',
+            'Evaluating the strength of the arguments presented…',
+            'Taking time to consider all sides of the debate…',
+            'Reflecting on the principles of representative democracy…',
+            'Considering how this affects the democratic process…',
+            'Weighing the evidence with parliamentary wisdom…',
+            'Taking a moment to consider the democratic implications…',
+            'Processing the information through constitutional lenses…',
+            'Reflecting on the broader context of governance…',
+            'Considering the impact on democratic institutions…',
+            'Taking time to absorb the complexity of the issue…',
+            'Weighing the evidence against democratic principles…'
           ];
-          const randomMessage = quietStatusMessages[Math.floor(Math.random() * quietStatusMessages.length)];
+          
+          // Filter out messages that match the last 2 custom emits
+          const availableMessages = quietStatusMessages.filter(
+            message => !lastCustomMessages.includes(message)
+          );
+          
+          // If all messages have been used recently, reset the tracking
+          const messagesToUse = availableMessages.length > 0 ? availableMessages : quietStatusMessages;
+          
+          const randomMessage = messagesToUse[Math.floor(Math.random() * messagesToUse.length)];
+          
+          // Update tracking: add new message and keep only last 2
+          lastCustomMessages.push(randomMessage);
+          if (lastCustomMessages.length > 2) {
+            lastCustomMessages.shift();
+          }
+          
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
           lastActivityTime = Date.now();
           startQuietPeriodTimer(); // Reset the timer
-        }, 8000); // 8 seconds of inactivity
+        }, 5000); // 5 seconds of inactivity
       };
 
       startQuietPeriodTimer();
