@@ -270,6 +270,22 @@ const describeResearchEvent = (event: { type?: string; [key: string]: any }): st
       const trimmed = summary.trim();
       return trimmed.length > 3 ? trimmed : null;
     }
+    case 'resume_attempt': {
+      // Handle our humorous resume attempt messages
+      const message = event.message;
+      if (typeof message === 'string' && message.trim().length > 0) {
+        return message.trim();
+      }
+      return null;
+    }
+    case 'quiet_period': {
+      // Handle quiet period status messages
+      const message = event.message;
+      if (typeof message === 'string' && message.trim().length > 0) {
+        return message.trim();
+      }
+      return null;
+    }
     default:
       return null;
   }
@@ -337,6 +353,8 @@ export default function WritingDeskClient() {
   const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
   const letterJsonBufferRef = useRef<string>('');
+  const lastLetterEventRef = useRef<number>(0);
+  const lastLetterResumeAttemptRef = useRef<number>(0);
 
   const letterHtmlForExport = useMemo(() => {
     if (typeof letterContentHtml !== 'string' || letterContentHtml.trim().length === 0) {
@@ -833,7 +851,12 @@ ${letterDocumentBodyHtml}
       const source = new EventSource(resolvedPath, { withCredentials: true });
       letterSourceRef.current = source;
 
+      const markLetterActivity = () => {
+        lastLetterEventRef.current = Date.now();
+      };
+
       source.onmessage = (event) => {
+        markLetterActivity();
         let payload: LetterStreamMessage | null = null;
         try {
           payload = JSON.parse(event.data) as LetterStreamMessage;
@@ -913,12 +936,14 @@ ${letterDocumentBodyHtml}
       source.onerror = () => {
         closeLetterStream();
         setLetterStatus('error');
-      setLetterPhase('error');
-      setLetterError('The letter stream disconnected. Please try again.');
-      setLetterStatusMessage(null);
-    };
-  },
-  [appendLetterEvent, closeLetterStream, setLetterMetadata, updateCreditsFromStream],
+        setLetterPhase('error');
+        setLetterError('The letter stream disconnected. Please try again.');
+        setLetterStatusMessage(null);
+      };
+
+      lastLetterEventRef.current = Date.now();
+    },
+    [appendLetterEvent, closeLetterStream, setLetterMetadata, updateCreditsFromStream],
   );
 
   const beginLetterComposition = useCallback(
@@ -1009,6 +1034,31 @@ ${letterDocumentBodyHtml}
     }
     void resumeLetterComposition();
   }, [hasHandledInitialJob, letterPendingAutoResume, resumeLetterComposition]);
+
+  useEffect(() => {
+    if (letterStatus !== 'generating') return undefined;
+
+    const interval = window.setInterval(() => {
+      const source = letterSourceRef.current;
+      if (!source) return;
+
+      const now = Date.now();
+      const lastEventAt = lastLetterEventRef.current || 0;
+      if (now - lastEventAt < 45000) return;
+
+      const lastAttemptAt = lastLetterResumeAttemptRef.current || 0;
+      if (now - lastAttemptAt < 15000) return;
+
+      lastLetterResumeAttemptRef.current = now;
+      appendLetterEvent('Connection quiet — attempting to resume letter composition…');
+      closeLetterStream();
+      void resumeLetterComposition();
+    }, 10000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [appendLetterEvent, closeLetterStream, letterStatus, resumeLetterComposition]);
 
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {
