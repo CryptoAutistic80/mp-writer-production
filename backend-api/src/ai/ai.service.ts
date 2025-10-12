@@ -553,6 +553,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         remainingCredits: remainingAfterCharge,
       };
     } catch (error) {
+      this.logger.error(
+        `[writing-desk letter] failure ${
+          error instanceof Error ? `${error.name}: ${error.message}` : (error as unknown as string)
+        }`,
+      );
       await this.refundCredits(userId, FOLLOW_UP_CREDIT_COST);
       throw error;
     }
