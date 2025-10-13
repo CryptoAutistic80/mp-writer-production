@@ -11,6 +11,9 @@ Quick Start
     - Terminal 3 (Frontend): `npx nx dev frontend` (runs on default port 3000)
   - Build: `npx nx build backend-api` and `npx nx build frontend`
   - Docker Compose (Mongo + API + Frontend): `docker compose up --build`
+  - Tests:
+    - Frontend: `npx jest --config frontend/jest.config.js`
+    - Backend API: `npx jest --config backend-api/jest.config.js`
 
 Environment
 - `MONGO_URI`: defaults to `mongodb://localhost:27017/mp_writer` when not set
