@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import { Toast } from './Toast';
+
 export default function StartWritingButton() {
   const router = useRouter();
   const [toast, setToast] = useState<string | null>(null);
@@ -83,9 +85,7 @@ export default function StartWritingButton() {
         />
       </button>
 
-      {toast && (
-        <div className="app-toast" role="status" aria-live="polite">{toast}</div>
-      )}
+      {toast && <Toast>{toast}</Toast>}
     </div>
   );
 }

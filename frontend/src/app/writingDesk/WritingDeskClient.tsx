@@ -18,6 +18,7 @@ import {
 import { fetchSavedLetters, saveLetter, startLetterComposition } from '../../features/writing-desk/api/letter';
 import { composeLetterHtml, letterHtmlToPlainText } from '../../features/writing-desk/utils/composeLetterHtml';
 import { MicButton } from '../../components/audio/MicButton';
+import { Toast } from '../../components/Toast';
 
 type StepKey = 'issueDescription';
 
@@ -2532,11 +2533,7 @@ ${letterDocumentBodyHtml}
                     {letterSaveError}
                   </p>
                 )}
-                {letterToast && (
-                  <div className="app-toast" role="status" aria-live="polite" style={{ marginTop: 12 }}>
-                    {letterToast}
-                  </div>
-                )}
+                {letterToast && <Toast>{letterToast}</Toast>}
               </div>
             )}
 
