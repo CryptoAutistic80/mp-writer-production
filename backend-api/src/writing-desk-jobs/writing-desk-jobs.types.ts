@@ -55,9 +55,14 @@ export interface WritingDeskJobRecord {
   phase: WritingDeskJobPhase;
   stepIndex: number;
   followUpIndex: number;
-  followUpQuestions: string[];
+  followUpQuestionsCiphertext: string;
   formCiphertext?: string;
   followUpAnswersCiphertext?: string;
+  notesCiphertext?: string | null;
+  researchContentCiphertext?: string | null;
+  letterContentCiphertext?: string | null;
+  letterReferencesCiphertext?: string | null;
+  letterJsonCiphertext?: string | null;
   form?: WritingDeskJobFormSnapshot & {
     issueDetail?: string;
     affectedDetail?: string;
@@ -65,17 +70,12 @@ export interface WritingDeskJobRecord {
     desiredOutcome?: string;
   };
   followUpAnswers?: string[];
-  notes: string | null;
   responseId: string | null;
-  researchContent: string | null;
   researchResponseId: string | null;
   researchStatus: WritingDeskResearchStatus;
   letterStatus: WritingDeskLetterStatus;
   letterTone: WritingDeskLetterTone | null;
   letterResponseId: string | null;
-  letterContent: string | null;
-  letterReferences: string[];
-  letterJson: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -14,19 +14,16 @@ export class UserSavedLetter {
   responseId!: string;
 
   @Prop({ type: String, required: true })
-  letterHtml!: string;
-
-  @Prop({ type: MongooseSchema.Types.Mixed, required: true })
-  metadata!: Record<string, unknown>;
+  letterHtmlCiphertext!: string;
 
   @Prop({ type: String, required: true })
-  tone!: string;
+  metadataCiphertext!: string;
 
-  @Prop({ type: [String], default: [] })
-  references!: string[];
+  @Prop({ type: String, default: null })
+  referencesCiphertext!: string | null;
 
-  @Prop({ type: String })
-  rawJson?: string | null;
+  @Prop({ type: String, default: null })
+  rawJsonCiphertext!: string | null;
 
   createdAt!: Date;
 

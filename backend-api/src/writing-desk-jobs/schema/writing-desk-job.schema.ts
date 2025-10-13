@@ -22,20 +22,20 @@ export class WritingDeskJob {
   @Prop({ type: String, required: true })
   formCiphertext!: string;
 
-  @Prop({ type: [String], default: [] })
-  followUpQuestions!: string[];
+  @Prop({ type: String, required: true })
+  followUpQuestionsCiphertext!: string;
 
   @Prop({ type: String, required: true })
   followUpAnswersCiphertext!: string;
 
   @Prop({ type: String, default: null })
-  notes!: string | null;
+  notesCiphertext!: string | null;
 
   @Prop({ type: String, default: null })
   responseId!: string | null;
 
   @Prop({ type: String, default: null })
-  researchContent!: string | null;
+  researchContentCiphertext!: string | null;
 
   @Prop({ type: String, default: null })
   researchResponseId!: string | null;
@@ -53,13 +53,13 @@ export class WritingDeskJob {
   letterResponseId!: string | null;
 
   @Prop({ type: String, default: null })
-  letterContent!: string | null;
-
-  @Prop({ type: [String], default: [] })
-  letterReferences!: string[];
+  letterContentCiphertext!: string | null;
 
   @Prop({ type: String, default: null })
-  letterJson!: string | null;
+  letterReferencesCiphertext!: string | null;
+
+  @Prop({ type: String, default: null })
+  letterJsonCiphertext!: string | null;
 }
 
 export type WritingDeskJobDocument = WritingDeskJob & Document;
