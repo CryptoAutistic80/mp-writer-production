@@ -342,11 +342,13 @@ const LETTER_TONE_REQUEST_PREFIX: Record<WritingDeskLetterTone, string> = {
 
 const LETTER_SYSTEM_PROMPT = `You are generating a UK MP letter using stored MP and sender details plus prior user inputs.
 
+MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.
+
 Goals:
 
 1. Return output strictly conforming to the provided JSON schema.
 2. Use stored MP profile for mp_* fields and stored sender profile for sender_*.
-3. Set date to match the schema’s regex: ^\\d{4}-\\d{2}-\\d{2}$.
+3. Set date to match the schema's regex: ^\\d{4}-\\d{2}-\\d{2}$.
 4. Put the full HTML letter in letter_content. Use semantic HTML only (<p>, <strong>, <em>, lists). Use standard ASCII characters: plain single quotes ('), double quotes ("), and hyphens (-) instead of smart quotes or em-dashes.
 5. Write in the tone selected by the user.
 6. Draw on all prior inputs: user_intake (issue, who is affected, background, requested action); follow_ups (clarifications); deep_research (facts, citations, URLs).
@@ -456,6 +458,9 @@ export class AiService {
       const client = await this.getOpenAiClient(apiKey);
 
       const instructions = `You help constituents prepare to write letters to their Members of Parliament.
+
+MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.
+
 From the provided description, identify the most important gaps that stop you fully understanding the situation and what outcome the constituent wants.
 Ask at most five concise follow-up questions. If everything is already clear, return an empty list.
 Prioritise clarifying the specific problem, how it affects people, what has already happened, and what the constituent hopes their MP will achieve.
@@ -1930,8 +1935,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     options?: { mpName?: string | null },
   ): string {
     const sections: string[] = [
+      'MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.',
+      '',
       'Research the issue described below and gather supporting facts, quotes, and statistics from credible, up-to-date sources.',
-      "Before analysing the constituent's issue, confirm today's date and summarise the current composition of the UK Parliament, including who holds power, major opposition parties, and any recent leadership changes, citing authoritative sources.",
+      "Before analysing the constituent's issue, confirm today's date and the current political makeup of Parliament (which party is in government and how many seats each party holds).",
       'Provide a structured evidence report with inline citations for every key fact. Cite URLs or publication titles for each data point.',
       '',
       `Constituent description: ${this.normalisePromptField(job.form?.issueDescription, 'Not provided.')}`,
@@ -3265,8 +3272,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         file: audioFile,
         model,
         response_format: responseFormat,
-        prompt: input.prompt,
-        language: input.language,
+        prompt: input.prompt || 'Use British English spelling throughout.',
+        language: input.language || 'en',
       });
 
       this.logger.log(`[transcription] Raw response: ${JSON.stringify(transcription)}`);
@@ -3322,8 +3329,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             model,
             response_format: TranscriptionResponseFormat.TEXT,
             stream: true,
-            prompt: input.prompt,
-            language: input.language,
+            prompt: input.prompt || 'Use British English spelling throughout.',
+            language: input.language || 'en',
           });
 
           for await (const event of stream) {

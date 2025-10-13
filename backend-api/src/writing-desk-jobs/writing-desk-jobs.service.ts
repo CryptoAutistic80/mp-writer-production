@@ -42,20 +42,20 @@ export class WritingDeskJobsService {
       phase: sanitized.phase,
       stepIndex: sanitized.stepIndex,
       followUpIndex: sanitized.followUpIndex,
-      followUpQuestions: sanitized.followUpQuestions,
+      followUpQuestionsCiphertext: this.encryption.encryptObject(sanitized.followUpQuestions),
       formCiphertext: this.encryption.encryptObject(sanitized.form),
       followUpAnswersCiphertext: this.encryption.encryptObject(sanitized.followUpAnswers),
-      notes: sanitized.notes,
+      notesCiphertext: sanitized.notes ? this.encryption.encryptObject(sanitized.notes) : null,
       responseId: sanitized.responseId,
-      researchContent: sanitized.researchContent,
+      researchContentCiphertext: sanitized.researchContent ? this.encryption.encryptObject(sanitized.researchContent) : null,
       researchResponseId: sanitized.researchResponseId,
       researchStatus: sanitized.researchStatus,
       letterStatus: sanitized.letterStatus,
       letterTone: sanitized.letterTone,
       letterResponseId: sanitized.letterResponseId,
-      letterContent: sanitized.letterContent,
-      letterReferences: sanitized.letterReferences,
-      letterJson: sanitized.letterJson,
+      letterContentCiphertext: sanitized.letterContent ? this.encryption.encryptObject(sanitized.letterContent) : null,
+      letterReferencesCiphertext: sanitized.letterReferences.length > 0 ? this.encryption.encryptObject(sanitized.letterReferences) : null,
+      letterJsonCiphertext: sanitized.letterJson ? this.encryption.encryptObject(sanitized.letterJson) : null,
     };
 
     const saved = await this.repository.upsertActiveJob(userId, payload);
@@ -157,7 +157,13 @@ export class WritingDeskJobsService {
 
   private toSnapshot(record: WritingDeskJobRecord): WritingDeskJobSnapshot {
     const form = this.decryptForm(record);
+    const followUpQuestions = this.decryptStringArray(record.followUpQuestionsCiphertext);
     const followUpAnswers = this.decryptFollowUpAnswers(record);
+    const notes = this.decryptNullableString((record as any).notesCiphertext);
+    const researchContent = this.decryptNullableString((record as any).researchContentCiphertext);
+    const letterContent = this.decryptNullableString((record as any).letterContentCiphertext);
+    const letterReferences = this.decryptNullableStringArray((record as any).letterReferencesCiphertext);
+    const letterJson = this.decryptNullableString((record as any).letterJsonCiphertext);
 
     const createdAt = record.createdAt instanceof Date ? record.createdAt : new Date(record.createdAt);
     const updatedAt = record.updatedAt instanceof Date ? record.updatedAt : new Date(record.updatedAt);
@@ -169,21 +175,19 @@ export class WritingDeskJobsService {
       stepIndex: record.stepIndex,
       followUpIndex: record.followUpIndex,
       form,
-      followUpQuestions: record.followUpQuestions ?? [],
+      followUpQuestions,
       followUpAnswers,
-      notes: record.notes ?? null,
+      notes,
       responseId: record.responseId ?? null,
-      researchContent: record.researchContent ?? null,
+      researchContent,
       researchResponseId: record.researchResponseId ?? null,
       researchStatus: (record as any)?.researchStatus ?? 'idle',
       letterStatus: (record as any)?.letterStatus ?? 'idle',
       letterTone: (record as any)?.letterTone ?? null,
       letterResponseId: (record as any)?.letterResponseId ?? null,
-      letterContent: record.letterContent ?? null,
-      letterReferences: Array.isArray((record as any)?.letterReferences)
-        ? ((record as any).letterReferences as string[])
-        : [],
-      letterJson: (record as any)?.letterJson ?? null,
+      letterContent,
+      letterReferences,
+      letterJson,
       createdAt,
       updatedAt,
     };
@@ -267,6 +271,43 @@ export class WritingDeskJobsService {
       createdAt: snapshot.createdAt?.toISOString?.() ?? new Date().toISOString(),
       updatedAt: snapshot.updatedAt?.toISOString?.() ?? new Date().toISOString(),
     };
+  }
+
+  private decryptStringArray(ciphertext: string | undefined): string[] {
+    if (!ciphertext) return [];
+    try {
+      const decrypted = this.encryption.decryptObject<string[]>(ciphertext);
+      if (Array.isArray(decrypted)) {
+        return decrypted.map((value) => (typeof value === 'string' ? value : ''));
+      }
+    } catch {
+      // Decryption failed
+    }
+    return [];
+  }
+
+  private decryptNullableString(ciphertext: string | null | undefined): string | null {
+    if (!ciphertext) return null;
+    try {
+      const decrypted = this.encryption.decryptObject<string>(ciphertext);
+      return typeof decrypted === 'string' ? decrypted : null;
+    } catch {
+      // Decryption failed
+    }
+    return null;
+  }
+
+  private decryptNullableStringArray(ciphertext: string | null | undefined): string[] {
+    if (!ciphertext) return [];
+    try {
+      const decrypted = this.encryption.decryptObject<string[]>(ciphertext);
+      if (Array.isArray(decrypted)) {
+        return decrypted.map((value) => (typeof value === 'string' ? value : ''));
+      }
+    } catch {
+      // Decryption failed
+    }
+    return [];
   }
 
   private isUuid(value: string) {
