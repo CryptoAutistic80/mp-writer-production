@@ -1122,10 +1122,44 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             typeof (normalised as any)?.error?.message === 'string'
               ? ((normalised as any).error.message as string)
               : 'Letter composition failed. Please try again in a few moments.';
+          
+          // Log the specific response error with context
+          this.logger.error(
+            `LETTER_COMPOSITION_RESPONSE_ERROR: ${message}`,
+            {
+              errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
+              userId,
+              jobId: baselineJob.jobId,
+              tone,
+              responseId: run.responseId,
+              eventType,
+              errorDetails: (normalised as any)?.error || 'No error details available',
+              timestamp: new Date().toISOString(),
+              service: 'writing-desk-letter-composition'
+            }
+          );
+          
           throw new Error(message);
         }
       }
 
+      // Log unexpected end of letter composition
+      this.logger.error(
+        `LETTER_COMPOSITION_UNEXPECTED_END: Letter composition ended unexpectedly`,
+        {
+          errorType: 'LETTER_COMPOSITION_UNEXPECTED_END',
+          userId,
+          jobId: baselineJob.jobId,
+          tone,
+          responseId: run.responseId,
+          timestamp: new Date().toISOString(),
+          service: 'writing-desk-letter-composition',
+          runDuration: Date.now() - run.startedAt,
+          jsonBufferLength: jsonBuffer?.length || 0,
+          lastPersistedContentLength: lastPersistedContent?.length || 0
+        }
+      );
+      
       throw new Error('Letter composition ended unexpectedly. Please try again in a few moments.');
     } catch (error) {
       if (deductionApplied) {
@@ -1136,6 +1170,49 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       run.status = 'error';
+
+      // Comprehensive error logging for Docker backend-api logs
+      const errorContext = {
+        errorType: 'LETTER_COMPOSITION_FAILED',
+        userId,
+        jobId: baselineJob.jobId,
+        tone,
+        phase: baselineJob.phase,
+        stepIndex: baselineJob.stepIndex,
+        followUpIndex: baselineJob.followUpIndex,
+        researchStatus: baselineJob.researchStatus,
+        letterStatus: baselineJob.letterStatus,
+        responseId: run.responseId,
+        remainingCredits,
+        deductionApplied,
+        errorMessage: (error as Error)?.message ?? String(error),
+        errorName: (error as Error)?.name ?? 'Unknown',
+        errorStack: (error as Error)?.stack ?? 'No stack trace available',
+        timestamp: new Date().toISOString(),
+        requestId: run.responseId || 'unknown',
+        userAgent: 'backend-api',
+        service: 'writing-desk-letter-composition'
+      };
+
+      // Log the error with full context for debugging
+      this.logger.error(
+        `LETTER_COMPOSITION_ERROR: ${errorContext.errorMessage}`,
+        {
+          ...errorContext,
+          // Additional context for debugging
+          baselineJobForm: {
+            issueDescription: baselineJob.form?.issueDescription?.substring(0, 200) + '...' || 'empty',
+            followUpQuestionsCount: baselineJob.followUpQuestions?.length || 0,
+            followUpAnswersCount: baselineJob.followUpAnswers?.length || 0
+          },
+          researchContentLength: researchContent?.length || 0,
+          jsonBufferLength: jsonBuffer?.length || 0,
+          lastPersistedContentLength: lastPersistedContent?.length || 0,
+          runDuration: Date.now() - run.startedAt,
+          quietPeriodTimerActive: quietPeriodTimer !== null,
+          settled: settled
+        }
+      );
 
       try {
         await this.persistLetterState(userId, baselineJob, { status: 'error', tone });

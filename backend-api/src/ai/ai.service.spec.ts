@@ -307,4 +307,133 @@ describe('AiService', () => {
       expect(dependencies.credits.deductFromMine).toHaveBeenCalledWith('user-1', expect.any(Number));
     });
   });
+
+  describe('error logging', () => {
+    const createActiveJob = (overrides: Partial<ActiveWritingDeskJobResource> = {}): ActiveWritingDeskJobResource => ({
+      jobId: 'job-123',
+      phase: 'generating',
+      stepIndex: 0,
+      followUpIndex: 0,
+      form: { issueDescription: 'Issue details' },
+      followUpQuestions: [],
+      followUpAnswers: [],
+      notes: null,
+      responseId: null,
+      researchContent: 'Research summary',
+      researchResponseId: null,
+      researchStatus: 'completed',
+      letterStatus: 'idle',
+      letterTone: null,
+      letterResponseId: null,
+      letterContent: null,
+      letterReferences: [],
+      letterJson: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...overrides,
+    });
+
+    it('logs comprehensive error details when letter composition fails', async () => {
+      const activeJob = createActiveJob();
+      const mockLogger = {
+        error: jest.fn(),
+        warn: jest.fn(),
+      };
+
+      const { service, dependencies } = createService({
+        configGet: (key) => {
+          switch (key) {
+            case 'OPENAI_API_KEY':
+              return 'test-key';
+            case 'OPENAI_LETTER_MODEL':
+              return 'gpt-5-mini';
+            default:
+              return null;
+          }
+        },
+        userCredits: {
+          deductFromMine: jest.fn().mockResolvedValue({ credits: 9.5 }),
+          addToMine: jest.fn().mockResolvedValue(undefined),
+        },
+        writingDeskJobs: {
+          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
+          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        },
+      });
+
+      // Mock the logger
+      (service as any).logger = mockLogger;
+
+      const clientMock = {
+        responses: {
+          stream: jest.fn(() => ({
+            controller: { abort: jest.fn() },
+            [Symbol.asyncIterator]: async function* () {
+              yield {
+                type: 'response.error',
+                error: {
+                  message: 'Test error message',
+                  code: 'TEST_ERROR_CODE',
+                },
+              };
+            },
+          })),
+        },
+      };
+
+      (service as any).getOpenAiClient = jest.fn().mockResolvedValue(clientMock);
+      (service as any).resolveLetterContext = jest.fn().mockResolvedValue({});
+      (service as any).persistLetterState = jest.fn().mockResolvedValue(undefined);
+
+      const messageStream = service.streamWritingDeskLetter('user-1', {
+        jobId: activeJob.jobId,
+        tone: 'formal',
+        resume: false,
+      });
+
+      const errorMessages: Array<Record<string, any>> = [];
+
+      await new Promise<void>((resolve, reject) => {
+        const subscription = messageStream.subscribe({
+          next: (event) => {
+            const payload = JSON.parse(String(event.data));
+            if (payload.type === 'error') {
+              errorMessages.push(payload);
+              subscription.unsubscribe();
+              resolve();
+            }
+          },
+          error: (error) => {
+            reject(error);
+          },
+          complete: () => {
+            resolve();
+          },
+        });
+      });
+
+      // Verify error logging was called with comprehensive context
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('LETTER_COMPOSITION_RESPONSE_ERROR: Test error message'),
+        expect.objectContaining({
+          errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
+          userId: 'user-1',
+          jobId: activeJob.jobId,
+          tone: 'formal',
+          eventType: 'response.error',
+          errorDetails: expect.objectContaining({
+            message: 'Test error message',
+            code: 'TEST_ERROR_CODE',
+          }),
+          timestamp: expect.any(String),
+          service: 'writing-desk-letter-composition',
+        })
+      );
+
+      // Verify error message was sent to client
+      expect(errorMessages).toHaveLength(1);
+      expect(errorMessages[0].type).toBe('error');
+      expect(errorMessages[0].message).toBe('Letter composition failed. Please try again in a few moments.');
+    });
+  });
 });
