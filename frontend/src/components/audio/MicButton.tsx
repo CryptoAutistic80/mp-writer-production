@@ -245,7 +245,7 @@ export function MicButton({
         </div>
       )}
 
-      <style jsx>{`
+      <style>{`
         .mic-button-container {
           display: flex;
           flex-direction: column;

@@ -34,6 +34,7 @@ const config = {
     '<rootDir>/**/*.spec.tsx',
   ],
   moduleDirectories: ['node_modules', '<rootDir>/src', '<rootDir>'],
+  transformIgnorePatterns: [],
   coverageDirectory: '<rootDir>/../coverage/frontend',
   collectCoverageFrom: ['<rootDir>/src/**/*.{ts,tsx}', '!<rootDir>/src/**/*.d.ts'],
 };

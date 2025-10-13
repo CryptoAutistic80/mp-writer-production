@@ -332,7 +332,7 @@ export default function WritingDeskClient() {
   const [isSavingLetter, setIsSavingLetter] = useState(false);
   const [letterSaveError, setLetterSaveError] = useState<string | null>(null);
   const [savedLetterResponseId, setSavedLetterResponseId] = useState<string | null>(null);
-  const [letterToast, setLetterToast] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
@@ -340,24 +340,24 @@ export default function WritingDeskClient() {
   const letterJsonBufferRef = useRef<string>('');
   const lastLetterEventRef = useRef<number>(0);
   const lastLetterResumeAttemptRef = useRef<number>(0);
-  const letterToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearLetterToast = useCallback(() => {
-    if (letterToastTimeoutRef.current) {
-      clearTimeout(letterToastTimeoutRef.current);
-      letterToastTimeoutRef.current = null;
+  const clearToast = useCallback(() => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
     }
-    setLetterToast(null);
+    setToastMessage(null);
   }, []);
 
-  const showLetterToast = useCallback((message: string) => {
-    if (letterToastTimeoutRef.current) {
-      clearTimeout(letterToastTimeoutRef.current);
+  const showToast = useCallback((message: string) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
     }
-    setLetterToast(message);
-    letterToastTimeoutRef.current = setTimeout(() => {
-      setLetterToast(null);
-      letterToastTimeoutRef.current = null;
+    setToastMessage(message);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
     }, 3500);
   }, []);
 
@@ -367,8 +367,8 @@ export default function WritingDeskClient() {
   );
 
   useEffect(() => () => {
-    clearLetterToast();
-  }, [clearLetterToast]);
+    clearToast();
+  }, [clearToast]);
 
   useEffect(() => {
     const responseIds = [letterResponseId, letterMetadata?.responseId].filter(
@@ -483,6 +483,20 @@ ${letterDocumentBodyHtml}
     return null;
   }, []);
 
+  const reportRefundedFailure = useCallback(
+    async (context: string) => {
+      const message = `Sorry, ${context}. If we spent any credits, we've already refunded them.`;
+      showToast(message);
+      const latest = await refreshCredits();
+      if (typeof latest === 'number') {
+        setAvailableCredits(latest);
+        return latest;
+      }
+      return null;
+    },
+    [refreshCredits, showToast],
+  );
+
   const closeResearchStream = useCallback(() => {
     if (researchSourceRef.current) {
       researchSourceRef.current.close();
@@ -516,11 +530,11 @@ ${letterDocumentBodyHtml}
     setLetterSaveError(null);
     setSavedLetterResponseId(null);
     setIsSavingLetter(false);
-    clearLetterToast();
+    clearToast();
     setRecomposeConfirmOpen(false);
     letterJsonBufferRef.current = '';
     setLetterPendingAutoResume(false);
-  }, [clearLetterToast, closeLetterStream]);
+  }, [clearToast, closeLetterStream]);
 
   const resetResearch = useCallback(() => {
     closeResearchStream();
@@ -800,36 +814,39 @@ ${letterDocumentBodyHtml}
             updateCreditsFromStream(payload.remainingCredits);
             appendResearchActivity('Deep research completed.');
             setPendingAutoResume(false);
-          } else if (payload.type === 'error') {
-            closeResearchStream();
-            setResearchStatus('error');
-            setResearchError(payload.message || 'Deep research failed. Please try again.');
-            updateCreditsFromStream(payload.remainingCredits);
-            appendResearchActivity('Deep research encountered an error.');
-            setPendingAutoResume(false);
-          }
-        };
-
-        source.onerror = () => {
+        } else if (payload.type === 'error') {
           closeResearchStream();
           setResearchStatus('error');
-          setResearchError('The research stream was interrupted. Please try again.');
-          appendResearchActivity('Connection lost during deep research.');
+          setResearchError(payload.message || 'Deep research failed. Please try again.');
+          updateCreditsFromStream(payload.remainingCredits);
+          appendResearchActivity('Deep research encountered an error.');
           setPendingAutoResume(false);
-        };
+          void reportRefundedFailure('deep research ran into a problem');
+        }
+      };
+
+      source.onerror = () => {
+        closeResearchStream();
+        setResearchStatus('error');
+        setResearchError('The research stream was interrupted. Please try again.');
+        appendResearchActivity('Connection lost during deep research.');
+        setPendingAutoResume(false);
+        void reportRefundedFailure('deep research connection dropped');
+      };
 
         lastResearchEventRef.current = Date.now();
       } catch (err) {
         closeResearchStream();
         setResearchStatus('error');
-        const message =
-          err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
-        setResearchError(message);
-        appendResearchActivity('Unable to start deep research.');
-        setPendingAutoResume(false);
-      }
-    },
-    [appendResearchActivity, closeResearchStream, jobId, researchStatus, updateCreditsFromStream],
+      const message =
+        err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
+      setResearchError(message);
+      appendResearchActivity('Unable to start deep research.');
+      setPendingAutoResume(false);
+      void reportRefundedFailure('deep research could not start');
+    }
+  },
+    [appendResearchActivity, closeResearchStream, jobId, reportRefundedFailure, researchStatus, updateCreditsFromStream],
   );
 
   useEffect(() => {
@@ -885,7 +902,7 @@ ${letterDocumentBodyHtml}
       setLetterMetadata(null);
       setLetterSaveError(null);
       setIsSavingLetter(false);
-      clearLetterToast();
+      clearToast();
       letterJsonBufferRef.current = '';
       setLetterPendingAutoResume(false);
       let resolvedPath = streamPath;
@@ -959,7 +976,7 @@ ${letterDocumentBodyHtml}
           setLetterStatusMessage('Letter ready');
           setIsSavingLetter(false);
           setLetterSaveError(null);
-          clearLetterToast();
+          clearToast();
           if (
             savedLetterResponseId &&
             payload.letter.responseId &&
@@ -991,8 +1008,13 @@ ${letterDocumentBodyHtml}
           setLetterMetadata(null);
           setIsSavingLetter(false);
           setLetterSaveError(null);
-          clearLetterToast();
+          clearToast();
           closeLetterStream();
+          void reportRefundedFailure('letter composition ran into a problem').then((latest) => {
+            if (typeof latest === 'number') {
+              setLetterRemainingCredits(Math.round(latest * 100) / 100);
+            }
+          });
         }
       };
 
@@ -1004,15 +1026,21 @@ ${letterDocumentBodyHtml}
         setLetterStatusMessage(null);
         setIsSavingLetter(false);
         setLetterSaveError(null);
-        clearLetterToast();
+        clearToast();
+        void reportRefundedFailure('letter composition connection dropped').then((latest) => {
+          if (typeof latest === 'number') {
+            setLetterRemainingCredits(Math.round(latest * 100) / 100);
+          }
+        });
       };
 
       lastLetterEventRef.current = Date.now();
   },
     [
       appendLetterEvent,
-      clearLetterToast,
+      clearToast,
       closeLetterStream,
+      reportRefundedFailure,
       savedLetterResponseId,
       setLetterMetadata,
       setLetterSaveError,
@@ -1036,7 +1064,7 @@ ${letterDocumentBodyHtml}
       setSavedLetterResponseId(null);
       setLetterSaveError(null);
       setIsSavingLetter(false);
-      clearLetterToast();
+      clearToast();
 
       try {
         const handshake = await startLetterComposition({ jobId: jobId ?? undefined, tone });
@@ -1053,9 +1081,14 @@ ${letterDocumentBodyHtml}
         setLetterPhase('error');
         setLetterError(error?.message || 'We could not start letter composition. Please try again.');
         setLetterStatusMessage(null);
+        void reportRefundedFailure('letter composition could not start').then((latest) => {
+          if (typeof latest === 'number') {
+            setLetterRemainingCredits(Math.round(latest * 100) / 100);
+          }
+        });
       }
     },
-    [clearLetterToast, jobId, openLetterStream, setJobId],
+    [clearToast, jobId, openLetterStream, reportRefundedFailure, setJobId],
   );
 
   const resumeLetterComposition = useCallback(async () => {
@@ -1079,7 +1112,7 @@ ${letterDocumentBodyHtml}
     letterJsonBufferRef.current = '';
     setLetterSaveError(null);
     setIsSavingLetter(false);
-    clearLetterToast();
+    clearToast();
 
     try {
       const handshake = await startLetterComposition({
@@ -1104,8 +1137,13 @@ ${letterDocumentBodyHtml}
           : 'We could not resume letter composition. Start again when ready.';
       setLetterError(message);
       setLetterStatusMessage(null);
+      void reportRefundedFailure('letter composition could not resume').then((latest) => {
+        if (typeof latest === 'number') {
+          setLetterRemainingCredits(Math.round(latest * 100) / 100);
+        }
+      });
     }
-  }, [clearLetterToast, jobId, openLetterStream, selectedTone, setJobId]);
+  }, [clearToast, jobId, openLetterStream, reportRefundedFailure, selectedTone, setJobId]);
 
   useEffect(() => {
     if (!letterPendingAutoResume) return;
@@ -1148,7 +1186,7 @@ ${letterDocumentBodyHtml}
       setSavedLetterResponseId(null);
       setLetterSaveError(null);
       setIsSavingLetter(false);
-      clearLetterToast();
+      clearToast();
       setForm({
         issueDescription: job.form?.issueDescription ?? '',
       });
@@ -1278,7 +1316,7 @@ ${letterDocumentBodyHtml}
         }
       }
     },
-    [clearLetterToast, closeResearchStream, resetFollowUps],
+    [clearToast, closeResearchStream, resetFollowUps],
   );
 
   const resourceToPayload = useCallback(
@@ -1606,17 +1644,15 @@ ${letterDocumentBodyHtml}
         } else {
           setPhase('summary');
         }
-        const latestCredits = await refreshCredits();
-        if (typeof latestCredits === 'number') {
-          setAvailableCredits(latestCredits);
-        } else if (previousCredits !== null) {
+        const latestCredits = await reportRefundedFailure('follow-up question generation failed');
+        if (latestCredits === null && previousCredits !== null) {
           setAvailableCredits(previousCredits);
         }
       } finally {
         setLoading(false);
       }
     },
-    [availableCredits, followUpCreditCost, form, refreshCredits, submitBundle],
+    [availableCredits, followUpCreditCost, form, reportRefundedFailure, refreshCredits, submitBundle],
   );
 
   const handleInitialNext = async () => {
@@ -1784,7 +1820,7 @@ ${letterDocumentBodyHtml}
     }
 
     if (savedLetterResponseId && savedLetterResponseId === letterResponseId) {
-      showLetterToast('Letter already saved to My letters.');
+      showToast('Letter already saved to My letters.');
       return;
     }
 
@@ -1805,7 +1841,7 @@ ${letterDocumentBodyHtml}
         metadata,
       });
       setSavedLetterResponseId(saved.responseId || letterResponseId);
-      showLetterToast('Letter saved to My letters.');
+      showToast('Letter saved to My letters.');
     } catch (error: any) {
       const message =
         error?.message && typeof error.message === 'string' && error.message.trim().length > 0
@@ -1822,7 +1858,7 @@ ${letterDocumentBodyHtml}
     saveLetter,
     savedLetterResponseId,
     selectedTone,
-    showLetterToast,
+    showToast,
   ]);
 
   const handleCopyLetter = useCallback(async () => {
@@ -2533,7 +2569,7 @@ ${letterDocumentBodyHtml}
                     {letterSaveError}
                   </p>
                 )}
-                {letterToast && <Toast>{letterToast}</Toast>}
+                {toastMessage && <Toast>{toastMessage}</Toast>}
               </div>
             )}
 
@@ -2555,7 +2591,7 @@ ${letterDocumentBodyHtml}
         )}
       </div>
       </section>
-      <style jsx>{`
+      <style>{`
         @keyframes create-letter-jiggle {
           0%, 100% {
             transform: translateX(0);
