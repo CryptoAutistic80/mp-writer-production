@@ -553,6 +553,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         remainingCredits: remainingAfterCharge,
       };
     } catch (error) {
+      this.logger.error(
+        `[writing-desk letter] failure ${
+          error instanceof Error ? `${error.name}: ${error.message}` : (error as unknown as string)
+        }`,
+      );
       await this.refundCredits(userId, FOLLOW_UP_CREDIT_COST);
       throw error;
     }
@@ -1117,10 +1122,44 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             typeof (normalised as any)?.error?.message === 'string'
               ? ((normalised as any).error.message as string)
               : 'Letter composition failed. Please try again in a few moments.';
+          
+          // Log the specific response error with context
+          this.logger.error(
+            `LETTER_COMPOSITION_RESPONSE_ERROR: ${message}`,
+            {
+              errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
+              userId,
+              jobId: baselineJob.jobId,
+              tone,
+              responseId: run.responseId,
+              eventType,
+              errorDetails: (normalised as any)?.error || 'No error details available',
+              timestamp: new Date().toISOString(),
+              service: 'writing-desk-letter-composition'
+            }
+          );
+          
           throw new Error(message);
         }
       }
 
+      // Log unexpected end of letter composition
+      this.logger.error(
+        `LETTER_COMPOSITION_UNEXPECTED_END: Letter composition ended unexpectedly`,
+        {
+          errorType: 'LETTER_COMPOSITION_UNEXPECTED_END',
+          userId,
+          jobId: baselineJob.jobId,
+          tone,
+          responseId: run.responseId,
+          timestamp: new Date().toISOString(),
+          service: 'writing-desk-letter-composition',
+          runDuration: Date.now() - run.startedAt,
+          jsonBufferLength: jsonBuffer?.length || 0,
+          lastPersistedContentLength: lastPersistedContent?.length || 0
+        }
+      );
+      
       throw new Error('Letter composition ended unexpectedly. Please try again in a few moments.');
     } catch (error) {
       if (deductionApplied) {
@@ -1131,6 +1170,49 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       run.status = 'error';
+
+      // Comprehensive error logging for Docker backend-api logs
+      const errorContext = {
+        errorType: 'LETTER_COMPOSITION_FAILED',
+        userId,
+        jobId: baselineJob.jobId,
+        tone,
+        phase: baselineJob.phase,
+        stepIndex: baselineJob.stepIndex,
+        followUpIndex: baselineJob.followUpIndex,
+        researchStatus: baselineJob.researchStatus,
+        letterStatus: baselineJob.letterStatus,
+        responseId: run.responseId,
+        remainingCredits,
+        deductionApplied,
+        errorMessage: (error as Error)?.message ?? String(error),
+        errorName: (error as Error)?.name ?? 'Unknown',
+        errorStack: (error as Error)?.stack ?? 'No stack trace available',
+        timestamp: new Date().toISOString(),
+        requestId: run.responseId || 'unknown',
+        userAgent: 'backend-api',
+        service: 'writing-desk-letter-composition'
+      };
+
+      // Log the error with full context for debugging
+      this.logger.error(
+        `LETTER_COMPOSITION_ERROR: ${errorContext.errorMessage}`,
+        {
+          ...errorContext,
+          // Additional context for debugging
+          baselineJobForm: {
+            issueDescription: baselineJob.form?.issueDescription?.substring(0, 200) + '...' || 'empty',
+            followUpQuestionsCount: baselineJob.followUpQuestions?.length || 0,
+            followUpAnswersCount: baselineJob.followUpAnswers?.length || 0
+          },
+          researchContentLength: researchContent?.length || 0,
+          jsonBufferLength: jsonBuffer?.length || 0,
+          lastPersistedContentLength: lastPersistedContent?.length || 0,
+          runDuration: Date.now() - run.startedAt,
+          quietPeriodTimerActive: quietPeriodTimer !== null,
+          settled: settled
+        }
+      );
 
       try {
         await this.persistLetterState(userId, baselineJob, { status: 'error', tone });
@@ -2308,21 +2390,35 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       return this.normaliseLetterTypography(value.trim());
     };
 
-    schema.properties.mp_name.const = normalise(context.mpName);
-    schema.properties.mp_address_1.const = normalise(context.mpAddress1);
-    schema.properties.mp_address_2.const = normalise(context.mpAddress2);
-    schema.properties.mp_city.const = normalise(context.mpCity);
-    schema.properties.mp_county.const = normalise(context.mpCounty);
-    schema.properties.mp_postcode.const = normalise(context.mpPostcode);
-    schema.properties.date.const = normalise(context.today);
-    schema.properties.sender_name.const = normalise(context.senderName);
-    schema.properties.sender_address_1.const = normalise(context.senderAddress1);
-    schema.properties.sender_address_2.const = normalise(context.senderAddress2);
-    schema.properties.sender_address_3.const = normalise(context.senderAddress3);
-    schema.properties.sender_city.const = normalise(context.senderCity);
-    schema.properties.sender_county.const = normalise(context.senderCounty);
-    schema.properties.sender_postcode.const = normalise(context.senderPostcode);
-    schema.properties.sender_phone.const = normalise(context.senderTelephone);
+    const setFlexibleProperty = (key: string, value: string | null | undefined) => {
+      const property = schema.properties?.[key];
+      if (!property || typeof property !== 'object') {
+        return;
+      }
+      delete property.const;
+      const normalised = normalise(value);
+      if (normalised.length > 0) {
+        property.default = normalised;
+      } else {
+        delete property.default;
+      }
+    };
+
+    setFlexibleProperty('mp_name', context.mpName);
+    setFlexibleProperty('mp_address_1', context.mpAddress1);
+    setFlexibleProperty('mp_address_2', context.mpAddress2);
+    setFlexibleProperty('mp_city', context.mpCity);
+    setFlexibleProperty('mp_county', context.mpCounty);
+    setFlexibleProperty('mp_postcode', context.mpPostcode);
+    setFlexibleProperty('date', context.today);
+    setFlexibleProperty('sender_name', context.senderName);
+    setFlexibleProperty('sender_address_1', context.senderAddress1);
+    setFlexibleProperty('sender_address_2', context.senderAddress2);
+    setFlexibleProperty('sender_address_3', context.senderAddress3);
+    setFlexibleProperty('sender_city', context.senderCity);
+    setFlexibleProperty('sender_county', context.senderCounty);
+    setFlexibleProperty('sender_postcode', context.senderPostcode);
+    setFlexibleProperty('sender_phone', context.senderTelephone);
 
     return schema;
   }

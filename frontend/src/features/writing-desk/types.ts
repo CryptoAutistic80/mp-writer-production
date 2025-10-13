@@ -68,3 +68,27 @@ export interface UpsertActiveWritingDeskJobPayload {
   letterReferences?: string[];
   letterJson?: string | null;
 }
+
+export interface WritingDeskLetterPayload {
+  mpName: string;
+  mpAddress1: string;
+  mpAddress2: string;
+  mpCity: string;
+  mpCounty: string;
+  mpPostcode: string;
+  date: string;
+  letterContent: string;
+  senderName: string;
+  senderAddress1: string;
+  senderAddress2: string;
+  senderAddress3: string;
+  senderCity: string;
+  senderCounty: string;
+  senderPostcode: string;
+  senderTelephone: string;
+  references: string[];
+  responseId: string | null;
+  tone: WritingDeskLetterTone | null;
+  rawJson: string;
+  subjectLineHtml?: string;
+}

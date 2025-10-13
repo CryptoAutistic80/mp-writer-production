@@ -93,7 +93,7 @@ export function WaveformVisualizer({
           />
         ))}
       </div>
-      <style jsx>{`
+      <style>{`
         .waveform-container {
           display: flex;
           align-items: center;

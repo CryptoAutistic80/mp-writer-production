@@ -1,7 +1,8 @@
 /** @type {import('jest').Config} */
 const config = {
-  displayName: 'frontend',
-  testEnvironment: 'jsdom',
+  displayName: 'backend-api',
+  testEnvironment: 'node',
+  rootDir: __dirname,
   transform: {
     '^.+\\.(t|j)sx?$': [
       '@swc/jest',
@@ -11,12 +12,10 @@ const config = {
           target: 'es2021',
           parser: {
             syntax: 'typescript',
-            tsx: true,
+            decorators: true,
           },
           transform: {
-            react: {
-              runtime: 'automatic',
-            },
+            legacyDecorator: true,
           },
         },
         module: {
@@ -26,7 +25,6 @@ const config = {
     ],
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
-  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   testMatch: [
     '<rootDir>/**/*.test.ts',
     '<rootDir>/**/*.test.tsx',
@@ -34,8 +32,7 @@ const config = {
     '<rootDir>/**/*.spec.tsx',
   ],
   moduleDirectories: ['node_modules', '<rootDir>/src', '<rootDir>'],
-  transformIgnorePatterns: [],
-  coverageDirectory: '<rootDir>/../coverage/frontend',
+  coverageDirectory: '<rootDir>/../coverage/backend-api',
   collectCoverageFrom: ['<rootDir>/src/**/*.{ts,tsx}', '!<rootDir>/src/**/*.d.ts'],
 };
 

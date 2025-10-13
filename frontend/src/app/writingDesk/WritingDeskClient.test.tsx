@@ -148,7 +148,14 @@ describe('WritingDeskClient', () => {
     expect(clearJobMock).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Review follow-up answers' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit intake answers' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Ask for new follow-up questions (costs 0.1 credits)' })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Show intake details' }));
+    });
+
+    expect(
+      screen.getByRole('button', { name: 'Ask for new follow-up questions (costs 0.1 credits)' }),
+    ).toBeInTheDocument();
   });
 
   it('prompts before editing intake answers and regenerates follow-ups after confirmation', async () => {
@@ -178,6 +185,10 @@ describe('WritingDeskClient', () => {
       }).length;
 
     const followUpCallsBefore = countFollowUpRequests();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Show intake details' }));
+    });
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Edit intake answers' }));
@@ -242,6 +253,10 @@ describe('WritingDeskClient', () => {
       const requestUrl = typeof url === 'string' ? url : url.toString();
       return requestUrl === '/api/ai/writing-desk/follow-up';
     }).length;
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Show intake details' }));
+    });
 
     await act(async () => {
       fireEvent.click(

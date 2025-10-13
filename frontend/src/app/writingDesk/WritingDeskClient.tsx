@@ -5,17 +5,20 @@ import ReactMarkdown from 'react-markdown';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
+import RecomposeConfirmModal from '../../features/writing-desk/components/RecomposeConfirmModal';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import {
   ActiveWritingDeskJob,
   UpsertActiveWritingDeskJobPayload,
+  WritingDeskLetterPayload,
   WritingDeskLetterStatus,
   WritingDeskLetterTone,
   WRITING_DESK_LETTER_TONES,
 } from '../../features/writing-desk/types';
-import { startLetterComposition } from '../../features/writing-desk/api/letter';
+import { fetchSavedLetters, saveLetter, startLetterComposition } from '../../features/writing-desk/api/letter';
 import { composeLetterHtml, letterHtmlToPlainText } from '../../features/writing-desk/utils/composeLetterHtml';
 import { MicButton } from '../../components/audio/MicButton';
+import { Toast } from '../../components/Toast';
 
 type StepKey = 'issueDescription';
 
@@ -100,35 +103,12 @@ type DeepResearchHandshakeResponse = {
 const MAX_RESEARCH_ACTIVITY_ITEMS = 10;
 const MAX_LETTER_REASONING_ITEMS = 3;
 
-interface LetterStreamLetterPayload {
-  mpName: string;
-  mpAddress1: string;
-  mpAddress2: string;
-  mpCity: string;
-  mpCounty: string;
-  mpPostcode: string;
-  date: string;
-  letterContent: string;
-  senderName: string;
-  senderAddress1: string;
-  senderAddress2: string;
-  senderAddress3: string;
-  senderCity: string;
-  senderCounty: string;
-  senderPostcode: string;
-  senderTelephone: string;
-  references: string[];
-  responseId: string | null;
-  tone: WritingDeskLetterTone | null;
-  rawJson: string;
-}
-
 type LetterStreamMessage =
   | { type: 'status'; status: string; remainingCredits?: number | null }
   | { type: 'event'; event: { type?: string; [key: string]: any } }
   | { type: 'delta'; text: string }
   | { type: 'letter_delta'; html: string }
-  | { type: 'complete'; letter: LetterStreamLetterPayload; remainingCredits: number | null }
+  | { type: 'complete'; letter: WritingDeskLetterPayload; remainingCredits: number | null }
   | { type: 'error'; message: string; remainingCredits?: number | null };
 
 const LETTER_DOCUMENT_CSS = `
@@ -347,14 +327,76 @@ export default function WritingDeskClient() {
   const [letterCopyState, setLetterCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [letterRemainingCredits, setLetterRemainingCredits] = useState<number | null>(null);
   const [letterReasoningVisible, setLetterReasoningVisible] = useState(true);
-  const [letterMetadata, setLetterMetadata] = useState<LetterStreamLetterPayload | null>(null);
+  const [letterMetadata, setLetterMetadata] = useState<WritingDeskLetterPayload | null>(null);
   const [letterPendingAutoResume, setLetterPendingAutoResume] = useState(false);
+  const [isSavingLetter, setIsSavingLetter] = useState(false);
+  const [letterSaveError, setLetterSaveError] = useState<string | null>(null);
+  const [savedLetterResponseId, setSavedLetterResponseId] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
   const letterJsonBufferRef = useRef<string>('');
   const lastLetterEventRef = useRef<number>(0);
   const lastLetterResumeAttemptRef = useRef<number>(0);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearToast = useCallback(() => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    setToastMessage(null);
+  }, []);
+
+  const showToast = useCallback((message: string) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    setToastMessage(message);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
+    }, 3500);
+  }, []);
+
+  const letterIsSaved = useMemo(
+    () => !!(letterResponseId && savedLetterResponseId === letterResponseId),
+    [letterResponseId, savedLetterResponseId],
+  );
+
+  useEffect(() => () => {
+    clearToast();
+  }, [clearToast]);
+
+  useEffect(() => {
+    const responseIds = [letterResponseId, letterMetadata?.responseId].filter(
+      (id): id is string => typeof id === 'string' && id.trim().length > 0,
+    );
+    if (!hasHandledInitialJob) return;
+    if (!Array.isArray(responseIds) || responseIds.length === 0) return;
+    const uniqueIds = Array.from(new Set(responseIds));
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const existing = await fetchSavedLetters(uniqueIds);
+        if (cancelled) return;
+        const matched = existing.some((letter) => uniqueIds.includes(letter.responseId));
+        if (matched) {
+          setSavedLetterResponseId(letterResponseId ?? letterMetadata?.responseId ?? null);
+        }
+      } catch (error) {
+        console.warn('Failed to verify saved letter state', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasHandledInitialJob, letterMetadata?.responseId, letterResponseId]);
 
   const letterHtmlForExport = useMemo(() => {
     if (typeof letterContentHtml !== 'string' || letterContentHtml.trim().length === 0) {
@@ -441,6 +483,20 @@ ${letterDocumentBodyHtml}
     return null;
   }, []);
 
+  const reportRefundedFailure = useCallback(
+    async (context: string) => {
+      const message = `Sorry, ${context}. If we spent any credits, we've already refunded them.`;
+      showToast(message);
+      const latest = await refreshCredits();
+      if (typeof latest === 'number') {
+        setAvailableCredits(latest);
+        return latest;
+      }
+      return null;
+    },
+    [refreshCredits, showToast],
+  );
+
   const closeResearchStream = useCallback(() => {
     if (researchSourceRef.current) {
       researchSourceRef.current.close();
@@ -471,9 +527,14 @@ ${letterDocumentBodyHtml}
     setLetterRemainingCredits(null);
     setLetterReasoningVisible(true);
     setLetterMetadata(null);
+    setLetterSaveError(null);
+    setSavedLetterResponseId(null);
+    setIsSavingLetter(false);
+    clearToast();
+    setRecomposeConfirmOpen(false);
     letterJsonBufferRef.current = '';
     setLetterPendingAutoResume(false);
-  }, [closeLetterStream]);
+  }, [clearToast, closeLetterStream]);
 
   const resetResearch = useCallback(() => {
     closeResearchStream();
@@ -753,36 +814,39 @@ ${letterDocumentBodyHtml}
             updateCreditsFromStream(payload.remainingCredits);
             appendResearchActivity('Deep research completed.');
             setPendingAutoResume(false);
-          } else if (payload.type === 'error') {
-            closeResearchStream();
-            setResearchStatus('error');
-            setResearchError(payload.message || 'Deep research failed. Please try again.');
-            updateCreditsFromStream(payload.remainingCredits);
-            appendResearchActivity('Deep research encountered an error.');
-            setPendingAutoResume(false);
-          }
-        };
-
-        source.onerror = () => {
+        } else if (payload.type === 'error') {
           closeResearchStream();
           setResearchStatus('error');
-          setResearchError('The research stream was interrupted. Please try again.');
-          appendResearchActivity('Connection lost during deep research.');
+          setResearchError(payload.message || 'Deep research failed. Please try again.');
+          updateCreditsFromStream(payload.remainingCredits);
+          appendResearchActivity('Deep research encountered an error.');
           setPendingAutoResume(false);
-        };
+          void reportRefundedFailure('deep research ran into a problem');
+        }
+      };
+
+      source.onerror = () => {
+        closeResearchStream();
+        setResearchStatus('error');
+        setResearchError('The research stream was interrupted. Please try again.');
+        appendResearchActivity('Connection lost during deep research.');
+        setPendingAutoResume(false);
+        void reportRefundedFailure('deep research connection dropped');
+      };
 
         lastResearchEventRef.current = Date.now();
       } catch (err) {
         closeResearchStream();
         setResearchStatus('error');
-        const message =
-          err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
-        setResearchError(message);
-        appendResearchActivity('Unable to start deep research.');
-        setPendingAutoResume(false);
-      }
-    },
-    [appendResearchActivity, closeResearchStream, jobId, researchStatus, updateCreditsFromStream],
+      const message =
+        err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
+      setResearchError(message);
+      appendResearchActivity('Unable to start deep research.');
+      setPendingAutoResume(false);
+      void reportRefundedFailure('deep research could not start');
+    }
+  },
+    [appendResearchActivity, closeResearchStream, jobId, reportRefundedFailure, researchStatus, updateCreditsFromStream],
   );
 
   useEffect(() => {
@@ -836,6 +900,9 @@ ${letterDocumentBodyHtml}
       setLetterCopyState('idle');
       setLetterReasoningVisible(true);
       setLetterMetadata(null);
+      setLetterSaveError(null);
+      setIsSavingLetter(false);
+      clearToast();
       letterJsonBufferRef.current = '';
       setLetterPendingAutoResume(false);
       let resolvedPath = streamPath;
@@ -907,6 +974,16 @@ ${letterDocumentBodyHtml}
           setLetterStatus('completed');
           setLetterPhase('completed');
           setLetterStatusMessage('Letter ready');
+          setIsSavingLetter(false);
+          setLetterSaveError(null);
+          clearToast();
+          if (
+            savedLetterResponseId &&
+            payload.letter.responseId &&
+            payload.letter.responseId !== savedLetterResponseId
+          ) {
+            setSavedLetterResponseId(null);
+          }
           // Don't overwrite letterContentHtml - it should already contain the final HTML from letter_delta events
           setLetterReferences(payload.letter.references ?? []);
           setLetterResponseId(payload.letter.responseId ?? null);
@@ -929,7 +1006,15 @@ ${letterDocumentBodyHtml}
           setLetterError(payload.message);
           setLetterStatusMessage(null);
           setLetterMetadata(null);
+          setIsSavingLetter(false);
+          setLetterSaveError(null);
+          clearToast();
           closeLetterStream();
+          void reportRefundedFailure('letter composition ran into a problem').then((latest) => {
+            if (typeof latest === 'number') {
+              setLetterRemainingCredits(Math.round(latest * 100) / 100);
+            }
+          });
         }
       };
 
@@ -939,11 +1024,29 @@ ${letterDocumentBodyHtml}
         setLetterPhase('error');
         setLetterError('The letter stream disconnected. Please try again.');
         setLetterStatusMessage(null);
+        setIsSavingLetter(false);
+        setLetterSaveError(null);
+        clearToast();
+        void reportRefundedFailure('letter composition connection dropped').then((latest) => {
+          if (typeof latest === 'number') {
+            setLetterRemainingCredits(Math.round(latest * 100) / 100);
+          }
+        });
       };
 
       lastLetterEventRef.current = Date.now();
-    },
-    [appendLetterEvent, closeLetterStream, setLetterMetadata, updateCreditsFromStream],
+  },
+    [
+      appendLetterEvent,
+      clearToast,
+      closeLetterStream,
+      reportRefundedFailure,
+      savedLetterResponseId,
+      setLetterMetadata,
+      setLetterSaveError,
+      setSavedLetterResponseId,
+      updateCreditsFromStream,
+    ],
   );
 
   const beginLetterComposition = useCallback(
@@ -958,6 +1061,10 @@ ${letterDocumentBodyHtml}
       setLetterRemainingCredits(null);
       setLetterReasoningVisible(true);
       letterJsonBufferRef.current = '';
+      setSavedLetterResponseId(null);
+      setLetterSaveError(null);
+      setIsSavingLetter(false);
+      clearToast();
 
       try {
         const handshake = await startLetterComposition({ jobId: jobId ?? undefined, tone });
@@ -974,9 +1081,14 @@ ${letterDocumentBodyHtml}
         setLetterPhase('error');
         setLetterError(error?.message || 'We could not start letter composition. Please try again.');
         setLetterStatusMessage(null);
+        void reportRefundedFailure('letter composition could not start').then((latest) => {
+          if (typeof latest === 'number') {
+            setLetterRemainingCredits(Math.round(latest * 100) / 100);
+          }
+        });
       }
     },
-    [jobId, openLetterStream, setJobId],
+    [clearToast, jobId, openLetterStream, reportRefundedFailure, setJobId],
   );
 
   const resumeLetterComposition = useCallback(async () => {
@@ -998,6 +1110,9 @@ ${letterDocumentBodyHtml}
     setLetterRemainingCredits(null);
     setLetterReasoningVisible(true);
     letterJsonBufferRef.current = '';
+    setLetterSaveError(null);
+    setIsSavingLetter(false);
+    clearToast();
 
     try {
       const handshake = await startLetterComposition({
@@ -1022,8 +1137,13 @@ ${letterDocumentBodyHtml}
           : 'We could not resume letter composition. Start again when ready.';
       setLetterError(message);
       setLetterStatusMessage(null);
+      void reportRefundedFailure('letter composition could not resume').then((latest) => {
+        if (typeof latest === 'number') {
+          setLetterRemainingCredits(Math.round(latest * 100) / 100);
+        }
+      });
     }
-  }, [jobId, openLetterStream, selectedTone, setJobId]);
+  }, [clearToast, jobId, openLetterStream, reportRefundedFailure, selectedTone, setJobId]);
 
   useEffect(() => {
     if (!letterPendingAutoResume) return;
@@ -1063,6 +1183,10 @@ ${letterDocumentBodyHtml}
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {
       closeResearchStream();
+      setSavedLetterResponseId(null);
+      setLetterSaveError(null);
+      setIsSavingLetter(false);
+      clearToast();
       setForm({
         issueDescription: job.form?.issueDescription ?? '',
       });
@@ -1142,6 +1266,7 @@ ${letterDocumentBodyHtml}
             responseId: job.letterResponseId ?? null,
             tone: job.letterTone ?? null,
             rawJson: job.letterJson ?? '',
+            subjectLineHtml: parsed.subject_line_html ?? '',
           });
         } catch {
           setLetterMetadata(null);
@@ -1191,7 +1316,7 @@ ${letterDocumentBodyHtml}
         }
       }
     },
-    [closeResearchStream, resetFollowUps],
+    [clearToast, closeResearchStream, resetFollowUps],
   );
 
   const resourceToPayload = useCallback(
@@ -1519,17 +1644,15 @@ ${letterDocumentBodyHtml}
         } else {
           setPhase('summary');
         }
-        const latestCredits = await refreshCredits();
-        if (typeof latestCredits === 'number') {
-          setAvailableCredits(latestCredits);
-        } else if (previousCredits !== null) {
+        const latestCredits = await reportRefundedFailure('follow-up question generation failed');
+        if (latestCredits === null && previousCredits !== null) {
           setAvailableCredits(previousCredits);
         }
       } finally {
         setLoading(false);
       }
     },
-    [availableCredits, followUpCreditCost, form, refreshCredits, submitBundle],
+    [availableCredits, followUpCreditCost, form, reportRefundedFailure, refreshCredits, submitBundle],
   );
 
   const handleInitialNext = async () => {
@@ -1673,6 +1796,71 @@ ${letterDocumentBodyHtml}
     [beginLetterComposition],
   );
 
+  const handleRequestRecompose = useCallback(() => {
+    if (letterIsSaved || !letterResponseId) {
+      handleShowToneSelection();
+      return;
+    }
+    setRecomposeConfirmOpen(true);
+  }, [handleShowToneSelection, letterIsSaved, letterResponseId]);
+
+  const handleConfirmRecompose = useCallback(() => {
+    setRecomposeConfirmOpen(false);
+    handleShowToneSelection();
+  }, [handleShowToneSelection]);
+
+  const handleCancelRecompose = useCallback(() => {
+    setRecomposeConfirmOpen(false);
+  }, []);
+
+  const handleSaveLetter = useCallback(async () => {
+    if (!letterMetadata || !letterContentHtml || !letterResponseId) {
+      setLetterSaveError('Your letter is still preparing. Please wait a moment and try again.');
+      return;
+    }
+
+    if (savedLetterResponseId && savedLetterResponseId === letterResponseId) {
+      showToast('Letter already saved to My letters.');
+      return;
+    }
+
+    const tone = (letterMetadata.tone ?? selectedTone ?? 'neutral') as WritingDeskLetterTone;
+    const metadata: WritingDeskLetterPayload = {
+      ...letterMetadata,
+      tone,
+      responseId: letterMetadata.responseId ?? letterResponseId,
+    };
+
+    setIsSavingLetter(true);
+    setLetterSaveError(null);
+
+    try {
+      const saved = await saveLetter({
+        responseId: letterResponseId,
+        letterHtml: letterContentHtml,
+        metadata,
+      });
+      setSavedLetterResponseId(saved.responseId || letterResponseId);
+      showToast('Letter saved to My letters.');
+    } catch (error: any) {
+      const message =
+        error?.message && typeof error.message === 'string' && error.message.trim().length > 0
+          ? error.message
+          : 'We could not save your letter. Please try again.';
+      setLetterSaveError(message);
+    } finally {
+      setIsSavingLetter(false);
+    }
+  }, [
+    letterContentHtml,
+    letterMetadata,
+    letterResponseId,
+    saveLetter,
+    savedLetterResponseId,
+    selectedTone,
+    showToast,
+  ]);
+
   const handleCopyLetter = useCallback(async () => {
     if (!letterContentHtml) {
       setLetterCopyState('error');
@@ -1770,6 +1958,11 @@ ${letterDocumentBodyHtml}
         open={startOverConfirmOpen}
         onConfirm={handleConfirmStartOver}
         onCancel={handleCancelStartOver}
+      />
+      <RecomposeConfirmModal
+        open={recomposeConfirmOpen}
+        onConfirm={handleConfirmRecompose}
+        onCancel={handleCancelRecompose}
       />
       <EditIntakeConfirmModal
         open={editIntakeModalOpen}
@@ -2327,6 +2520,25 @@ ${letterDocumentBodyHtml}
                   dangerouslySetInnerHTML={{ __html: letterContentHtml || '<p>No content available.</p>' }}
                 />
                 <div className="actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleSaveLetter}
+                    disabled={
+                      isSavingLetter ||
+                      !letterResponseId ||
+                      !letterMetadata ||
+                      !letterContentHtml ||
+                      (savedLetterResponseId !== null && savedLetterResponseId === letterResponseId)
+                    }
+                    aria-busy={isSavingLetter}
+                  >
+                    {isSavingLetter
+                      ? 'Saving…'
+                      : savedLetterResponseId === letterResponseId
+                        ? 'Saved to my letters'
+                        : 'Save to my letters'}
+                  </button>
                   <button type="button" className="btn-primary" onClick={handleCopyLetter}>
                     {letterCopyState === 'copied' ? 'Copied!' : letterCopyState === 'error' ? 'Copy failed — try again' : 'Copy for email'}
                   </button>
@@ -2348,10 +2560,16 @@ ${letterDocumentBodyHtml}
                   >
                     {isDownloadingDocx ? 'Preparing DOCX...' : 'Download DOCX'}
                   </button>
-                  <button type="button" className="btn-secondary" onClick={handleShowToneSelection}>
-                    Compose another letter
+                  <button type="button" className="btn-secondary" onClick={handleRequestRecompose}>
+                    Recompose this letter
                   </button>
                 </div>
+                {letterSaveError && (
+                  <p role="alert" aria-live="polite" style={{ marginTop: 8, color: '#b91c1c' }}>
+                    {letterSaveError}
+                  </p>
+                )}
+                {toastMessage && <Toast>{toastMessage}</Toast>}
               </div>
             )}
 
@@ -2373,7 +2591,7 @@ ${letterDocumentBodyHtml}
         )}
       </div>
       </section>
-      <style jsx>{`
+      <style>{`
         @keyframes create-letter-jiggle {
           0%, 100% {
             transform: translateX(0);

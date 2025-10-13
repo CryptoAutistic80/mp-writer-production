@@ -1208,6 +1208,12 @@ body {
 .btn-primary:hover {
   filter: brightness(0.95);
 }
+.btn-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  filter: none;
+  box-shadow: none;
+}
 .btn-secondary:hover {
   background: linear-gradient(180deg, #eef2ff 0%, #e0e7ff 100%);
   border-color: rgba(59, 130, 246, 0.35);
@@ -1446,7 +1452,7 @@ body {
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(2, 8, 23, 0.25);
   font-size: 14px;
-  z-index: 50;
+  z-index: 2147483647;
   animation: toast-in 150ms ease-out;
 }
 @keyframes toast-in {
