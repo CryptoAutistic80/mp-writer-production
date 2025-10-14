@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
 import RecomposeConfirmModal from '../../features/writing-desk/components/RecomposeConfirmModal';
+import ResearchConfirmModal from '../../features/writing-desk/components/ResearchConfirmModal';
+import FollowUpsConfirmModal from '../../features/writing-desk/components/FollowUpsConfirmModal';
+import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import {
   ActiveWritingDeskJob,
@@ -295,6 +299,7 @@ export default function WritingDeskClient() {
     isClearing: isClearingJob,
     error: activeJobError,
   } = useActiveWritingDeskJob();
+  const router = useRouter();
   const [jobId, setJobId] = useState<string | null>(null);
   const [hasHandledInitialJob, setHasHandledInitialJob] = useState(false);
   const [pendingJob, setPendingJob] = useState<ActiveWritingDeskJob | null>(null);
@@ -334,6 +339,9 @@ export default function WritingDeskClient() {
   const [savedLetterResponseId, setSavedLetterResponseId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
+  const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
+  const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
@@ -615,9 +623,9 @@ ${letterDocumentBodyHtml}
   const researchButtonLabel =
     researchStatus === 'running'
       ? 'Deep research in progress…'
-      : `${hasResearchContent ? 'Run deep research again' : 'Start deep research'} (costs ${formatCredits(
-          deepResearchCreditCost,
-        )} credits)`;
+      : hasResearchContent 
+      ? 'Run deep research again' 
+      : 'Start deep research';
 
   useEffect(() => {
     if (!isGeneratingFollowUps) {
@@ -1774,10 +1782,19 @@ ${letterDocumentBodyHtml}
     setFollowUpIndex(index);
   }, [followUps.length]);
 
-  const handleRegenerateFollowUps = useCallback(() => {
+  const handleRequestRegenerateFollowUps = useCallback(() => {
+    setFollowUpsConfirmOpen(true);
+  }, []);
+
+  const handleConfirmRegenerateFollowUps = useCallback(() => {
+    setFollowUpsConfirmOpen(false);
     resetLetter();
     void generateFollowUps('summary');
   }, [generateFollowUps, resetLetter]);
+
+  const handleCancelRegenerateFollowUps = useCallback(() => {
+    setFollowUpsConfirmOpen(false);
+  }, []);
 
   const handleShowToneSelection = useCallback(() => {
     if (letterStatus !== 'idle') {
@@ -1797,12 +1814,8 @@ ${letterDocumentBodyHtml}
   );
 
   const handleRequestRecompose = useCallback(() => {
-    if (letterIsSaved || !letterResponseId) {
-      handleShowToneSelection();
-      return;
-    }
     setRecomposeConfirmOpen(true);
-  }, [handleShowToneSelection, letterIsSaved, letterResponseId]);
+  }, []);
 
   const handleConfirmRecompose = useCallback(() => {
     setRecomposeConfirmOpen(false);
@@ -1811,6 +1824,39 @@ ${letterDocumentBodyHtml}
 
   const handleCancelRecompose = useCallback(() => {
     setRecomposeConfirmOpen(false);
+  }, []);
+
+  const handleRequestExit = useCallback(() => {
+    setExitConfirmOpen(true);
+  }, []);
+
+  const handleConfirmExit = useCallback(async () => {
+    setExitConfirmOpen(false);
+    try {
+      await clearJob();
+      router.push('/dashboard');
+    } catch (error) {
+      console.error('Failed to clear job:', error);
+      // Still navigate even if clear fails
+      router.push('/dashboard');
+    }
+  }, [clearJob, router]);
+
+  const handleCancelExit = useCallback(() => {
+    setExitConfirmOpen(false);
+  }, []);
+
+  const handleRequestResearch = useCallback(() => {
+    setResearchConfirmOpen(true);
+  }, []);
+
+  const handleConfirmResearch = useCallback(() => {
+    setResearchConfirmOpen(false);
+    void startDeepResearch();
+  }, [startDeepResearch]);
+
+  const handleCancelResearch = useCallback(() => {
+    setResearchConfirmOpen(false);
   }, []);
 
   const handleSaveLetter = useCallback(async () => {
@@ -1963,12 +2009,26 @@ ${letterDocumentBodyHtml}
         open={recomposeConfirmOpen}
         onConfirm={handleConfirmRecompose}
         onCancel={handleCancelRecompose}
+        letterIsSaved={letterIsSaved}
       />
       <EditIntakeConfirmModal
         open={editIntakeModalOpen}
         creditCost={formatCredits(followUpCreditCost)}
         onConfirm={handleConfirmEditIntake}
         onCancel={handleCancelEditIntake}
+      />
+      <ResearchConfirmModal
+        open={researchConfirmOpen}
+        creditCost={formatCredits(deepResearchCreditCost)}
+        isRerun={hasResearchContent}
+        onConfirm={handleConfirmResearch}
+        onCancel={handleCancelResearch}
+      />
+      <FollowUpsConfirmModal
+        open={followUpsConfirmOpen}
+        creditCost={formatCredits(followUpCreditCost)}
+        onConfirm={handleConfirmRegenerateFollowUps}
+        onCancel={handleCancelRegenerateFollowUps}
       />
       <ActiveJobResumeModal
         open={resumeModalOpen}
@@ -1978,6 +2038,11 @@ ${letterDocumentBodyHtml}
           void handleDiscardExistingJob();
         }}
         isDiscarding={isClearingJob}
+      />
+      <ExitWritingDeskModal
+        open={exitConfirmOpen}
+        onConfirm={handleConfirmExit}
+        onCancel={handleCancelExit}
       />
       <section className="card" style={{ marginTop: 16 }} aria-hidden={resumeModalOpen}>
         <div className="container">
@@ -2230,7 +2295,7 @@ ${letterDocumentBodyHtml}
                     <button
                       type="button"
                       className="btn-primary"
-                      onClick={() => void startDeepResearch()}
+                      onClick={handleRequestResearch}
                       disabled={researchButtonDisabled}
                     >
                       {researchButtonLabel}
@@ -2371,10 +2436,10 @@ ${letterDocumentBodyHtml}
                           <button
                             type="button"
                             className="btn-link"
-                            onClick={handleRegenerateFollowUps}
+                            onClick={handleRequestRegenerateFollowUps}
                             disabled={loading}
                           >
-                            Ask for new follow-up questions (costs {formatCredits(followUpCreditCost)} credits)
+                            Ask for new follow-up questions
                           </button>
                         </div>
                       )}
@@ -2519,7 +2584,7 @@ ${letterDocumentBodyHtml}
                   style={{ marginTop: 16 }}
                   dangerouslySetInnerHTML={{ __html: letterContentHtml || '<p>No content available.</p>' }}
                 />
-                <div className="actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <div className="actions" style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                   <button
                     type="button"
                     className="btn-primary"
@@ -2562,6 +2627,18 @@ ${letterDocumentBodyHtml}
                   </button>
                   <button type="button" className="btn-secondary" onClick={handleRequestRecompose}>
                     Recompose this letter
+                  </button>
+                  <button 
+                    type="button" 
+                    className="btn-secondary" 
+                    onClick={handleRequestExit}
+                    style={{ 
+                      backgroundColor: '#fee2e2', 
+                      color: '#991b1b', 
+                      border: '1px solid #fecaca' 
+                    }}
+                  >
+                    Exit writing desk
                   </button>
                 </div>
                 {letterSaveError && (
