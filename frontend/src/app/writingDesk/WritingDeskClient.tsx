@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
@@ -8,6 +9,7 @@ import StartOverConfirmModal from '../../features/writing-desk/components/StartO
 import RecomposeConfirmModal from '../../features/writing-desk/components/RecomposeConfirmModal';
 import ResearchConfirmModal from '../../features/writing-desk/components/ResearchConfirmModal';
 import FollowUpsConfirmModal from '../../features/writing-desk/components/FollowUpsConfirmModal';
+import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import {
   ActiveWritingDeskJob,
@@ -297,6 +299,7 @@ export default function WritingDeskClient() {
     isClearing: isClearingJob,
     error: activeJobError,
   } = useActiveWritingDeskJob();
+  const router = useRouter();
   const [jobId, setJobId] = useState<string | null>(null);
   const [hasHandledInitialJob, setHasHandledInitialJob] = useState(false);
   const [pendingJob, setPendingJob] = useState<ActiveWritingDeskJob | null>(null);
@@ -338,6 +341,7 @@ export default function WritingDeskClient() {
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
   const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
   const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
@@ -1822,6 +1826,26 @@ ${letterDocumentBodyHtml}
     setRecomposeConfirmOpen(false);
   }, []);
 
+  const handleRequestExit = useCallback(() => {
+    setExitConfirmOpen(true);
+  }, []);
+
+  const handleConfirmExit = useCallback(async () => {
+    setExitConfirmOpen(false);
+    try {
+      await clearJob();
+      router.push('/dashboard');
+    } catch (error) {
+      console.error('Failed to clear job:', error);
+      // Still navigate even if clear fails
+      router.push('/dashboard');
+    }
+  }, [clearJob, router]);
+
+  const handleCancelExit = useCallback(() => {
+    setExitConfirmOpen(false);
+  }, []);
+
   const handleRequestResearch = useCallback(() => {
     setResearchConfirmOpen(true);
   }, []);
@@ -2014,6 +2038,11 @@ ${letterDocumentBodyHtml}
           void handleDiscardExistingJob();
         }}
         isDiscarding={isClearingJob}
+      />
+      <ExitWritingDeskModal
+        open={exitConfirmOpen}
+        onConfirm={handleConfirmExit}
+        onCancel={handleCancelExit}
       />
       <section className="card" style={{ marginTop: 16 }} aria-hidden={resumeModalOpen}>
         <div className="container">
@@ -2555,7 +2584,7 @@ ${letterDocumentBodyHtml}
                   style={{ marginTop: 16 }}
                   dangerouslySetInnerHTML={{ __html: letterContentHtml || '<p>No content available.</p>' }}
                 />
-                <div className="actions" style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <div className="actions" style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                   <button
                     type="button"
                     className="btn-primary"
@@ -2598,6 +2627,18 @@ ${letterDocumentBodyHtml}
                   </button>
                   <button type="button" className="btn-secondary" onClick={handleRequestRecompose}>
                     Recompose this letter
+                  </button>
+                  <button 
+                    type="button" 
+                    className="btn-secondary" 
+                    onClick={handleRequestExit}
+                    style={{ 
+                      backgroundColor: '#fee2e2', 
+                      color: '#991b1b', 
+                      border: '1px solid #fecaca' 
+                    }}
+                  >
+                    Exit writing desk
                   </button>
                 </div>
                 {letterSaveError && (
