@@ -6,6 +6,8 @@ import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJ
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
 import RecomposeConfirmModal from '../../features/writing-desk/components/RecomposeConfirmModal';
+import ResearchConfirmModal from '../../features/writing-desk/components/ResearchConfirmModal';
+import FollowUpsConfirmModal from '../../features/writing-desk/components/FollowUpsConfirmModal';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import {
   ActiveWritingDeskJob,
@@ -334,6 +336,8 @@ export default function WritingDeskClient() {
   const [savedLetterResponseId, setSavedLetterResponseId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
+  const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
+  const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
@@ -615,9 +619,9 @@ ${letterDocumentBodyHtml}
   const researchButtonLabel =
     researchStatus === 'running'
       ? 'Deep research in progress…'
-      : `${hasResearchContent ? 'Run deep research again' : 'Start deep research'} (costs ${formatCredits(
-          deepResearchCreditCost,
-        )} credits)`;
+      : hasResearchContent 
+      ? 'Run deep research again' 
+      : 'Start deep research';
 
   useEffect(() => {
     if (!isGeneratingFollowUps) {
@@ -1774,10 +1778,19 @@ ${letterDocumentBodyHtml}
     setFollowUpIndex(index);
   }, [followUps.length]);
 
-  const handleRegenerateFollowUps = useCallback(() => {
+  const handleRequestRegenerateFollowUps = useCallback(() => {
+    setFollowUpsConfirmOpen(true);
+  }, []);
+
+  const handleConfirmRegenerateFollowUps = useCallback(() => {
+    setFollowUpsConfirmOpen(false);
     resetLetter();
     void generateFollowUps('summary');
   }, [generateFollowUps, resetLetter]);
+
+  const handleCancelRegenerateFollowUps = useCallback(() => {
+    setFollowUpsConfirmOpen(false);
+  }, []);
 
   const handleShowToneSelection = useCallback(() => {
     if (letterStatus !== 'idle') {
@@ -1797,12 +1810,8 @@ ${letterDocumentBodyHtml}
   );
 
   const handleRequestRecompose = useCallback(() => {
-    if (letterIsSaved || !letterResponseId) {
-      handleShowToneSelection();
-      return;
-    }
     setRecomposeConfirmOpen(true);
-  }, [handleShowToneSelection, letterIsSaved, letterResponseId]);
+  }, []);
 
   const handleConfirmRecompose = useCallback(() => {
     setRecomposeConfirmOpen(false);
@@ -1811,6 +1820,19 @@ ${letterDocumentBodyHtml}
 
   const handleCancelRecompose = useCallback(() => {
     setRecomposeConfirmOpen(false);
+  }, []);
+
+  const handleRequestResearch = useCallback(() => {
+    setResearchConfirmOpen(true);
+  }, []);
+
+  const handleConfirmResearch = useCallback(() => {
+    setResearchConfirmOpen(false);
+    void startDeepResearch();
+  }, [startDeepResearch]);
+
+  const handleCancelResearch = useCallback(() => {
+    setResearchConfirmOpen(false);
   }, []);
 
   const handleSaveLetter = useCallback(async () => {
@@ -1963,12 +1985,26 @@ ${letterDocumentBodyHtml}
         open={recomposeConfirmOpen}
         onConfirm={handleConfirmRecompose}
         onCancel={handleCancelRecompose}
+        letterIsSaved={letterIsSaved}
       />
       <EditIntakeConfirmModal
         open={editIntakeModalOpen}
         creditCost={formatCredits(followUpCreditCost)}
         onConfirm={handleConfirmEditIntake}
         onCancel={handleCancelEditIntake}
+      />
+      <ResearchConfirmModal
+        open={researchConfirmOpen}
+        creditCost={formatCredits(deepResearchCreditCost)}
+        isRerun={hasResearchContent}
+        onConfirm={handleConfirmResearch}
+        onCancel={handleCancelResearch}
+      />
+      <FollowUpsConfirmModal
+        open={followUpsConfirmOpen}
+        creditCost={formatCredits(followUpCreditCost)}
+        onConfirm={handleConfirmRegenerateFollowUps}
+        onCancel={handleCancelRegenerateFollowUps}
       />
       <ActiveJobResumeModal
         open={resumeModalOpen}
@@ -2230,7 +2266,7 @@ ${letterDocumentBodyHtml}
                     <button
                       type="button"
                       className="btn-primary"
-                      onClick={() => void startDeepResearch()}
+                      onClick={handleRequestResearch}
                       disabled={researchButtonDisabled}
                     >
                       {researchButtonLabel}
@@ -2371,10 +2407,10 @@ ${letterDocumentBodyHtml}
                           <button
                             type="button"
                             className="btn-link"
-                            onClick={handleRegenerateFollowUps}
+                            onClick={handleRequestRegenerateFollowUps}
                             disabled={loading}
                           >
-                            Ask for new follow-up questions (costs {formatCredits(followUpCreditCost)} credits)
+                            Ask for new follow-up questions
                           </button>
                         </div>
                       )}
