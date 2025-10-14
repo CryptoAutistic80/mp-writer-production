@@ -341,6 +341,7 @@ export default function WritingDeskClient() {
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
   const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
   const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
+  const [initialFollowUpsConfirmOpen, setInitialFollowUpsConfirmOpen] = useState(false);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
@@ -1684,7 +1685,8 @@ ${letterDocumentBodyHtml}
       return;
     }
 
-    await generateFollowUps('initial');
+    // Show confirmation modal before generating initial follow-ups
+    setInitialFollowUpsConfirmOpen(true);
   };
 
   const handleFollowUpChange = (value: string) => {
@@ -1781,6 +1783,15 @@ ${letterDocumentBodyHtml}
     setPhase('followup');
     setFollowUpIndex(index);
   }, [followUps.length]);
+
+  const handleConfirmInitialFollowUps = useCallback(() => {
+    setInitialFollowUpsConfirmOpen(false);
+    void generateFollowUps('initial');
+  }, [generateFollowUps]);
+
+  const handleCancelInitialFollowUps = useCallback(() => {
+    setInitialFollowUpsConfirmOpen(false);
+  }, []);
 
   const handleRequestRegenerateFollowUps = useCallback(() => {
     setFollowUpsConfirmOpen(true);
@@ -2029,6 +2040,13 @@ ${letterDocumentBodyHtml}
         creditCost={formatCredits(followUpCreditCost)}
         onConfirm={handleConfirmRegenerateFollowUps}
         onCancel={handleCancelRegenerateFollowUps}
+      />
+      <FollowUpsConfirmModal
+        open={initialFollowUpsConfirmOpen}
+        creditCost={formatCredits(followUpCreditCost)}
+        onConfirm={handleConfirmInitialFollowUps}
+        onCancel={handleCancelInitialFollowUps}
+        isInitialGeneration={true}
       />
       <ActiveJobResumeModal
         open={resumeModalOpen}
