@@ -3,6 +3,7 @@ interface FollowUpsConfirmModalProps {
   creditCost: string;
   onConfirm: () => void;
   onCancel: () => void;
+  isInitialGeneration?: boolean;
 }
 
 export default function FollowUpsConfirmModal({
@@ -10,6 +11,7 @@ export default function FollowUpsConfirmModal({
   creditCost,
   onConfirm,
   onCancel,
+  isInitialGeneration = false,
 }: FollowUpsConfirmModalProps) {
   if (!open) return null;
 
@@ -40,14 +42,16 @@ export default function FollowUpsConfirmModal({
         }}
       >
         <h2 id="followups-confirm-title" style={{ fontSize: 24, lineHeight: 1.2, marginBottom: 12 }}>
-          Generate new follow-up questions?
+          {isInitialGeneration ? 'Generate follow-up questions?' : 'Generate new follow-up questions?'}
         </h2>
         <p style={{ marginBottom: 16, color: '#334155', lineHeight: 1.6 }}>
-          <strong style={{ color: '#0369a1' }}>Cost:</strong> This will use <strong>{creditCost} credits</strong> to generate new follow-up questions.
+          <strong style={{ color: '#0369a1' }}>Cost:</strong> This will use <strong>{creditCost} credits</strong> to {isInitialGeneration ? 'generate follow-up questions.' : 'generate new follow-up questions.'}
         </p>
-        <p style={{ marginBottom: 16, color: '#334155', lineHeight: 1.6 }}>
-          This will replace your current follow-up questions with new ones.
-        </p>
+        {!isInitialGeneration && (
+          <p style={{ marginBottom: 16, color: '#334155', lineHeight: 1.6 }}>
+            This will replace your current follow-up questions with new ones.
+          </p>
+        )}
         <p style={{ marginBottom: 20, color: '#475569' }}>Do you want to continue?</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <button
@@ -64,7 +68,7 @@ export default function FollowUpsConfirmModal({
               cursor: 'pointer',
             }}
           >
-            Yes, generate new questions
+            Yes, {isInitialGeneration ? 'generate questions' : 'generate new questions'}
           </button>
           <button
             type="button"
