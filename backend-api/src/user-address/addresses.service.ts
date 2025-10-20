@@ -1,7 +1,7 @@
 import { BadGatewayException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-export type NormalizedAddress = {
+export interface NormalizedAddress {
   id: string;
   line1: string;
   line2?: string;

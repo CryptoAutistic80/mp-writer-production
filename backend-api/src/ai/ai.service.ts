@@ -24,7 +24,7 @@ const DEEP_RESEARCH_CREDIT_COST = 0.7;
 const LETTER_CREDIT_COST = 0.2;
 const TRANSCRIPTION_CREDIT_COST = 0;
 
-type DeepResearchRequestExtras = {
+interface DeepResearchRequestExtras {
   tools?: Array<Record<string, unknown>>;
   max_tool_calls?: number;
   reasoning?: {
@@ -603,7 +603,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     return new Observable<MessageEvent>((subscriber) => {
       let subscription: Subscription | null = null;
-      let settled = false;
+      let _settled = false;
 
       const attach = async () => {
         try {
@@ -620,14 +620,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               }
             },
             complete: () => {
-              settled = true;
+              _settled = true;
               if (!subscriber.closed) {
                 subscriber.complete();
               }
             },
           });
         } catch (error) {
-          settled = true;
+          _settled = true;
           if (error instanceof BadRequestException) {
             subscriber.next({
               data: JSON.stringify({ type: 'error', message: error.message }),
@@ -644,7 +644,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       return () => {
         subscription?.unsubscribe();
         subscription = null;
-        settled = true;
+        _settled = true;
       };
     });
   }
@@ -801,7 +801,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     let controller: { abort: () => void } | null = null;
     let jsonBuffer = '';
     let quietPeriodTimer: NodeJS.Timeout | null = null;
-    let settled = false;
+    let _settled = false;
     let lastPersistedContent: string | null = null;
     let lastPersistedAt = 0;
 
@@ -893,7 +893,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           json: rawJson,
         });
         run.status = 'completed';
-        settled = true;
+        _settled = true;
         send({ type: 'letter_delta', html: stubDocument });
         send({
           type: 'complete',
@@ -1102,7 +1102,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           });
 
           run.status = 'completed';
-          settled = true;
+          _settled = true;
           send({ type: 'letter_delta', html: finalDocument });
           send({
             type: 'complete',
@@ -1215,7 +1215,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           lastPersistedContentLength: lastPersistedContent?.length || 0,
           runDuration: Date.now() - run.startedAt,
           quietPeriodTimerActive: quietPeriodTimer !== null,
-          settled: settled
+          _settled: _settled
         }
       );
 
@@ -1338,7 +1338,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     let deductionApplied = false;
     let remainingCredits: number | null = null;
     let aggregatedText = '';
-    let settled = false;
+    let _settled = false;
     let openAiStream: ResponseStreamLike | null = null;
     let responseId: string | null = run.responseId ?? null;
     let quietPeriodTimer: NodeJS.Timeout | null = null;
@@ -1413,7 +1413,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           status: 'completed',
         });
         run.status = 'completed';
-        settled = true;
+        _settled = true;
         send({
           type: 'complete',
           content: stub.content,
@@ -1449,7 +1449,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       let lastSequenceNumber: number | null = null;
       let currentStream: ResponseStreamLike | null = openAiStream;
       let resumeAttempts = 0;
-      let lastActivityTime = Date.now();
+      let _lastActivityTime = Date.now();
 
       // Set up periodic status updates during quiet periods
       const lastCustomMessages: string[] = []; // Track last 2 custom messages
@@ -1508,7 +1508,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           }
           
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
-          lastActivityTime = Date.now();
+          _lastActivityTime = Date.now();
           startQuietPeriodTimer(); // Reset the timer
         }, 5000); // 5 seconds of inactivity
       };
@@ -1523,7 +1523,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             if (!event) continue;
 
             // Reset quiet period timer on any activity
-            lastActivityTime = Date.now();
+            _lastActivityTime = Date.now();
             if (quietPeriodTimer) {
               clearTimeout(quietPeriodTimer);
               startQuietPeriodTimer();
@@ -1610,7 +1610,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                   })}`,
                 );
                 run.status = 'completed';
-                settled = true;
+                _settled = true;
                 send({
                   type: 'complete',
                   content: finalText,
@@ -1716,7 +1716,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       }
 
-      if (!settled) {
+      if (!_settled) {
         if (!responseId) {
           throw new Error('Deep research stream ended before a response id was available');
         }
@@ -1747,7 +1747,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             })}`,
           );
           run.status = 'completed';
-          settled = true;
+          _settled = true;
           send({
             type: 'complete',
             content: finalText,
@@ -1763,7 +1763,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             status: 'error',
           });
           run.status = 'error';
-          settled = true;
+          _settled = true;
           send({ type: 'error', message, remainingCredits });
           subject.complete();
         }
@@ -1779,7 +1779,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         `[writing-desk research] failure ${error instanceof Error ? error.message : 'unknown'}`,
       );
 
-      if (deductionApplied && !settled) {
+      if (deductionApplied && !_settled) {
         await this.refundCredits(userId, DEEP_RESEARCH_CREDIT_COST);
         remainingCredits =
           typeof remainingCredits === 'number'
@@ -1815,7 +1815,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         quietPeriodTimer = null;
       }
     } finally {
-      if (!settled && openAiStream?.controller) {
+      if (!_settled && openAiStream?.controller) {
         try {
           openAiStream.controller.abort();
         } catch (err) {
@@ -3167,7 +3167,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     try {
       return JSON.parse(JSON.stringify(event)) as Record<string, unknown>;
-    } catch (error) {
+    } catch {
       const plain: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(event as unknown as Record<string, unknown>)) {
         plain[key] = value as unknown;
@@ -3299,7 +3299,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
 
     return new Observable<MessageEvent>((subscriber) => {
-      let settled = false;
+      let _settled = false;
 
       const transcribe = async () => {
         try {
@@ -3341,12 +3341,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             } else if (event.type === 'transcript.text.done') {
               subscriber.next({ data: JSON.stringify({ type: 'complete', text: event.text, remainingCredits: remainingAfterCharge }) });
               subscriber.complete();
-              settled = true;
+              _settled = true;
               return;
             }
           }
 
-          if (!settled) {
+          if (!_settled) {
             subscriber.next({ data: JSON.stringify({ type: 'error', message: 'Transcription stream ended unexpectedly' }) });
             subscriber.complete();
           }
@@ -3362,7 +3362,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       void transcribe();
 
       return () => {
-        settled = true;
+        _settled = true;
       };
     });
   }
