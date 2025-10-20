@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Toast } from './Toast';
 
@@ -9,9 +9,31 @@ export default function StartWritingButton() {
   const router = useRouter();
   const [toast, setToast] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [clicked, setClicked] = useState(false);
+  const animationResetRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (animationResetRef.current !== null) {
+        window.clearTimeout(animationResetRef.current);
+      }
+    };
+  }, []);
+
+  function playClickAnimation() {
+    if (animationResetRef.current !== null) {
+      window.clearTimeout(animationResetRef.current);
+    }
+    setClicked(true);
+    animationResetRef.current = window.setTimeout(() => {
+      setClicked(false);
+      animationResetRef.current = null;
+    }, 600);
+  }
 
   async function handleClick() {
     if (checking) return;
+    playClickAnimation();
     setChecking(true);
     try {
       const missing: string[] = [];
@@ -72,7 +94,7 @@ export default function StartWritingButton() {
     <div className="container start-writing-panel">
       <button
         type="button"
-        className="start-writing-btn"
+        className={`start-writing-btn${clicked ? ' start-writing-btn--clicked' : ''}`}
         aria-label="Start writing"
         aria-busy={checking}
         onClick={handleClick}
