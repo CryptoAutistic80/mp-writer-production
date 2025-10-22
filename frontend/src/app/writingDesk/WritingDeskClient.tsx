@@ -10,6 +10,7 @@ import RecomposeConfirmModal from '../../features/writing-desk/components/Recomp
 import ResearchConfirmModal from '../../features/writing-desk/components/ResearchConfirmModal';
 import FollowUpsConfirmModal from '../../features/writing-desk/components/FollowUpsConfirmModal';
 import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
+import { LetterViewer } from '../../features/writing-desk/components/LetterViewer';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import {
   ActiveWritingDeskJob,
@@ -20,7 +21,7 @@ import {
   WRITING_DESK_LETTER_TONES,
 } from '../../features/writing-desk/types';
 import { fetchSavedLetters, saveLetter, startLetterComposition } from '../../features/writing-desk/api/letter';
-import { composeLetterHtml, letterHtmlToPlainText } from '../../features/writing-desk/utils/composeLetterHtml';
+import { composeLetterHtml } from '../../features/writing-desk/utils/composeLetterHtml';
 import { MicButton } from '../../components/audio/MicButton';
 import { Toast } from '../../components/Toast';
 
@@ -114,54 +115,6 @@ type LetterStreamMessage =
   | { type: 'letter_delta'; html: string }
   | { type: 'complete'; letter: WritingDeskLetterPayload; remainingCredits: number | null }
   | { type: 'error'; message: string; remainingCredits?: number | null };
-
-const LETTER_DOCUMENT_CSS = `
-  @page {
-    margin: 15mm;
-  }
-
-  body {
-    font-family: "Times New Roman", serif;
-    font-size: 12pt;
-    line-height: 1.5;
-    color: #111827;
-    margin: 0;
-    background: #ffffff;
-  }
-
-  .letter-document {
-    box-sizing: border-box;
-    max-width: 180mm;
-    margin: 0 auto;
-    padding: 15mm;
-  }
-
-  .letter-document p {
-    margin: 0 0 12pt 0;
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .letter-document ul,
-  .letter-document ol {
-    margin: 0 0 12pt 20pt;
-    padding: 0;
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .letter-document li {
-    margin: 0 0 6pt 0;
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .letter-document a {
-    color: #1d4ed8;
-    text-decoration: underline;
-    word-break: break-word;
-  }
-`;
 
 const createLetterRunId = () => {
   if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -329,7 +282,6 @@ export default function WritingDeskClient() {
   const [letterError, setLetterError] = useState<string | null>(null);
   const [letterEvents, setLetterEvents] = useState<Array<{ id: string; text: string }>>([]);
   const [letterStatusMessage, setLetterStatusMessage] = useState<string | null>(null);
-  const [letterCopyState, setLetterCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [letterRemainingCredits, setLetterRemainingCredits] = useState<number | null>(null);
   const [letterReasoningVisible, setLetterReasoningVisible] = useState(true);
   const [letterMetadata, setLetterMetadata] = useState<WritingDeskLetterPayload | null>(null);
@@ -343,8 +295,6 @@ export default function WritingDeskClient() {
   const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
   const [initialFollowUpsConfirmOpen, setInitialFollowUpsConfirmOpen] = useState(false);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
-  const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
   const letterJsonBufferRef = useRef<string>('');
   const lastLetterEventRef = useRef<number>(0);
@@ -406,69 +356,6 @@ export default function WritingDeskClient() {
       cancelled = true;
     };
   }, [hasHandledInitialJob, letterMetadata?.responseId, letterResponseId]);
-
-  const letterHtmlForExport = useMemo(() => {
-    if (typeof letterContentHtml !== 'string' || letterContentHtml.trim().length === 0) {
-      return '<p>No content available.</p>';
-    }
-    return letterContentHtml;
-  }, [letterContentHtml]);
-
-  const letterDocumentBodyHtml = useMemo(
-    () => `<div class="letter-document">${letterHtmlForExport}</div>`,
-    [letterHtmlForExport],
-  );
-
-  const letterDocxHtml = useMemo(
-    () =>
-      `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-${LETTER_DOCUMENT_CSS}
-</style>
-</head>
-<body>
-${letterDocumentBodyHtml}
-</body>
-</html>`,
-    [letterDocumentBodyHtml],
-  );
-
-  const resolveDownloadFilename = useCallback(
-    (extension: 'pdf' | 'docx') => {
-      const mpName =
-        typeof letterMetadata?.mpName === 'string' ? letterMetadata.mpName.trim() : '';
-      const dateValue =
-        typeof letterMetadata?.date === 'string' && letterMetadata.date.trim().length > 0
-          ? letterMetadata.date.trim()
-          : new Date().toISOString().slice(0, 10);
-      const baseParts = [mpName, dateValue].filter((part) => part.length > 0);
-      const baseRaw = baseParts.join('-') || 'mp-letter';
-      const slug = baseRaw
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-      const safeBase = slug.length > 0 ? slug : 'mp-letter';
-      return `${safeBase}.${extension}`;
-    },
-    [letterMetadata],
-  );
-
-  const triggerBlobDownload = useCallback((blob: Blob, filename: string) => {
-    if (typeof window === 'undefined') return;
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 0);
-  }, []);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
   const followUpCreditCost = 0.1;
@@ -532,7 +419,6 @@ ${letterDocumentBodyHtml}
     setLetterError(null);
     setLetterEvents([]);
     setLetterStatusMessage(null);
-    setLetterCopyState('idle');
     setLetterRemainingCredits(null);
     setLetterReasoningVisible(true);
     setLetterMetadata(null);
@@ -673,10 +559,6 @@ ${letterDocumentBodyHtml}
       closeLetterStream();
     };
   }, [closeLetterStream]);
-
-  useEffect(() => {
-    setLetterCopyState('idle');
-  }, [letterContentHtml]);
 
   const generatingMessage = `Generating follow-up questions${'.'.repeat((ellipsisCount % 5) + 1)}`;
 
@@ -906,7 +788,6 @@ ${letterDocumentBodyHtml}
       setLetterResponseId(null);
       setLetterRawJson(null);
       setLetterRemainingCredits(null);
-      setLetterCopyState('idle');
       setLetterReasoningVisible(true);
       setLetterMetadata(null);
       setLetterSaveError(null);
@@ -1066,7 +947,6 @@ ${letterDocumentBodyHtml}
       setLetterError(null);
       setSelectedTone(tone);
       setLetterEvents([]);
-      setLetterCopyState('idle');
       setLetterRemainingCredits(null);
       setLetterReasoningVisible(true);
       letterJsonBufferRef.current = '';
@@ -1115,7 +995,6 @@ ${letterDocumentBodyHtml}
     setLetterStatusMessage('Reconnecting to your letter…');
     setLetterError(null);
     setLetterEvents([]);
-    setLetterCopyState('idle');
     setLetterRemainingCredits(null);
     setLetterReasoningVisible(true);
     letterJsonBufferRef.current = '';
@@ -1305,7 +1184,6 @@ ${letterDocumentBodyHtml}
         setLetterReasoningVisible(true);
         setLetterMetadata(null);
         setLetterEvents([]);
-        setLetterCopyState('idle');
         setLetterPendingAutoResume(true);
       } else if (nextLetterStatus === 'error') {
         setLetterContentHtml(resolvedLetterContent);
@@ -1918,97 +1796,6 @@ ${letterDocumentBodyHtml}
     showToast,
   ]);
 
-  const handleCopyLetter = useCallback(async () => {
-    if (!letterContentHtml) {
-      setLetterCopyState('error');
-      return;
-    }
-    try {
-      if (typeof window !== 'undefined' && 'ClipboardItem' in window && navigator.clipboard && 'write' in navigator.clipboard) {
-        const htmlBlob = new Blob([letterContentHtml], { type: 'text/html' });
-        const plainText = letterHtmlToPlainText(letterContentHtml);
-        const textBlob = new Blob([plainText], { type: 'text/plain' });
-        const item = new (window as any).ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob });
-        await (navigator.clipboard as any).write([item]);
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(letterHtmlToPlainText(letterContentHtml));
-      } else {
-        throw new Error('Clipboard API not available');
-      }
-      setLetterCopyState('copied');
-    } catch (error) {
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(letterHtmlToPlainText(letterContentHtml));
-          setLetterCopyState('copied');
-          return;
-        }
-      } catch {
-        // ignore nested failure
-      }
-      setLetterCopyState('error');
-    }
-  }, [letterContentHtml]);
-
-  const handleDownloadDocx = useCallback(async () => {
-    if (isDownloadingDocx || typeof window === 'undefined') return;
-    setIsDownloadingDocx(true);
-    try {
-      const htmlDocxModule = await import('html-docx-js/dist/html-docx.js');
-      const htmlDocx = (htmlDocxModule.default ?? htmlDocxModule) as { asBlob: (input: string) => Blob };
-      const blob = htmlDocx.asBlob(letterDocxHtml);
-      triggerBlobDownload(blob, resolveDownloadFilename('docx'));
-    } catch (error) {
-      console.error('Failed to generate DOCX export', error);
-    } finally {
-      setIsDownloadingDocx(false);
-    }
-  }, [isDownloadingDocx, letterDocxHtml, resolveDownloadFilename, triggerBlobDownload]);
-
-  const handleDownloadPdf = useCallback(async () => {
-    if (isDownloadingPdf || typeof window === 'undefined') return;
-    setIsDownloadingPdf(true);
-    const container = document.createElement('div');
-    let appended = false;
-    try {
-      container.style.position = 'fixed';
-      container.style.left = '-9999px';
-      container.style.top = '0';
-      container.style.width = '210mm';
-      container.style.padding = '0';
-      container.style.margin = '0';
-      container.style.background = '#ffffff';
-      container.style.zIndex = '-1';
-      container.setAttribute('aria-hidden', 'true');
-      container.innerHTML = `<style>${LETTER_DOCUMENT_CSS}</style>${letterDocumentBodyHtml}`;
-      document.body.appendChild(container);
-      appended = true;
-      const target = container.querySelector('.letter-document') as HTMLElement | null;
-      if (!target) {
-        throw new Error('Unable to locate letter content for export');
-      }
-      const html2pdfModule = (await import('html2pdf.js')) as any;
-      const html2pdf = html2pdfModule.default ?? html2pdfModule;
-      await html2pdf()
-        .set({
-          margin: [15, 15, 15, 15],
-          filename: resolveDownloadFilename('pdf'),
-          pagebreak: { mode: ['css', 'legacy'] },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        })
-        .from(target)
-        .save();
-    } catch (error) {
-      console.error('Failed to generate PDF export', error);
-    } finally {
-      if (appended && container.parentNode) {
-        container.parentNode.removeChild(container);
-      }
-      setIsDownloadingPdf(false);
-    }
-  }, [isDownloadingPdf, letterDocumentBodyHtml, resolveDownloadFilename]);
-
   return (
     <>
       <StartOverConfirmModal
@@ -2597,67 +2384,51 @@ ${letterDocumentBodyHtml}
                 {letterResponseId && (
                   <p style={{ marginTop: 4, fontSize: '0.85rem', color: '#6b7280' }}>Letter reference ID: {letterResponseId}</p>
                 )}
-                <div
-                  className="letter-preview"
-                  style={{ marginTop: 16 }}
-                  dangerouslySetInnerHTML={{ __html: letterContentHtml || '<p>No content available.</p>' }}
-                />
-                <div className="actions" style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={handleSaveLetter}
-                    disabled={
-                      isSavingLetter ||
-                      !letterResponseId ||
-                      !letterMetadata ||
-                      !letterContentHtml ||
-                      (savedLetterResponseId !== null && savedLetterResponseId === letterResponseId)
+                <div style={{ marginTop: 16 }}>
+                  <LetterViewer
+                    letterHtml={letterContentHtml}
+                    metadata={letterMetadata}
+                    leadingActions={
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={handleSaveLetter}
+                        disabled={
+                          isSavingLetter ||
+                          !letterResponseId ||
+                          !letterMetadata ||
+                          !letterContentHtml ||
+                          (savedLetterResponseId !== null && savedLetterResponseId === letterResponseId)
+                        }
+                        aria-busy={isSavingLetter}
+                      >
+                        {isSavingLetter
+                          ? 'Saving…'
+                          : savedLetterResponseId === letterResponseId
+                            ? 'Saved to my letters'
+                            : 'Save to my letters'}
+                      </button>
                     }
-                    aria-busy={isSavingLetter}
-                  >
-                    {isSavingLetter
-                      ? 'Saving…'
-                      : savedLetterResponseId === letterResponseId
-                        ? 'Saved to my letters'
-                        : 'Save to my letters'}
-                  </button>
-                  <button type="button" className="btn-primary" onClick={handleCopyLetter}>
-                    {letterCopyState === 'copied' ? 'Copied!' : letterCopyState === 'error' ? 'Copy failed — try again' : 'Copy for email'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={handleDownloadPdf}
-                    disabled={isDownloadingPdf}
-                    aria-busy={isDownloadingPdf}
-                  >
-                    {isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={handleDownloadDocx}
-                    disabled={isDownloadingDocx}
-                    aria-busy={isDownloadingDocx}
-                  >
-                    {isDownloadingDocx ? 'Preparing DOCX...' : 'Download DOCX'}
-                  </button>
-                  <button type="button" className="btn-secondary" onClick={handleRequestRecompose}>
-                    Recompose this letter
-                  </button>
-                  <button 
-                    type="button" 
-                    className="btn-secondary" 
-                    onClick={handleRequestExit}
-                    style={{ 
-                      backgroundColor: '#fee2e2', 
-                      color: '#991b1b', 
-                      border: '1px solid #fecaca' 
-                    }}
-                  >
-                    Exit writing desk
-                  </button>
+                    trailingActions={
+                      <>
+                        <button type="button" className="btn-secondary" onClick={handleRequestRecompose}>
+                          Recompose this letter
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={handleRequestExit}
+                          style={{
+                            backgroundColor: '#fee2e2',
+                            color: '#991b1b',
+                            border: '1px solid #fecaca'
+                          }}
+                        >
+                          Exit writing desk
+                        </button>
+                      </>
+                    }
+                  />
                 </div>
                 {letterSaveError && (
                   <p role="alert" aria-live="polite" style={{ marginTop: 8, color: '#b91c1c' }}>
