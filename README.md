@@ -44,6 +44,9 @@ Auth & API (Backend)
 - Current user: `GET /api/auth/me` (Authorization: `Bearer <token>`)
 - Purchases: `GET /api/purchases`, `POST /api/purchases`, `GET /api/purchases/:id`
 - OpenAI: `POST /api/ai/generate` (Authorization required)
+- Saved letters: `GET /api/user/saved-letters` (Authorization required) — optional query
+  params `from`, `to`, `page`, `pageSize`; responds with `{ data, total, page, pageSize }`
+  so the UI can paginate saved correspondence.
 
 Persisting a User's MP
 - Model: separate collection `user_mps` keyed by `user` (ObjectId). See `backend-api/src/user-mp/schemas/user-mp.schema.ts`.
