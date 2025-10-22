@@ -13,9 +13,7 @@ export default function Hero() {
             <p className="fineprint mobile-only">
               <a className="micro-link" href="/how-it-works">How it works</a>
             </p>
-            <p className="fineprint">
-              Login is secure and simple with a Google account.
-            </p>
+            <p className="fineprint">Sign in securely with Google — we use it only to verify you.</p>
           </div>
         </div>
         <div className="hero-graphic" aria-hidden>
@@ -25,7 +23,7 @@ export default function Hero() {
 
       <div className="value-callout" role="note" aria-label="Key benefits">
         <p className="value-1"><strong>Most of us never write to our MP.</strong></p>
-        <p className="value-2">For years, writing to your MP meant long hours researching, drafting, and editing — often leaving important issues unspoken. MP Writer changes that. By combining AI-powered research with clear, structured drafting, it gives you the ability to share perfectly articulated, evidence-based letters in minutes. All you need to do is tell us what matters to you — we’ll handle the heavy lifting, so your voice reaches Parliament with clarity and impact.</p>
+        <p className="value-2">For years, writing to your MP meant hours of digging for facts, drafting, and editing — so important issues often went unspoken. MP Writer changes that. We pair AI-powered research with a clear drafting flow so you can deliver a persuasive, evidence-backed letter in minutes. Share what matters and we’ll surface the facts, shape the message, and help it land with impact.</p>
         <p className="value-3"><strong>One credit = One letter.</strong></p>
       </div>
 
@@ -35,7 +33,7 @@ export default function Hero() {
           <div className="step-icon" aria-hidden>1</div>
           <div>
             <div className="step-title">Look up your MP</div>
-            <div className="step-sub">We'll find your MP for you from your address.</div>
+            <div className="step-sub">Enter your postcode and we’ll identify your constituency MP.</div>
           </div>
         </div>
         {/* Step 2 */}
@@ -43,7 +41,7 @@ export default function Hero() {
           <div className="step-icon" aria-hidden>2</div>
           <div>
             <div className="step-title">Describe your issue</div>
-            <div className="step-sub">Tell us what matters to you.</div>
+            <div className="step-sub">Tell us what you want to raise and share any helpful context.</div>
           </div>
         </div>
         {/* Step 3 */}
@@ -51,7 +49,7 @@ export default function Hero() {
           <div className="step-icon" aria-hidden>3</div>
           <div>
             <div className="step-title">Select your tone</div>
-            <div className="step-sub">Choose a tone that fits your message.</div>
+            <div className="step-sub">Choose from formal, empathetic, urgent, and other tones.</div>
           </div>
         </div>
         {/* Step 4 */}
@@ -59,15 +57,15 @@ export default function Hero() {
           <div className="step-icon" aria-hidden>4</div>
           <div>
             <div className="step-title">Get your letter</div>
-            <div className="step-sub">AI crafts drafts with citations, ready to send.</div>
+            <div className="step-sub">Receive a polished draft with citations and a clear ask.</div>
           </div>
         </div>
         {/* Step 5 */}
         <div className="step">
           <div className="step-icon" aria-hidden>5</div>
           <div>
-            <div className="step-title">Upload supporting documents for research (coming soon)</div>
-            <div className="step-sub">Add your own supporting documents to enhance and aid the research on your issue.</div>
+            <div className="step-title">Upload supporting documents (coming soon)</div>
+            <div className="step-sub">Attach background papers to guide the research once this launches.</div>
           </div>
         </div>
 

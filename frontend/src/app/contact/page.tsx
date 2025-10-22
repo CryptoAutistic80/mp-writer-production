@@ -9,7 +9,7 @@ export default function ContactPage() {
             <a className="micro-link" href="mailto:james@sshiftgpt.com">
               james@sshiftgpt.com
             </a>
-            .
+            . We aim to respond within one working day.
           </p>
 
           <div style={{ marginTop: 24 }}>
