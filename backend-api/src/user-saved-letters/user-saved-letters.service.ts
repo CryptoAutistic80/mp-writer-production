@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { FilterQuery, Model } from 'mongoose';
 import { SaveLetterDto, SavedLetterMetadataDto } from './dto/save-letter.dto';
 import { UserSavedLetter } from './schemas/user-saved-letter.schema';
 import { EncryptionService } from '../crypto/encryption.service';
+import { ListSavedLettersDto } from './dto/list-saved-letters.dto';
 
 export type SavedLetterMetadata = SavedLetterMetadataDto;
 
@@ -17,6 +18,13 @@ export interface UserSavedLetterResource {
   rawJson: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UserSavedLettersListResult {
+  data: UserSavedLetterResource[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 @Injectable()
@@ -74,6 +82,42 @@ export class UserSavedLettersService {
       .lean()
       .exec();
     return docs.map((doc) => this.toResource(doc));
+  }
+
+  async findByDateRange(userId: string, options: ListSavedLettersDto): Promise<UserSavedLettersListResult> {
+    const page = Math.max(1, Math.floor(options?.page ?? 1));
+    const pageSize = Math.min(100, Math.max(1, Math.floor(options?.pageSize ?? 20)));
+    const skip = (page - 1) * pageSize;
+
+    const query: FilterQuery<UserSavedLetter> = { user: userId };
+    const createdAt: { $gte?: Date; $lte?: Date } = {};
+    if (options?.from) {
+      createdAt.$gte = options.from;
+    }
+    if (options?.to) {
+      createdAt.$lte = options.to;
+    }
+    if (createdAt.$gte || createdAt.$lte) {
+      query.createdAt = createdAt as any;
+    }
+
+    const [documents, total] = await Promise.all([
+      this.model
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean()
+        .exec(),
+      this.model.countDocuments(query).exec(),
+    ]);
+
+    return {
+      data: documents.map((doc) => this.toResource(doc)),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   private toResource(doc: any): UserSavedLetterResource {
