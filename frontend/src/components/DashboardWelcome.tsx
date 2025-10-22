@@ -17,11 +17,11 @@ export default function DashboardWelcome({ firstName, credits }: Props) {
       <div className="container dashboard-welcome">
         <div className="welcome-copy">
           <h2 className="section-title">Welcome to your dashboard {firstName}!</h2>
-          <p>Please enter your postcode below to locate your MP and select your address.</p>
-          <p>Then you are ready to write your letter!</p>
+          <p>Start by saving your postcode so we can locate your MP and fill in their contact details automatically.</p>
+          <p>Next, confirm the address you want to use on letters — then you’re ready to draft.</p>
           <p>
             <em className="fineprint">
-              (Saved addresses and telephone numbers are encrypted so only you can read them. Singularity Shift Ltd does not access or use these details.)
+              (Saved addresses and telephone numbers are encrypted so only you can read them. Singularity Shift Ltd never accesses or reuses these details.)
             </em>
           </p>
         </div>

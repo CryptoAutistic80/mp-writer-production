@@ -8,7 +8,7 @@ export default function HowItWorksPage() {
           <p style={{ marginTop: 12, color: '#64748b' }}>
             Tell us your issue, answer a few clarifying questions, and we’ll research
             the facts and compose a clear, respectful letter to your MP — complete with
-            citable sources and a concrete request for action.
+            citable sources and a concrete request for action. Most letters are ready in minutes.
           </p>
 
           <div className="stepper" style={{ marginTop: 24 }}>
@@ -18,9 +18,9 @@ export default function HowItWorksPage() {
               <div>
                 <div className="step-title">Share your issue</div>
                 <div className="step-sub">
-                  In a sentence or two, describe what you want to write about —
-                  anything from local services to national policy. If you already
-                  have context or a link, include it.
+                  In a couple of sentences, explain what you want to raise —
+                  anything from local services to national policy. Add any links or
+                  background you already have so we can hit the ground running.
                 </div>
               </div>
             </div>
@@ -31,9 +31,9 @@ export default function HowItWorksPage() {
               <div>
                 <div className="step-title">Answer follow‑up questions</div>
                 <div className="step-sub">
-                  We’ll ask a few focused questions (2–4) to nail down the key
+                  We’ll ask a few focused prompts (usually 2–4) to capture the key
                   details: who’s affected, what’s happening, why it matters to you,
-                  and the outcome you want. This keeps your message specific and effective.
+                  and the action you want. Clear answers here make the letter specific and effective.
                 </div>
               </div>
             </div>
@@ -44,10 +44,9 @@ export default function HowItWorksPage() {
               <div>
                 <div className="step-title">Research with citable sources</div>
                 <div className="step-sub">
-                  Using state‑of‑the‑art AI, we scan reputable sources to surface
-                  relevant facts and figures. We prioritise official publications and
-                  trusted outlets — and we include the citations so your MP can verify
-                  the evidence.
+                  Using state‑of‑the‑art AI, we scan reputable sources for supporting
+                  facts and figures. We prioritise official publications and trusted
+                  outlets — and we include the citations so your MP can verify the evidence quickly.
                 </div>
               </div>
             </div>
@@ -60,7 +59,7 @@ export default function HowItWorksPage() {
                 <div className="step-sub">
                   We draft a concise, respectful letter in your chosen tone. It explains
                   the issue, summarises the evidence, and clearly states the resolution or
-                  action you’re seeking — making it easy for your MP’s office to respond.
+                  action you’re seeking — making it straightforward for your MP’s office to respond.
                 </div>
               </div>
             </div>
@@ -72,7 +71,7 @@ export default function HowItWorksPage() {
             <p className="value-1"><strong>What you get</strong></p>
             <p className="value-2">
               A well‑structured, fact‑checked letter with citations, ready to send.
-              It’s designed to be clear, constructive, and easy for a caseworker to action.
+              Each draft includes a summary, evidence links, and a clear call to action so a caseworker can act quickly.
             </p>
             <p className="value-3"><strong>One credit = one research & draft.</strong> Buy only what you use.</p>
           </div>
@@ -80,8 +79,8 @@ export default function HowItWorksPage() {
           <div className="copy">
             <p className="emph">Privacy & security</p>
             <p>
-              Sign‑in is via Google; we don’t post anywhere on your behalf. Your
-              drafts and inputs are used only to create your letter.
+              Sign in with Google — we never post on your behalf. Your drafts and inputs stay in your account and are used only
+              to create your letters.
             </p>
           </div>
         </div>
