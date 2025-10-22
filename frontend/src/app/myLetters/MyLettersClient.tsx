@@ -148,7 +148,9 @@ export default function MyLettersClient() {
 
   const arrowButtonStyle: CSSProperties = {
     backgroundColor: '#eff6ff',
-    border: '1px solid #bfdbfe',
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: '#bfdbfe',
     borderRadius: 9999,
     color: '#1d4ed8',
     cursor: 'pointer',
