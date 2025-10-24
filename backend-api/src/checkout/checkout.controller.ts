@@ -4,18 +4,21 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CheckoutService } from './checkout.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { ConfirmCheckoutSessionDto } from './dto/confirm-checkout-session.dto';
+import { ThrottleCredit, ThrottleWebhook } from '../common/decorators/throttle.decorators';
 
 @Controller('checkout')
 export class CheckoutController {
   constructor(private readonly checkout: CheckoutService) {}
 
   @UseGuards(JwtAuthGuard)
+  @ThrottleCredit()
   @Post('session')
   createSession(@Req() req: any, @Body() body: CreateCheckoutSessionDto) {
     return this.checkout.createSession(req.user, body.credits);
   }
 
   @UseGuards(JwtAuthGuard)
+  @ThrottleCredit()
   @Post('confirm')
   confirm(@Req() req: any, @Body() body: ConfirmCheckoutSessionDto) {
     return this.checkout.confirmSession(req.user, body.sessionId);
@@ -31,7 +34,7 @@ export class CheckoutController {
    * Stripe webhook endpoint
    * Note: This must NOT use body parsing middleware - we need the raw body
    */
-  @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute for webhooks
+  @ThrottleWebhook()
   @Post('webhook')
   async handleWebhook(
     @Headers('stripe-signature') signature: string,

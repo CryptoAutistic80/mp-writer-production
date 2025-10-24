@@ -112,7 +112,28 @@ function validateConfig(config: Record<string, unknown>) {
       validate: validateConfig,
     }),
     TerminusModule,
-    ThrottlerModule.forRoot([{ ttl: 60, limit: 60 }]),
+    ThrottlerModule.forRoot([
+      { 
+        name: 'default',
+        ttl: 60, 
+        limit: 60 
+      },
+      {
+        name: 'ai',
+        ttl: 300, // 5 minutes
+        limit: 5
+      },
+      {
+        name: 'credit',
+        ttl: 600, // 10 minutes
+        limit: 10
+      },
+      {
+        name: 'webhook',
+        ttl: 60, // 1 minute
+        limit: 10
+      }
+    ]),
     MongooseModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
