@@ -1,27 +1,10 @@
 services:
-  mongo:
-    image: mongo:6
-    restart: always
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 5s
-
   backend-api:
     build:
       context: .
       dockerfile: backend-api/Dockerfile
-    depends_on:
-      mongo:
-        condition: service_healthy
     environment:
-      - MONGO_URI=mongodb://mongo:27017/mp_writer
+      - MONGO_URI=${MONGO_URI:?MONGO_URI is required}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - PORT=4000
       - APP_ORIGIN=http://localhost:3000
@@ -74,6 +57,3 @@ services:
       - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
     ports:
       - "3000:3000"
-
-volumes:
-  mongo_data:

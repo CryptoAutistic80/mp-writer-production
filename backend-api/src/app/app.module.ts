@@ -79,7 +79,7 @@ function validateConfig(config: Record<string, unknown>) {
     MongooseModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        uri: config.get<string>('MONGO_URI', 'mongodb://localhost:27017/mp_writer'),
+        uri: config.getOrThrow<string>('MONGO_URI'),
       }),
     }),
     NestModulesModule,

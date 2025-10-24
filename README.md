@@ -5,18 +5,17 @@ Project skeleton generated with Nx (Next.js + NestJS) following the instructions
 Quick Start
 - Install Node.js 20+ and Docker
 - From the workspace root `mp-writer/`:
-  - Dev: First start MongoDB, then run backend and frontend in separate terminals:
-    - Terminal 1 (MongoDB): `docker compose up mongo`
-    - Terminal 2 (Backend): `PORT=4000 npx nx serve backend-api`
-    - Terminal 3 (Frontend): `npx nx dev frontend` (runs on default port 3000)
+  - Dev: Ensure `.env` has `MONGO_URI` pointing to your persistent Atlas cluster, then run backend and frontend in separate terminals:
+    - Terminal 1 (Backend): `PORT=4000 npx nx serve backend-api`
+    - Terminal 2 (Frontend): `npx nx dev frontend` (runs on default port 3000)
   - Build: `npx nx build backend-api` and `npx nx build frontend`
-  - Docker Compose (Mongo + API + Frontend): `docker compose up --build`
+  - Docker Compose (API + Frontend against Atlas): `docker compose up --build`
   - Tests:
     - Frontend: `npx jest --config frontend/jest.config.js`
     - Backend API: `npx jest --config backend-api/jest.config.js`
 
 Environment
-- `MONGO_URI`: defaults to `mongodb://localhost:27017/mp_writer` when not set
+- `MONGO_URI`: required; set to your production Atlas connection string
 - `JWT_SECRET`: required for JWT issuance
 - `APP_ORIGIN`: frontend origin for CORS (e.g., `http://localhost:3000`)
 - Google OAuth: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
@@ -34,10 +33,7 @@ Notes
 
 Readiness & Health
 - `/api/health`: Nest Terminus endpoint reports Mongo connectivity.
-- Docker Compose:
-  - `mongo` has a `healthcheck` using `mongosh ping`.
-  - `backend-api` waits for `mongo` healthy and has its own HTTP healthcheck.
-  - `frontend` waits for `backend-api` to be healthy.
+- Docker Compose: `backend-api` and `frontend` services only; provide `MONGO_URI` via environment for Atlas access.
 
 Auth & API (Backend)
 - Google Sign-in: `GET /api/auth/google` then `GET /api/auth/google/callback`
