@@ -34,17 +34,29 @@ export class AuthController {
     const id = typeof rawId === 'string' ? rawId : rawId?.toString?.();
     const token = await this.auth.signJwt({ id, email: user.email });
 
-    // Issue HttpOnly session cookie
+    // Issue HttpOnly session cookie with __Host- prefix for enhanced security
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
     const isSecure = appOrigin.startsWith('https://');
     const threeHoursMs = 3 * 60 * 60 * 1000;
-    res.cookie('mpw_session', token.access_token, {
+    
+    // For development with proxy setup, we need to set cookie for the frontend domain
+    // In production, this should be the same domain
+    const cookieOptions = {
       httpOnly: true,
       secure: isSecure,
-      sameSite: 'lax',
+      sameSite: 'lax' as const,
       maxAge: threeHoursMs,
       path: '/',
-    });
+    };
+    
+    // In development, if we're proxying through Next.js, set domain to work with localhost:3000
+    if (appOrigin.includes('localhost:3000') && !isSecure) {
+      // Remove __Host- prefix in development to allow cross-port cookies
+      res.cookie('mpw_session', token.access_token, cookieOptions);
+    } else {
+      // Production: use __Host- prefix for security
+      res.cookie('__Host-mpw_session', token.access_token, cookieOptions);
+    }
 
     // Best-practice: redirect back to app — default to dashboard
     let target = appOrigin.replace(/\/$/, '') + '/dashboard';
@@ -102,7 +114,17 @@ export class AuthController {
   async logout(@Res() res: Response) {
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
     const isSecure = appOrigin.startsWith('https://');
-    res.clearCookie('mpw_session', { httpOnly: true, secure: isSecure, sameSite: 'lax', path: '/' });
+    const cookieOptions = { 
+      httpOnly: true, 
+      secure: isSecure, 
+      sameSite: 'lax' as const, 
+      path: '/' 
+    };
+    
+    // Clear both possible cookie names (development and production)
+    res.clearCookie('mpw_session', cookieOptions);
+    res.clearCookie('__Host-mpw_session', cookieOptions);
+    
     return res.redirect(appOrigin);
   }
 }
