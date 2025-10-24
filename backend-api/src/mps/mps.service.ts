@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 
 interface LookupResult {
   constituency: string;
@@ -27,12 +27,12 @@ export class MpsService {
     // First: fetch constituency via postcodes.io
     const pcRes = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`);
     if (!pcRes.ok) {
-      throw new Error('POSTCODE_NOT_FOUND');
+      throw new NotFoundException('Postcode not found. Please check the postcode and try again.');
     }
     const pcJson: any = await pcRes.json();
     const constituency: string | undefined = pcJson?.result?.parliamentary_constituency;
     if (!constituency) {
-      throw new Error('CONSTITUENCY_NOT_FOUND');
+      throw new NotFoundException('No parliamentary constituency found for this postcode.');
     }
 
     // Second: look up current MP via UK Parliament Members API

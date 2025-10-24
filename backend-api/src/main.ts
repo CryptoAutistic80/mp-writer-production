@@ -8,11 +8,15 @@ import helmet from 'helmet';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app/app.module';
 import { json, urlencoded, Request, Response, NextFunction } from 'express';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
+  
+  // Global exception filter to sanitize error messages
+  app.useGlobalFilters(new AllExceptionsFilter());
   
   // Stripe webhook requires raw body, but other routes need parsed JSON
   // We'll apply JSON parsing conditionally

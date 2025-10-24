@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, MessageEvent } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, MessageEvent, InternalServerErrorException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
@@ -1165,7 +1165,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       );
       
-      throw new Error('Letter composition ended unexpectedly. Please try again in a few moments.');
+      throw new ServiceUnavailableException('Letter composition ended unexpectedly. Please try again in a few moments.');
     } catch (error) {
       if (deductionApplied) {
         await this.refundCredits(userId, LETTER_CREDIT_COST);
@@ -1585,7 +1585,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               case 'response.failed':
               case 'response.incomplete': {
                 const errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
-                throw new Error(errorMessage);
+                throw new ServiceUnavailableException('Deep research failed. Please try again later.');
               }
               case 'response.completed': {
                 const finalResponse = event.response;
@@ -1718,7 +1718,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       if (!_settled) {
         if (!responseId) {
-          throw new Error('Deep research stream ended before a response id was available');
+          throw new ServiceUnavailableException('Deep research stream ended unexpectedly. Please try again.');
         }
 
         this.logger.warn(
@@ -1859,14 +1859,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
 
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new Error('Timed out waiting for deep research to finish');
+          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
         }
       } catch (error) {
         if (error instanceof Error && error.message.includes('Timed out waiting')) {
           throw error;
         }
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new Error('Timed out waiting for deep research to finish');
+          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
         }
         this.logger.warn(
           `[writing-desk research] failed to retrieve background response ${responseId}: ${
@@ -2786,7 +2786,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     try {
       const parsed = JSON.parse(text) as WritingDeskLetterResult;
       if (!parsed || typeof parsed !== 'object') {
-        throw new Error('Letter response was not an object');
+        throw new InternalServerErrorException('Letter response was not in the expected format.');
       }
       return this.normaliseLetterResultTypography({
         mp_name: parsed.mp_name ?? '',
@@ -2809,7 +2809,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         references: Array.isArray(parsed.references) ? parsed.references : [],
       });
     } catch (error) {
-      throw new Error(`Failed to parse letter JSON: ${(error as Error)?.message ?? error}`);
+      throw new InternalServerErrorException('Failed to parse letter response. Please try again.');
     }
   }
 
