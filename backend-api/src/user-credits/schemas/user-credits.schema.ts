@@ -10,7 +10,7 @@ export class UserCredits {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true, unique: true, index: true })
   user!: string;
 
-  @Prop({ required: true, default: 0 })
+  @Prop({ required: true, default: 0, min: 0 })
   credits!: number;
 }
 

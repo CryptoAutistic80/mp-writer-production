@@ -1,10 +1,12 @@
 import { InjectModel } from '@nestjs/mongoose';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Model } from 'mongoose';
 import { UserCredits } from './schemas/user-credits.schema';
 
 @Injectable()
 export class UserCreditsService {
+  private readonly logger = new Logger(UserCreditsService.name);
+
   constructor(
     @InjectModel(UserCredits.name) private readonly userCreditsModel: Model<UserCredits>,
   ) {}
@@ -38,6 +40,10 @@ export class UserCreditsService {
   async deductFromMine(userId: string, amount: number) {
     const roundedAmount = this.normaliseAmount(amount);
     if (roundedAmount <= 0) return this.getMine(userId);
+    
+    // Atomic deduction with proper error handling
+    // The query condition ensures credits >= amount BEFORE deduction
+    // This is atomic in MongoDB, preventing race conditions
     const updated = await this.userCreditsModel
       .findOneAndUpdate(
         { user: userId, credits: { $gte: roundedAmount } },
@@ -45,7 +51,20 @@ export class UserCreditsService {
         { new: true }
       )
       .lean();
-    if (!updated) throw new BadRequestException('Insufficient credits');
+    
+    if (!updated) {
+      // Either user doesn't exist or insufficient credits
+      const current = await this.getMine(userId);
+      this.logger.warn(
+        `Credit deduction failed for user ${userId}: requested ${roundedAmount}, available ${current.credits}`
+      );
+      throw new BadRequestException('Insufficient credits');
+    }
+    
+    this.logger.log(
+      `Deducted ${roundedAmount} credits from user ${userId}, new balance: ${this.normaliseCredits(updated.credits)}`
+    );
+    
     return { credits: this.normaliseCredits(updated.credits) };
   }
 

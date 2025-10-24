@@ -30,12 +30,15 @@ export class AddressesService {
     // Single provider: getAddress.io
     if (getAddressKey) {
       const attemptAutocomplete = async (pcParam: string) => {
-        const url = `https://api.getaddress.io/autocomplete/${encodeURIComponent(pcParam)}?api-key=${encodeURIComponent(getAddressKey)}`;
-        const logUrl = `https://api.getaddress.io/autocomplete/${encodeURIComponent(pcParam)}`;
-        if (debug) console.log(`[addresses] GET ${logUrl}`);
-        const res = await fetch(url);
+        const url = `https://api.getaddress.io/autocomplete/${encodeURIComponent(pcParam)}`;
+        if (debug) console.log(`[addresses] GET ${url}`);
+        const res = await fetch(url, {
+          headers: {
+            'api-key': getAddressKey,
+          },
+        });
         if (debug) console.log(`[addresses] <= ${res.status}`);
-        return { res, url: logUrl };
+        return { res, url };
       };
 
       try {
@@ -107,10 +110,13 @@ export async function getAddressById(config: ConfigService, id: string, defaultP
   if (!getAddressKey) return null;
   if (!id) return null;
 
-  const url = `https://api.getaddress.io/get/${encodeURIComponent(id)}?api-key=${encodeURIComponent(getAddressKey)}`;
-  const logUrl = `https://api.getaddress.io/get/${encodeURIComponent(id)}`;
-  if (debug) console.log(`[addresses] GET ${logUrl}`);
-  const res = await fetch(url);
+  const url = `https://api.getaddress.io/get/${encodeURIComponent(id)}`;
+  if (debug) console.log(`[addresses] GET ${url}`);
+  const res = await fetch(url, {
+    headers: {
+      'api-key': getAddressKey,
+    },
+  });
   if (debug) console.log(`[addresses] <= ${res.status}`);
   if (!res.ok) return null;
 

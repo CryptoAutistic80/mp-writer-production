@@ -89,3 +89,6 @@ playwright/.cache/
 
 # Docker local overrides
 docker-compose.override.local.yml
+
+# dev files
+audit.md

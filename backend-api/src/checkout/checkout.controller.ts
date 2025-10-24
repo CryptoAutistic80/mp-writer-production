@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Headers, Post, RawBodyRequest, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Post, RawBodyRequest, Req, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CheckoutService } from './checkout.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
@@ -30,19 +31,20 @@ export class CheckoutController {
    * Stripe webhook endpoint
    * Note: This must NOT use body parsing middleware - we need the raw body
    */
+  @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute for webhooks
   @Post('webhook')
   async handleWebhook(
     @Headers('stripe-signature') signature: string,
     @Req() req: RawBodyRequest<Request>,
   ) {
     if (!signature) {
-      throw new Error('Missing stripe-signature header');
+      throw new BadRequestException('Missing stripe-signature header');
     }
 
     // Access raw body buffer (set up in main.ts)
     const rawBody = req.rawBody;
     if (!rawBody) {
-      throw new Error('Raw body not available');
+      throw new BadRequestException('Raw body not available');
     }
 
     return this.checkout.handleWebhook(signature, rawBody);

@@ -40,6 +40,7 @@ function validateConfig(config: Record<string, unknown>) {
     }
   };
 
+  // Core required variables
   requireString('MONGO_URI');
   requireString('JWT_SECRET', { minLength: 32, forbid: ['changeme'] });
 
@@ -54,11 +55,47 @@ function validateConfig(config: Record<string, unknown>) {
     }
   }
 
+  // OpenAI API key is required for AI operations
+  requireString('OPENAI_API_KEY', { minLength: 20 });
+
+  // Validate APP_ORIGIN format if provided
   const appOrigin = config.APP_ORIGIN;
   if (appOrigin && typeof appOrigin === 'string') {
     if (!/^https?:\/\//i.test(appOrigin)) {
       errors.push('APP_ORIGIN must be an absolute http(s) URL');
     }
+  }
+
+  // Stripe validation - required if checkout is enabled
+  const stripeEnabled = config.STRIPE_CHECKOUT_ENABLED === '1' || config.STRIPE_CHECKOUT_ENABLED === 'true';
+  if (stripeEnabled) {
+    requireString('STRIPE_SECRET_KEY', { minLength: 20 });
+    requireString('STRIPE_WEBHOOK_SECRET', { minLength: 20 });
+    requireString('STRIPE_PRICE_ID_CREDITS_3');
+    requireString('STRIPE_PRICE_ID_CREDITS_5');
+    requireString('STRIPE_PRICE_ID_CREDITS_10');
+    
+    // Validate that stripe keys look correct
+    const stripeKey = config.STRIPE_SECRET_KEY;
+    if (typeof stripeKey === 'string' && !stripeKey.startsWith('sk_')) {
+      errors.push('STRIPE_SECRET_KEY must start with sk_');
+    }
+    const webhookSecret = config.STRIPE_WEBHOOK_SECRET;
+    if (typeof webhookSecret === 'string' && !webhookSecret.startsWith('whsec_')) {
+      errors.push('STRIPE_WEBHOOK_SECRET must start with whsec_');
+    }
+  }
+
+  // Google OAuth validation - if any Google OAuth key is provided, all must be provided
+  const hasGoogleClientId = typeof config.GOOGLE_CLIENT_ID === 'string' && config.GOOGLE_CLIENT_ID.trim().length > 0;
+  const hasGoogleClientSecret = typeof config.GOOGLE_CLIENT_SECRET === 'string' && config.GOOGLE_CLIENT_SECRET.trim().length > 0;
+  const hasGoogleCallback = typeof config.GOOGLE_CALLBACK_URL === 'string' && config.GOOGLE_CALLBACK_URL.trim().length > 0;
+  
+  if (hasGoogleClientId || hasGoogleClientSecret || hasGoogleCallback) {
+    // If any Google OAuth config is provided, all must be provided
+    if (!hasGoogleClientId) errors.push('GOOGLE_CLIENT_ID is required when Google OAuth is configured');
+    if (!hasGoogleClientSecret) errors.push('GOOGLE_CLIENT_SECRET is required when Google OAuth is configured');
+    if (!hasGoogleCallback) errors.push('GOOGLE_CALLBACK_URL is required when Google OAuth is configured');
   }
 
   if (errors.length) {
