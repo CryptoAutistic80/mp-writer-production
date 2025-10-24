@@ -9,6 +9,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { WRITING_DESK_LETTER_TONES } from '../../writing-desk-jobs/writing-desk-jobs.types';
+import { MaxUserInput, MaxAiContent, MaxHtmlContent, MaxJsonContent } from '../../common/decorators/content-validation.decorators';
 
 export class SavedLetterMetadataDto {
   @IsString()
@@ -48,11 +49,12 @@ export class SavedLetterMetadataDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxUserInput()
   subjectLineHtml?: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxAiContent()
   letterContent!: string;
 
   @IsOptional()
@@ -110,7 +112,7 @@ export class SavedLetterMetadataDto {
 
   @IsString()
   @IsNotEmpty()
-  @MaxLength(500000)
+  @MaxJsonContent()
   rawJson!: string;
 }
 
@@ -122,7 +124,7 @@ export class SaveLetterDto {
 
   @IsString()
   @IsNotEmpty()
-  @MaxLength(600000)
+  @MaxHtmlContent()
   letterHtml!: string;
 
   @ValidateNested()

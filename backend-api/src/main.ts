@@ -25,10 +25,10 @@ async function bootstrap() {
       // Skip JSON parsing for webhook - raw body is already available via rawBody: true
       next();
     } else {
-      json({ limit: '10mb' })(req, res, next);
+      json({ limit: '1mb' })(req, res, next);
     }
   });
-  app.use(urlencoded({ extended: true, limit: '10mb' }));
+  app.use(urlencoded({ extended: true, limit: '1mb' }));
   
   app.useGlobalPipes(
     new ValidationPipe({

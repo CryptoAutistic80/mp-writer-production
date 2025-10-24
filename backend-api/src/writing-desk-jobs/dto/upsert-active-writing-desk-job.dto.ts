@@ -20,9 +20,11 @@ import {
   WritingDeskLetterTone,
   WritingDeskResearchStatus,
 } from '../writing-desk-jobs.types';
+import { MaxUserInput, MaxAiContent, MaxResearchContent, MaxJsonContent } from '../../common/decorators/content-validation.decorators';
 
 class WritingDeskJobFormDto {
   @IsString()
+  @MaxUserInput()
   issueDescription!: string;
 }
 
@@ -64,10 +66,12 @@ export class UpsertActiveWritingDeskJobDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
+  @MaxUserInput()
   notes?: string;
 
   @IsOptional()
   @IsString()
+  @MaxResearchContent()
   researchContent?: string;
 
   @IsOptional()
@@ -94,6 +98,7 @@ export class UpsertActiveWritingDeskJobDto {
 
   @IsOptional()
   @IsString()
+  @MaxAiContent()
   letterContent?: string;
 
   @IsOptional()
@@ -103,5 +108,6 @@ export class UpsertActiveWritingDeskJobDto {
 
   @IsOptional()
   @IsString()
+  @MaxJsonContent()
   letterJson?: string;
 }
