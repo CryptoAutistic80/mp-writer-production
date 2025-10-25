@@ -19,8 +19,8 @@ import { UserCreditsModule } from '../user-credits/user-credits.module';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
-        // Session length: 3 hours
-        signOptions: { expiresIn: '3h' },
+        // Access token: 15 minutes (reduced from 3 hours)
+        signOptions: { expiresIn: '15m' },
       }),
     }),
   ],

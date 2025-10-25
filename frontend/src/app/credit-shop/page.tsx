@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { apiClient } from '../../lib/api-client';
 
 type CreditState = {
   credits: number | null;
@@ -49,12 +50,7 @@ export default function CreditShopPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/checkout/packages', { cache: 'no-store' });
-        if (!res.ok) {
-          setPackagesLoading(false);
-          return;
-        }
-        const data = await res.json();
+        const data = await apiClient.get('/api/checkout/packages');
         if (!cancelled && Array.isArray(data) && data.length > 0) {
           setPackages(data);
         }
@@ -76,9 +72,7 @@ export default function CreditShopPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/user/credits', { cache: 'no-store' });
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await apiClient.get('/api/user/credits');
         if (!cancelled && typeof data?.credits === 'number') {
           setState((prev) => ({ ...prev, credits: data.credits }));
         }
@@ -100,13 +94,7 @@ export default function CreditShopPage() {
     }));
     try {
       if (STRIPE_CHECKOUT_ENABLED) {
-        const res = await fetch('/api/checkout/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credits: dealCredits }),
-        });
-        if (!res.ok) throw new Error('Failed to create checkout session');
-        const data = await res.json();
+        const data = await apiClient.post('/api/checkout/session', { credits: dealCredits });
         const url = typeof data?.url === 'string' ? data.url : null;
         if (!url) throw new Error('Checkout session response missing redirect URL');
         window.location.assign(url);

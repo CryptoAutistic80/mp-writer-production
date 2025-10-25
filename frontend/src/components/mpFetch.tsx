@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { apiClient } from '../lib/api-client';
 
 type Lookup = {
   constituency: string;
@@ -41,21 +42,11 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/mps/lookup?postcode=${encodeURIComponent(postcode)}`, { cache: 'no-store' });
-      if (!res.ok) {
-        const text = await res.text().catch(() => 'Lookup failed');
-        throw new Error(text || 'Lookup failed');
-      }
-      const json = (await res.json()) as Lookup;
+      const json = await apiClient.get(`/api/mps/lookup?postcode=${encodeURIComponent(postcode)}`) as Lookup;
       setData(json);
       // Try to persist for signed-in users; ignore failures
       try {
-        await fetch('/api/user/mp', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ constituency: json.constituency, mp: json.mp ?? null }),
-        });
+        await apiClient.put('/api/user/mp', { constituency: json.constituency, mp: json.mp ?? null });
       } catch {}
     } catch (err: any) {
       setError('We couldn\'t find a match for that postcode.');
@@ -74,9 +65,7 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/user/mp', { credentials: 'include', cache: 'no-store' });
-        if (!res.ok) return; // likely unauthenticated or none saved
-        const doc = await res.json();
+        const doc = await apiClient.get('/api/user/mp');
         if (!cancelled && doc && (doc.constituency || doc.mp)) {
           setData({ constituency: doc.constituency, mp: doc.mp });
         }
@@ -103,7 +92,7 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
                 onClick={() => {
                   setError(null);
                   // Clear saved MP server-side if present; ignore result
-                  fetch('/api/user/mp', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+                  apiClient.delete('/api/user/mp').catch(() => {});
                   setData(null);
                   setPostcode('');
                   setTimeout(() => inputRef.current?.focus(), 0);

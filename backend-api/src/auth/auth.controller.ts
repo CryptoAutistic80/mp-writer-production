@@ -34,28 +34,39 @@ export class AuthController {
     const id = typeof rawId === 'string' ? rawId : rawId?.toString?.();
     const token = await this.auth.signJwt({ id, email: user.email });
 
-    // Issue HttpOnly session cookie with __Host- prefix for enhanced security
+    // Issue HttpOnly session cookies with __Host- prefix for enhanced security
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
     const isSecure = appOrigin.startsWith('https://');
-    const threeHoursMs = 3 * 60 * 60 * 1000;
+    const fifteenMinutesMs = 15 * 60 * 1000; // Access token: 15 minutes
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000; // Refresh token: 7 days
     
-    // For development with proxy setup, we need to set cookie for the frontend domain
-    // In production, this should be the same domain
-    const cookieOptions = {
+    // Cookie options for access token (short-lived)
+    const accessCookieOptions = {
       httpOnly: true,
       secure: isSecure,
       sameSite: 'lax' as const,
-      maxAge: threeHoursMs,
+      maxAge: fifteenMinutesMs,
+      path: '/',
+    };
+    
+    // Cookie options for refresh token (long-lived)
+    const refreshCookieOptions = {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'lax' as const,
+      maxAge: sevenDaysMs,
       path: '/',
     };
     
     // In development, if we're proxying through Next.js, set domain to work with localhost:3000
     if (appOrigin.includes('localhost:3000') && !isSecure) {
       // Remove __Host- prefix in development to allow cross-port cookies
-      res.cookie('mpw_session', token.access_token, cookieOptions);
+      res.cookie('mpw_session', token.access_token, accessCookieOptions);
+      res.cookie('mpw_refresh', token.refresh_token, refreshCookieOptions);
     } else {
       // Production: use __Host- prefix for security
-      res.cookie('__Host-mpw_session', token.access_token, cookieOptions);
+      res.cookie('__Host-mpw_session', token.access_token, accessCookieOptions);
+      res.cookie('__Host-mpw_refresh', token.refresh_token, refreshCookieOptions);
     }
 
     // Best-practice: redirect back to app — default to dashboard
@@ -65,6 +76,71 @@ export class AuthController {
       target = appOrigin.replace(/\/$/, '') + returnTo;
     }
     return res.redirect(target);
+  }
+
+  // Refresh access token using refresh token
+  @Get('refresh')
+  async refresh(@Req() req: any, @Res() res: Response) {
+    const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
+    const isSecure = appOrigin.startsWith('https://');
+    
+    // Get refresh token from cookie
+    const refreshToken = req.cookies['mpw_refresh'] || req.cookies['__Host-mpw_refresh'];
+    
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'No refresh token provided' });
+    }
+    
+    try {
+      const tokens = await this.auth.refreshAccessToken(refreshToken);
+      
+      const fifteenMinutesMs = 15 * 60 * 1000; // Access token: 15 minutes
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000; // Refresh token: 7 days
+      
+      // Cookie options for access token (short-lived)
+      const accessCookieOptions = {
+        httpOnly: true,
+        secure: isSecure,
+        sameSite: 'lax' as const,
+        maxAge: fifteenMinutesMs,
+        path: '/',
+      };
+      
+      // Cookie options for refresh token (long-lived)
+      const refreshCookieOptions = {
+        httpOnly: true,
+        secure: isSecure,
+        sameSite: 'lax' as const,
+        maxAge: sevenDaysMs,
+        path: '/',
+      };
+      
+      // Set new cookies
+      if (appOrigin.includes('localhost:3000') && !isSecure) {
+        res.cookie('mpw_session', tokens.access_token, accessCookieOptions);
+        res.cookie('mpw_refresh', tokens.refresh_token, refreshCookieOptions);
+      } else {
+        res.cookie('__Host-mpw_session', tokens.access_token, accessCookieOptions);
+        res.cookie('__Host-mpw_refresh', tokens.refresh_token, refreshCookieOptions);
+      }
+      
+      return res.json({ success: true });
+    } catch (error) {
+      // Clear invalid refresh token cookies
+      const cookieOptions = { 
+        httpOnly: true, 
+        secure: isSecure, 
+        sameSite: 'lax' as const, 
+        path: '/' 
+      };
+      
+      res.clearCookie('mpw_session', cookieOptions);
+      res.clearCookie('mpw_refresh', cookieOptions);
+      res.clearCookie('__Host-mpw_session', cookieOptions);
+      res.clearCookie('__Host-mpw_refresh', cookieOptions);
+      
+      return res.status(401).json({ message: 'Invalid refresh token' });
+    }
   }
 
   // Return current user
@@ -109,7 +185,7 @@ export class AuthController {
     }
   }
 
-  // Logout clears cookie and redirects to app
+  // Logout clears cookies and redirects to app
   @Get('logout')
   async logout(@Res() res: Response) {
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
@@ -121,9 +197,11 @@ export class AuthController {
       path: '/' 
     };
     
-    // Clear both possible cookie names (development and production)
+    // Clear all possible cookie names (development and production, access and refresh)
     res.clearCookie('mpw_session', cookieOptions);
+    res.clearCookie('mpw_refresh', cookieOptions);
     res.clearCookie('__Host-mpw_session', cookieOptions);
+    res.clearCookie('__Host-mpw_refresh', cookieOptions);
     
     return res.redirect(appOrigin);
   }
