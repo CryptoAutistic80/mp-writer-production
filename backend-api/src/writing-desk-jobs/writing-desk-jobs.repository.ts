@@ -39,13 +39,32 @@ export class WritingDeskJobsRepository {
       letterJsonCiphertext: string | null;
     },
   ): Promise<WritingDeskJobRecord> {
+    // Use explicit field-by-field $set for atomic updates
+    // This ensures each field is updated atomically, reducing race condition impact
     const doc = await this.model
       .findOneAndUpdate(
         { userId },
         {
           $set: {
-            ...payload,
             userId,
+            jobId: payload.jobId,
+            phase: payload.phase,
+            stepIndex: payload.stepIndex,
+            followUpIndex: payload.followUpIndex,
+            followUpQuestionsCiphertext: payload.followUpQuestionsCiphertext,
+            formCiphertext: payload.formCiphertext,
+            followUpAnswersCiphertext: payload.followUpAnswersCiphertext,
+            notesCiphertext: payload.notesCiphertext,
+            responseId: payload.responseId,
+            researchContentCiphertext: payload.researchContentCiphertext,
+            researchResponseId: payload.researchResponseId,
+            researchStatus: payload.researchStatus,
+            letterStatus: payload.letterStatus,
+            letterTone: payload.letterTone,
+            letterResponseId: payload.letterResponseId,
+            letterContentCiphertext: payload.letterContentCiphertext,
+            letterReferencesCiphertext: payload.letterReferencesCiphertext,
+            letterJsonCiphertext: payload.letterJsonCiphertext,
           },
         },
         { new: true, upsert: true, setDefaultsOnInsert: true }
