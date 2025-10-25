@@ -140,6 +140,15 @@ function validateConfig(config: Record<string, unknown>) {
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         uri: config.getOrThrow<string>('MONGO_URI'),
+        maxPoolSize: 20,        // Allow up to 20 concurrent connections
+        minPoolSize: 5,         // Keep 5 connections always open
+        maxIdleTimeMS: 30000,   // Close idle connections after 30s
+        serverSelectionTimeoutMS: 5000,  // Fail fast if no server available
+        socketTimeoutMS: 45000, // 45s socket timeout
+        connectTimeoutMS: 10000, // 10s connection timeout
+        heartbeatFrequencyMS: 10000, // Check server health every 10s
+        retryWrites: true,      // Retry failed writes
+        retryReads: true,       // Retry failed reads
       }),
     }),
     NestModulesModule,
