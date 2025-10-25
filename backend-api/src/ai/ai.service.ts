@@ -726,7 +726,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       };
 
-      void attach();
+      attach().catch((error) => {
+        // Handle any unhandled promise rejections from attach()
+        // This should never happen due to try-catch above, but provides defense-in-depth
+        if (!_settled && !subscriber.closed) {
+          subscriber.error(error);
+        }
+      });
 
       return () => {
         subscription?.unsubscribe();
@@ -787,7 +793,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       };
 
-      void attach();
+      attach().catch((error) => {
+        // Handle any unhandled promise rejections from attach()
+        // This should never happen due to try-catch above, but provides defense-in-depth
+        if (!subscriber.closed) {
+          subscriber.error(error);
+        }
+      });
 
       return () => {
         if (subscription) {

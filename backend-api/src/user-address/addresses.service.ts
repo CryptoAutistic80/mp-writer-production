@@ -1,6 +1,6 @@
 import { BadGatewayException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { circuitBreaker, consec, handleAll, timeout, wrap } from 'cockatiel';
+import { circuitBreaker, ConsecutiveBreaker, handleAll, timeout, wrap } from 'cockatiel';
 import { TimeoutStrategy } from 'cockatiel';
 
 export interface NormalizedAddress {
@@ -28,7 +28,7 @@ export class AddressesService {
     timeout(5000, TimeoutStrategy.Aggressive),
     circuitBreaker(handleAll, {
       halfOpenAfter: 30000,
-      breaker: consec(5),
+      breaker: new ConsecutiveBreaker(5),
     })
   );
 

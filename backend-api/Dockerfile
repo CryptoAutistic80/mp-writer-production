@@ -3,7 +3,7 @@ WORKDIR /app
 
 # Install full workspace dependencies for building
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # Copy source and build
 COPY . .
@@ -17,7 +17,7 @@ WORKDIR /app
 COPY --from=builder /app/dist/backend-api ./
 
 # Install only production deps for the pruned app
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 EXPOSE 4000
 ENV PORT=4000 \

@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { circuitBreaker, consec, handleAll, timeout, wrap } from 'cockatiel';
+import { circuitBreaker, ConsecutiveBreaker, handleAll, timeout, wrap } from 'cockatiel';
 import { TimeoutStrategy } from 'cockatiel';
 
 interface LookupResult {
@@ -26,7 +26,7 @@ export class MpsService {
     timeout(5000, TimeoutStrategy.Aggressive),
     circuitBreaker(handleAll, {
       halfOpenAfter: 30000, // 30 seconds
-      breaker: consec(5), // Open after 5 consecutive failures
+      breaker: new ConsecutiveBreaker(5), // Open after 5 consecutive failures
     })
   );
   
@@ -35,7 +35,7 @@ export class MpsService {
     timeout(5000, TimeoutStrategy.Aggressive),
     circuitBreaker(handleAll, {
       halfOpenAfter: 30000,
-      breaker: consec(5),
+      breaker: new ConsecutiveBreaker(5),
     })
   );
   private normalizePostcode(input: string): string {
