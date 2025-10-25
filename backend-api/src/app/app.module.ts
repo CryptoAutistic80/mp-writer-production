@@ -22,6 +22,7 @@ import { EncryptionService } from '../crypto/encryption.service';
 import { WritingDeskJobsModule } from '../writing-desk-jobs/writing-desk-jobs.module';
 import { CheckoutModule } from '../checkout/checkout.module';
 import { UserSavedLettersModule } from '../user-saved-letters/user-saved-letters.module';
+import { StreamingStateModule } from '../streaming-state/streaming-state.module';
 
 function validateConfig(config: Record<string, unknown>) {
   const errors: string[] = [];
@@ -42,6 +43,7 @@ function validateConfig(config: Record<string, unknown>) {
 
   // Core required variables
   requireString('MONGO_URI');
+  requireString('REDIS_URL');
   requireString('JWT_SECRET', { minLength: 32, forbid: ['changeme'] });
 
   const dek = config.DATA_ENCRYPTION_KEY;
@@ -154,6 +156,7 @@ function validateConfig(config: Record<string, unknown>) {
     UserCreditsModule,
     WritingDeskJobsModule,
     UserSavedLettersModule,
+    StreamingStateModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

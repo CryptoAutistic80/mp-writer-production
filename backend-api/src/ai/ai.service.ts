@@ -1,4 +1,12 @@
-import { BadRequestException, Injectable, Logger, MessageEvent, InternalServerErrorException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  MessageEvent,
+  InternalServerErrorException,
+  ServiceUnavailableException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
@@ -18,6 +26,8 @@ import {
 import { UpsertActiveWritingDeskJobDto } from '../writing-desk-jobs/dto/upsert-active-writing-desk-job.dto';
 import { Observable, ReplaySubject, Subscription } from 'rxjs';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
+import { StreamingStateService } from '../streaming-state/streaming-state.service';
+import { StreamingRunState, StreamingRunKind } from '../streaming-state/streaming-state.types';
 
 const FOLLOW_UP_CREDIT_COST = 0.1;
 const DEEP_RESEARCH_CREDIT_COST = 0.7;
@@ -70,6 +80,7 @@ const BACKGROUND_POLL_INTERVAL_MS = 2000;
 const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 const LETTER_RUN_BUFFER_SIZE = 2000;
 const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
+const STREAMING_RUN_ORPHAN_THRESHOLD_MS = 2 * 60 * 1000;
 
 type LetterStreamPayload =
   | { type: 'status'; status: string; remainingCredits?: number | null }
@@ -367,11 +378,12 @@ Output:
 Return only the JSON object defined by the schema. Do not output explanations or text outside the JSON.`;
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
   private openaiClient: any | null = null;
   private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
   private readonly letterRuns = new Map<string, LetterRun>();
+  private readonly instanceId: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -380,7 +392,14 @@ export class AiService {
     private readonly userMp: UserMpService,
     private readonly users: UsersService,
     private readonly userAddress: UserAddressService,
-  ) {}
+    private readonly streamingState: StreamingStateService,
+  ) {
+    this.instanceId = this.streamingState.getInstanceId();
+  }
+
+  async onModuleInit() {
+    await this.recoverStaleStreamingRuns();
+  }
 
   private async getOpenAiClient(apiKey: string) {
     if (this.openaiClient) return this.openaiClient;
@@ -742,8 +761,20 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       } else {
         return existing;
       }
-    } else if (options?.createIfMissing === false) {
-      throw new BadRequestException('We could not resume letter composition. Please start a new letter.');
+    } else {
+      const persisted = await this.streamingState.getRun('letter', key);
+      if (persisted) {
+        if (persisted.responseId) {
+          return this.resumeLetterRunFromState({
+            persisted,
+            userId,
+            baselineJob,
+          });
+        }
+        await this.handleOrphanedRun(persisted);
+      } else if (options?.createIfMissing === false) {
+        throw new BadRequestException('We could not resume letter composition. Please start a new letter.');
+      }
     }
 
     const tone = this.normaliseLetterTone(options?.tone ?? baselineJob.letterTone ?? null);
@@ -773,6 +804,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     this.letterRuns.set(key, run);
 
+    await this.registerStreamingRun({
+      type: 'letter',
+      runKey: key,
+      userId,
+      jobId: baselineJob.jobId,
+      meta: { tone },
+    });
+
     run.promise = this.executeLetterRun({
       run,
       userId,
@@ -793,11 +832,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     baselineJob: ActiveWritingDeskJobResource;
     subject: ReplaySubject<LetterStreamPayload>;
     researchContent: string;
+    resumeFromState?: { responseId: string | null; charged: boolean; remainingCredits: number | null };
   }) {
-    const { run, userId, baselineJob, subject, researchContent } = params;
+    const { run, userId, baselineJob, subject, researchContent, resumeFromState } = params;
+    const heartbeat = this.createStreamingHeartbeat('letter', run.key);
     const tone = run.tone;
     let deductionApplied = false;
-    let remainingCredits: number | null = null;
+    let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
     let controller: { abort: () => void } | null = null;
     let jsonBuffer = '';
     let quietPeriodTimer: NodeJS.Timeout | null = null;
@@ -807,6 +848,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     const send = (payload: LetterStreamPayload) => {
       subject.next(payload);
+      heartbeat();
     };
 
     const persistProgressIfNeeded = async (html: string) => {
@@ -834,10 +876,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     };
 
     try {
-      const { credits: creditsAfterCharge } = await this.userCredits.deductFromMine(userId, LETTER_CREDIT_COST);
-      deductionApplied = true;
-      remainingCredits = Math.round(creditsAfterCharge * 100) / 100;
-      run.remainingCredits = remainingCredits;
+      if (resumeFromState?.responseId) {
+        deductionApplied = resumeFromState.charged;
+        remainingCredits = resumeFromState.remainingCredits ?? run.remainingCredits;
+        run.remainingCredits = remainingCredits;
+      } else {
+        const { credits: creditsAfterCharge } = await this.userCredits.deductFromMine(userId, LETTER_CREDIT_COST);
+        deductionApplied = true;
+        remainingCredits = Math.round(creditsAfterCharge * 100) / 100;
+        run.remainingCredits = remainingCredits;
+        await this.touchStreamingRun('letter', run.key, {
+          meta: { charged: true, remainingCredits },
+        });
+      }
 
       await this.persistLetterState(userId, baselineJob, {
         status: 'generating',
@@ -849,6 +900,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       });
 
       send({ type: 'status', status: 'Composing your letter…', remainingCredits });
+      heartbeat({ status: 'running', responseId: run.responseId });
 
       const apiKey = this.config.get<string>('OPENAI_API_KEY');
       const model = this.config.get<string>('OPENAI_LETTER_MODEL')?.trim() || 'gpt-5';
@@ -903,6 +955,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           ),
           remainingCredits,
         });
+        await this.touchStreamingRun('letter', run.key, {
+          status: 'completed',
+          responseId: 'dev-stub',
+          meta: { tone },
+        });
+        await this.clearStreamingRun('letter', run.key);
         subject.complete();
         
         // Clean up the quiet period timer
@@ -914,29 +972,33 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       const client = await this.getOpenAiClient(apiKey);
-      const stream = client.responses.stream({
-        model,
-        input: [
-          { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
-          { role: 'user', content: [{ type: 'input_text', text: prompt }] },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'mp_letter',
-            strict: true,
-            schema: this.buildLetterResponseSchema(context),
-          },
-          verbosity,
-        },
-        reasoning: {
-          effort: reasoningEffort,
-          summary: 'auto',
-        },
-        tools: [],
-        store: true,
-        include: ['reasoning.encrypted_content'],
-      }) as ResponseStreamLike;
+      const stream = resumeFromState?.responseId
+        ? (client.responses.stream({
+            response_id: resumeFromState.responseId,
+          }) as ResponseStreamLike)
+        : (client.responses.stream({
+            model,
+            input: [
+              { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
+              { role: 'user', content: [{ type: 'input_text', text: prompt }] },
+            ],
+            text: {
+              format: {
+                type: 'json_schema',
+                name: 'mp_letter',
+                strict: true,
+                schema: this.buildLetterResponseSchema(context),
+              },
+              verbosity,
+            },
+            reasoning: {
+              effort: reasoningEffort,
+              summary: 'auto',
+            },
+            tools: [],
+            store: true,
+            include: ['reasoning.encrypted_content'],
+          }) as ResponseStreamLike);
 
       controller = stream.controller ?? null;
 
@@ -1048,6 +1110,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         if (eventType === 'response.completed') {
           const responseId = (normalised as any)?.response?.id ?? null;
           run.responseId = typeof responseId === 'string' ? responseId : null;
+          await this.touchStreamingRun('letter', run.key, { responseId: run.responseId ?? null });
           const usage = (normalised as any)?.response?.usage ?? null;
           this.logger.log(
             `[writing-desk letter-usage] ${JSON.stringify({
@@ -1111,6 +1174,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               { responseId, tone, rawJson: finalText },
             ),
             remainingCredits,
+          });
+          await this.touchStreamingRun('letter', run.key, {
+            status: 'completed',
+            responseId: responseId ?? run.responseId,
           });
           subject.complete();
           
@@ -1233,6 +1300,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           : 'Letter composition failed. Please try again in a few moments.';
 
       send({ type: 'error', message, remainingCredits });
+      await this.touchStreamingRun('letter', run.key, {
+        status: 'error',
+        responseId: run.responseId,
+      });
       subject.complete();
       
       // Clean up the quiet period timer
@@ -1249,6 +1320,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       }
 
+      await this.clearStreamingRun('letter', run.key);
       this.scheduleLetterRunCleanup(run);
     }
   }
@@ -1263,6 +1335,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.letterRuns.delete(run.key);
+      void this.clearStreamingRun('letter', run.key);
     }, LETTER_RUN_TTL_MS);
     if (typeof (timer as any)?.unref === 'function') {
       (timer as any).unref();
@@ -1301,8 +1374,20 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       } else {
         return existing;
       }
-    } else if (options?.createIfMissing === false) {
-      throw new BadRequestException('We could not resume deep research. Please start a new run.');
+    } else {
+      const persisted = await this.streamingState.getRun('deep_research', key);
+      if (persisted) {
+        if (persisted.responseId) {
+          return this.resumeDeepResearchRunFromState({
+            persisted,
+            userId,
+            baselineJob,
+          });
+        }
+        await this.handleOrphanedRun(persisted);
+      } else if (options?.createIfMissing === false) {
+        throw new BadRequestException('We could not resume deep research. Please start a new run.');
+      }
     }
 
     const subject = new ReplaySubject<DeepResearchStreamPayload>(DEEP_RESEARCH_RUN_BUFFER_SIZE);
@@ -1320,8 +1405,147 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     this.deepResearchRuns.set(key, run);
 
+    await this.registerStreamingRun({
+      type: 'deep_research',
+      runKey: key,
+      userId,
+      jobId: baselineJob.jobId,
+    });
+
     run.promise = this.executeDeepResearchRun({ run, userId, baselineJob, subject }).catch((error) => {
       this.logger.error(`Deep research run encountered an unhandled error: ${(error as Error)?.message ?? error}`);
+      subject.error(error);
+    });
+
+    return run;
+  }
+
+  private async resumeDeepResearchRunFromState(params: {
+    persisted: StreamingRunState;
+    userId: string;
+    baselineJob: ActiveWritingDeskJobResource;
+  }): Promise<DeepResearchRun> {
+    const { persisted, userId, baselineJob } = params;
+    const subject = new ReplaySubject<DeepResearchStreamPayload>(DEEP_RESEARCH_RUN_BUFFER_SIZE);
+    const run: DeepResearchRun = {
+      key: persisted.runKey,
+      userId,
+      jobId: baselineJob.jobId,
+      subject,
+      status: 'running',
+      startedAt: persisted.startedAt,
+      cleanupTimer: null,
+      promise: null,
+      responseId: typeof persisted.responseId === 'string' ? persisted.responseId : null,
+    };
+
+    this.deepResearchRuns.set(persisted.runKey, run);
+    
+    const resumeMeta = persisted.meta ?? {};
+    const charged = (resumeMeta as Record<string, unknown>)?.charged === true;
+    const remainingCredits =
+      typeof (resumeMeta as Record<string, unknown>)?.remainingCredits === 'number'
+        ? ((resumeMeta as Record<string, unknown>).remainingCredits as number)
+        : null;
+
+    await this.touchStreamingRun('deep_research', run.key, {
+      status: 'running',
+      responseId: run.responseId,
+      meta: { charged, remainingCredits },
+    });
+
+    subject.next({
+      type: 'status',
+      status: 'Reconnecting to your research run…',
+      remainingCredits,
+    });
+
+    run.promise = this.executeDeepResearchRun({
+      run,
+      userId,
+      baselineJob,
+      subject,
+      resumeFromState: {
+        responseId: run.responseId,
+        charged,
+        remainingCredits,
+      },
+    }).catch((error) => {
+      this.logger.error(
+        `Deep research resume encountered an error: ${(error as Error)?.message ?? error}`,
+      );
+      subject.error(error);
+    });
+
+    return run;
+  }
+
+  private async resumeLetterRunFromState(params: {
+    persisted: StreamingRunState;
+    userId: string;
+    baselineJob: ActiveWritingDeskJobResource;
+  }): Promise<LetterRun> {
+    const { persisted, userId, baselineJob } = params;
+    const tone = this.normaliseLetterTone(
+      ((persisted.meta as Record<string, unknown>)?.tone as string | undefined) ?? baselineJob.letterTone ?? null,
+    );
+    if (!tone) {
+      throw new BadRequestException('Select a tone before composing the letter.');
+    }
+    const researchContent = this.normaliseResearchContent(baselineJob.researchContent ?? null);
+    if (!researchContent) {
+      throw new BadRequestException('Run deep research before composing the letter.');
+    }
+
+    const subject = new ReplaySubject<LetterStreamPayload>(LETTER_RUN_BUFFER_SIZE);
+    const resumeMeta = persisted.meta ?? {};
+    const charged = (resumeMeta as Record<string, unknown>)?.charged === true;
+    const remainingCredits =
+      typeof (resumeMeta as Record<string, unknown>)?.remainingCredits === 'number'
+        ? ((resumeMeta as Record<string, unknown>).remainingCredits as number)
+        : null;
+
+    const run: LetterRun = {
+      key: persisted.runKey,
+      userId,
+      jobId: baselineJob.jobId,
+      tone,
+      subject,
+      status: 'running',
+      startedAt: persisted.startedAt,
+      cleanupTimer: null,
+      promise: null,
+      responseId: typeof persisted.responseId === 'string' ? persisted.responseId : null,
+      remainingCredits,
+    };
+
+    this.letterRuns.set(persisted.runKey, run);
+
+    subject.next({
+      type: 'status',
+      status: 'Reconnecting to your letter composition…',
+      remainingCredits,
+    });
+
+    await this.touchStreamingRun('letter', run.key, {
+      status: 'running',
+      responseId: run.responseId,
+      meta: { tone, charged, remainingCredits },
+    });
+
+    run.promise = this.executeLetterRun({
+      run,
+      userId,
+      baselineJob,
+      subject,
+      researchContent,
+      resumeFromState: {
+        responseId: run.responseId,
+        charged,
+        remainingCredits,
+      },
+    }).catch((error) => {
+      this.logger.error(`Letter resume encountered an error: ${(error as Error)?.message ?? error}`);
       subject.error(error);
     });
 
@@ -1333,14 +1557,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     userId: string;
     baselineJob: ActiveWritingDeskJobResource;
     subject: ReplaySubject<DeepResearchStreamPayload>;
+    resumeFromState?: { responseId: string | null; charged: boolean; remainingCredits: number | null };
   }) {
-    const { run, userId, baselineJob, subject } = params;
+    const { run, userId, baselineJob, subject, resumeFromState } = params;
+    const heartbeat = this.createStreamingHeartbeat('deep_research', run.key);
     let deductionApplied = false;
-    let remainingCredits: number | null = null;
+    let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
     let aggregatedText = '';
     let _settled = false;
     let openAiStream: ResponseStreamLike | null = null;
-    let responseId: string | null = run.responseId ?? null;
+    let responseId: string | null = resumeFromState?.responseId ?? run.responseId ?? null;
     let quietPeriodTimer: NodeJS.Timeout | null = null;
 
     const captureResponseId = async (candidate: unknown) => {
@@ -1351,10 +1577,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       if (!trimmed || trimmed === responseId) return;
       responseId = trimmed;
       run.responseId = trimmed;
+      heartbeat({ responseId: trimmed });
       try {
         await this.persistDeepResearchResult(userId, baselineJob, {
           responseId: trimmed,
-          status: 'running',
+          status: run.status,
         });
       } catch (error) {
         this.logger.warn(
@@ -1365,6 +1592,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     const send = (payload: DeepResearchStreamPayload) => {
       subject.next(payload);
+      heartbeat();
     };
 
     const pushDelta = (next: string | null | undefined) => {
@@ -1391,12 +1619,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
 
     send({ type: 'status', status: 'starting' });
+    heartbeat({ status: 'running', responseId });
 
     try {
-      const { credits } = await this.userCredits.deductFromMine(userId, DEEP_RESEARCH_CREDIT_COST);
-      deductionApplied = true;
-      remainingCredits = credits;
-      send({ type: 'status', status: 'charged', remainingCredits: credits });
+      if (resumeFromState?.responseId) {
+        deductionApplied = resumeFromState.charged;
+        remainingCredits = resumeFromState.remainingCredits;
+      } else {
+        const { credits } = await this.userCredits.deductFromMine(userId, DEEP_RESEARCH_CREDIT_COST);
+        deductionApplied = true;
+        remainingCredits = credits;
+        heartbeat({ meta: { charged: true, remainingCredits } });
+      }
+      send({ type: 'status', status: 'charged', remainingCredits });
 
       const apiKey = this.config.get<string>('OPENAI_API_KEY');
       const model = this.config.get<string>('OPENAI_DEEP_RESEARCH_MODEL')?.trim() || 'o4-mini-deep-research';
@@ -1420,6 +1655,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           responseId: 'dev-stub',
           remainingCredits,
         });
+        await this.touchStreamingRun('deep_research', run.key, {
+          status: 'completed',
+          responseId: 'dev-stub',
+        });
+        await this.clearStreamingRun('deep_research', run.key);
         subject.complete();
         return;
       }
@@ -1437,14 +1677,21 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         })}`,
       );
 
-      openAiStream = (await client.responses.create({
-        model,
-        input: prompt,
-        background: true,
-        store: true,
-        stream: true,
-        ...requestExtras,
-      })) as ResponseStreamLike;
+      if (resumeFromState?.responseId) {
+        openAiStream = client.responses.stream({
+          response_id: resumeFromState.responseId,
+          tools: requestExtras.tools,
+        }) as ResponseStreamLike;
+      } else {
+        openAiStream = (await client.responses.create({
+          model,
+          input: prompt,
+          background: true,
+          store: true,
+          stream: true,
+          ...requestExtras,
+        })) as ResponseStreamLike;
+      }
 
       let lastSequenceNumber: number | null = null;
       let currentStream: ResponseStreamLike | null = openAiStream;
@@ -1618,6 +1865,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                   remainingCredits,
                   usage: (finalResponse as any)?.usage ?? null,
                 });
+                await this.touchStreamingRun('deep_research', run.key, {
+                  status: 'completed',
+                  responseId: resolvedResponseId ?? responseId,
+                });
                 subject.complete();
                 return;
               }
@@ -1755,6 +2006,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             remainingCredits,
             usage: (finalResponse as any)?.usage ?? null,
           });
+          await this.touchStreamingRun('deep_research', run.key, {
+            status: 'completed',
+            responseId,
+          });
           subject.complete();
         } else {
           const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus);
@@ -1765,6 +2020,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           run.status = 'error';
           _settled = true;
           send({ type: 'error', message, remainingCredits });
+          await this.touchStreamingRun('deep_research', run.key, {
+            status: 'error',
+            responseId,
+          });
           subject.complete();
         }
       }
@@ -1807,6 +2066,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         message,
         remainingCredits,
       });
+      await this.touchStreamingRun('deep_research', run.key, {
+        status: 'error',
+        responseId,
+      });
       subject.complete();
 
       // Clean up the quiet period timer
@@ -1825,6 +2088,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       }
 
+      await this.clearStreamingRun('deep_research', run.key);
       this.scheduleRunCleanup(run);
     }
   }
@@ -1839,6 +2103,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.deepResearchRuns.delete(run.key);
+      void this.clearStreamingRun('deep_research', run.key);
     }, DEEP_RESEARCH_RUN_TTL_MS);
     if (typeof (timer as any)?.unref === 'function') {
       (timer as any).unref();
@@ -1928,6 +2193,112 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       );
     }
     return job;
+  }
+
+  private async registerStreamingRun(params: {
+    type: StreamingRunKind;
+    runKey: string;
+    userId: string;
+    jobId: string;
+    status?: 'running' | 'completed' | 'error';
+    responseId?: string | null;
+    meta?: Record<string, unknown>;
+  }) {
+    try {
+      await this.streamingState.registerRun(params);
+    } catch (error) {
+      this.logger.error(
+        `[streaming-state] Failed to register ${params.type} run ${params.runKey}: ${
+          (error as Error)?.message ?? error
+        }`,
+      );
+      throw new ServiceUnavailableException('Streaming is temporarily unavailable. Please try again in a moment.');
+    }
+  }
+
+  private async touchStreamingRun(
+    type: StreamingRunKind,
+    runKey: string,
+    patch?: { status?: 'running' | 'completed' | 'error'; responseId?: string | null; meta?: Record<string, unknown> },
+  ) {
+    try {
+      await this.streamingState.touchRun(type, runKey, patch);
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to update ${type} run ${runKey}: ${(error as Error)?.message ?? error}`,
+      );
+    }
+  }
+
+  private async clearStreamingRun(type: StreamingRunKind, runKey: string) {
+    try {
+      await this.streamingState.removeRun(type, runKey);
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to remove ${type} run ${runKey}: ${(error as Error)?.message ?? error}`,
+      );
+    }
+  }
+
+  private createStreamingHeartbeat(type: StreamingRunKind, runKey: string) {
+    let lastBeatAt = 0;
+    return (patch?: { status?: 'running' | 'completed' | 'error'; responseId?: string | null; meta?: Record<string, unknown> }) => {
+      const now = Date.now();
+      if (!patch && now - lastBeatAt < 1000) {
+        return;
+      }
+      lastBeatAt = now;
+      void this.touchStreamingRun(type, runKey, patch);
+    };
+  }
+
+  async recoverStaleStreamingRuns() {
+    try {
+      const staleRuns = await this.streamingState.findStaleRuns(STREAMING_RUN_ORPHAN_THRESHOLD_MS);
+      for (const state of staleRuns) {
+        await this.handleOrphanedRun(state);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to sweep stale runs: ${(error as Error)?.message ?? error}`,
+      );
+    }
+  }
+
+  private async handleOrphanedRun(state: StreamingRunState) {
+    try {
+      const job = await this.writingDeskJobs.getActiveJobForUser(state.userId);
+      if (!job || job.jobId !== state.jobId) {
+        await this.clearStreamingRun(state.type, state.runKey);
+        return;
+      }
+
+      if (state.type === 'deep_research') {
+        await this.persistDeepResearchStatus(state.userId, job, 'error');
+        if (this.isRunCharged(state)) {
+          await this.refundCredits(state.userId, DEEP_RESEARCH_CREDIT_COST);
+        }
+      } else {
+        await this.persistLetterState(state.userId, job, { status: 'error', tone: job.letterTone ?? null });
+        if (this.isRunCharged(state)) {
+          await this.refundCredits(state.userId, LETTER_CREDIT_COST);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to recover run ${state.type}:${state.runKey}: ${(error as Error)?.message ?? error}`,
+      );
+    } finally {
+      await this.clearStreamingRun(state.type, state.runKey);
+    }
+  }
+
+  private isRunCharged(state: StreamingRunState): boolean {
+    if (!state.meta) {
+      return false;
+    }
+    const charged = (state.meta as Record<string, unknown>).charged;
+    return charged === true;
   }
 
   private buildDeepResearchPrompt(
