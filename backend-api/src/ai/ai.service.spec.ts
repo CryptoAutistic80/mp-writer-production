@@ -6,6 +6,7 @@ import { UserMpService } from '../user-mp/user-mp.service';
 import { UsersService } from '../users/users.service';
 import { UserAddressService } from '../user-address-store/user-address.service';
 import { ActiveWritingDeskJobResource } from '../writing-desk-jobs/writing-desk-jobs.types';
+import { StreamingStateService } from '../streaming-state/streaming-state.service';
 
 describe('AiService', () => {
   const createService = ({
@@ -15,6 +16,7 @@ describe('AiService', () => {
     userMp,
     users,
     userAddress,
+    streamingState,
   }: {
     configGet: (key: string) => string | null | undefined;
     userCredits?: Partial<UserCreditsService>;
@@ -22,6 +24,7 @@ describe('AiService', () => {
     userMp?: Partial<UserMpService>;
     users?: Partial<UsersService>;
     userAddress?: Partial<UserAddressService>;
+    streamingState?: Partial<StreamingStateService>;
   }) => {
     const config = { get: jest.fn((key: string) => configGet(key)) } as unknown as ConfigService;
     const credits = {
@@ -38,9 +41,20 @@ describe('AiService', () => {
     const usersService = { ...users } as unknown as UsersService;
     const address = { ...userAddress } as unknown as UserAddressService;
 
+    const streaming = {
+      getInstanceId: jest.fn().mockReturnValue('test-instance'),
+      registerRun: jest.fn().mockResolvedValue(undefined),
+      touchRun: jest.fn().mockResolvedValue(undefined),
+      removeRun: jest.fn().mockResolvedValue(undefined),
+      getRun: jest.fn().mockResolvedValue(null),
+      findStaleRuns: jest.fn().mockResolvedValue([]),
+      checkHealth: jest.fn(),
+      ...streamingState,
+    } as unknown as StreamingStateService;
+
     return {
-      service: new AiService(config, credits, jobs, mp, usersService, address),
-      dependencies: { config, credits, jobs, mp, usersService, address },
+      service: new AiService(config, credits, jobs, mp, usersService, address, streaming),
+      dependencies: { config, credits, jobs, mp, usersService, address, streaming },
     };
   };
 
@@ -434,6 +448,104 @@ describe('AiService', () => {
       expect(errorMessages).toHaveLength(1);
       expect(errorMessages[0].type).toBe('error');
       expect(errorMessages[0].message).toBe('Letter composition failed. Please try again in a few moments.');
+      });
+    });
+
+  describe('recoverStaleStreamingRuns', () => {
+    const createActiveJob = (): ActiveWritingDeskJobResource => ({
+      jobId: 'job-123',
+      phase: 'generating',
+      stepIndex: 0,
+      followUpIndex: 0,
+      form: { issueDescription: 'Issue' },
+      followUpQuestions: [],
+      followUpAnswers: [],
+      notes: null,
+      responseId: null,
+      researchContent: 'Research',
+      researchResponseId: null,
+      researchStatus: 'running',
+      letterStatus: 'idle',
+      letterTone: null,
+      letterResponseId: null,
+      letterContent: null,
+      letterReferences: [],
+      letterJson: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    it('refunds credits and clears stale deep research runs', async () => {
+      const activeJob = createActiveJob();
+      const staleRun = {
+        type: 'deep_research' as const,
+        runKey: 'user-1::job-123',
+        userId: 'user-1',
+        jobId: 'job-123',
+        status: 'running' as const,
+        startedAt: Date.now() - 10_000,
+        lastActivityAt: Date.now() - 10_000,
+        responseId: null,
+        instanceId: 'other',
+        meta: { charged: true },
+      };
+
+      const { service, dependencies } = createService({
+        configGet: () => null,
+        userCredits: {
+          addToMine: jest.fn().mockResolvedValue(undefined),
+        },
+        writingDeskJobs: {
+          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
+          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        },
+        streamingState: {
+          findStaleRuns: jest.fn().mockResolvedValue([staleRun]),
+          removeRun: jest.fn().mockResolvedValue(undefined),
+        },
+      });
+
+      await service.recoverStaleStreamingRuns();
+
+      expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-1', 0.7);
+      expect(dependencies.streaming.removeRun).toHaveBeenCalledWith('deep_research', staleRun.runKey);
+    });
+
+    it('handles stale letter runs by refunding credits', async () => {
+      const activeJob = createActiveJob();
+      const staleRun = {
+        type: 'letter' as const,
+        runKey: 'user-2::job-123',
+        userId: 'user-2',
+        jobId: 'job-123',
+        status: 'running' as const,
+        startedAt: Date.now() - 20_000,
+        lastActivityAt: Date.now() - 20_000,
+        responseId: 'resp_123',
+        instanceId: 'other',
+        meta: { charged: true },
+      };
+
+      const { service, dependencies } = createService({
+        configGet: () => null,
+        userCredits: {
+          addToMine: jest.fn().mockResolvedValue(undefined),
+        },
+        writingDeskJobs: {
+          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
+          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        },
+        streamingState: {
+          findStaleRuns: jest.fn().mockResolvedValue([staleRun]),
+          removeRun: jest.fn().mockResolvedValue(undefined),
+        },
+      });
+
+      await service.recoverStaleStreamingRuns();
+
+      expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-2', 0.2);
+      expect(dependencies.streaming.removeRun).toHaveBeenCalledWith('letter', staleRun.runKey);
     });
   });
+
 });

@@ -3,12 +3,15 @@ services:
     build:
       context: .
       dockerfile: backend-api/Dockerfile
+    depends_on:
+      - redis
     environment:
       - MONGO_URI=${MONGO_URI:?MONGO_URI is required}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - PORT=4000
       - APP_ORIGIN=http://localhost:3000
       - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       # Address lookup provider (getaddress.io)
       - GETADDRESS_API_KEY=${GETADDRESS_API_KEY:-}
       - ADDRESS_DEBUG=${ADDRESS_DEBUG:-}
@@ -57,3 +60,8 @@ services:
       - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
     ports:
       - "3000:3000"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"

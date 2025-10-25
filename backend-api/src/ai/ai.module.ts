@@ -7,6 +7,7 @@ import { AiService } from './ai.service';
 import { AiController } from './ai.controller';
 import { UsersModule } from '../users/users.module';
 import { UserAddressModule } from '../user-address-store/user-address.module';
+import { StreamingStateModule } from '../streaming-state/streaming-state.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { UserAddressModule } from '../user-address-store/user-address.module';
     UserMpModule,
     UsersModule,
     UserAddressModule,
+    StreamingStateModule,
   ],
   controllers: [AiController],
   providers: [AiService],
