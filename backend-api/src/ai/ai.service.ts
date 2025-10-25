@@ -384,6 +384,7 @@ export class AiService implements OnModuleInit {
   private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
   private readonly letterRuns = new Map<string, LetterRun>();
   private readonly instanceId: string;
+  private cleanupSweepInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -399,6 +400,73 @@ export class AiService implements OnModuleInit {
 
   async onModuleInit() {
     await this.recoverStaleStreamingRuns();
+    this.startCleanupSweep();
+  }
+
+  onModuleDestroy() {
+    if (this.cleanupSweepInterval) {
+      clearInterval(this.cleanupSweepInterval);
+      this.cleanupSweepInterval = null;
+    }
+  }
+
+  /**
+   * Periodic sweep to remove stale Map entries as a safety net
+   * Prevents memory leaks if cleanup timers fail or are not scheduled
+   */
+  private startCleanupSweep() {
+    const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // Every 10 minutes
+    // Use longer threshold for letter runs (typically complete in < 5 min)
+    const LETTER_STALE_THRESHOLD_MS = LETTER_RUN_TTL_MS + (2 * 60 * 1000); // 7 minutes
+    // Use much longer threshold for research runs (can take up to 20 min)
+    const RESEARCH_STALE_THRESHOLD_MS = BACKGROUND_POLL_TIMEOUT_MS + (5 * 60 * 1000); // 25 minutes
+
+    this.cleanupSweepInterval = setInterval(() => {
+      const now = Date.now();
+      let cleanedLetter = 0;
+      let cleanedResearch = 0;
+
+      // Sweep letter runs - only remove if completed/errored AND old enough
+      for (const [key, run] of this.letterRuns.entries()) {
+        const age = now - run.startedAt;
+        const isStale = age > LETTER_STALE_THRESHOLD_MS;
+        const isTerminated = run.status === 'completed' || run.status === 'error';
+        
+        if (isStale && isTerminated) {
+          this.letterRuns.delete(key);
+          cleanedLetter++;
+          void this.clearStreamingRun('letter', key).catch((err) => {
+            this.logger.warn(`Failed to clear stale letter run ${key}: ${(err as Error)?.message}`);
+          });
+        }
+      }
+
+      // Sweep deep research runs - longer threshold since they can run 20+ minutes
+      for (const [key, run] of this.deepResearchRuns.entries()) {
+        const age = now - run.startedAt;
+        const isStale = age > RESEARCH_STALE_THRESHOLD_MS;
+        const isTerminated = run.status === 'completed' || run.status === 'error';
+        
+        if (isStale && isTerminated) {
+          this.deepResearchRuns.delete(key);
+          cleanedResearch++;
+          void this.clearStreamingRun('deep_research', key).catch((err) => {
+            this.logger.warn(`Failed to clear stale research run ${key}: ${(err as Error)?.message}`);
+          });
+        }
+      }
+
+      if (cleanedLetter > 0 || cleanedResearch > 0) {
+        this.logger.log(
+          `Cleanup sweep removed ${cleanedLetter} letter runs and ${cleanedResearch} research runs`
+        );
+      }
+    }, SWEEP_INTERVAL_MS);
+
+    // Don't keep process alive just for cleanup sweeps
+    if (typeof (this.cleanupSweepInterval as any)?.unref === 'function') {
+      (this.cleanupSweepInterval as any).unref();
+    }
   }
 
   private async getOpenAiClient(apiKey: string) {
@@ -1335,7 +1403,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.letterRuns.delete(run.key);
-      void this.clearStreamingRun('letter', run.key);
+      void this.clearStreamingRun('letter', run.key).catch((err) => {
+        this.logger.warn(`Failed to clear letter run ${run.key}: ${(err as Error)?.message}`);
+      });
     }, LETTER_RUN_TTL_MS);
     if (typeof (timer as any)?.unref === 'function') {
       (timer as any).unref();
@@ -2103,7 +2173,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.deepResearchRuns.delete(run.key);
-      void this.clearStreamingRun('deep_research', run.key);
+      void this.clearStreamingRun('deep_research', run.key).catch((err) => {
+        this.logger.warn(`Failed to clear deep research run ${run.key}: ${(err as Error)?.message}`);
+      });
     }, DEEP_RESEARCH_RUN_TTL_MS);
     if (typeof (timer as any)?.unref === 'function') {
       (timer as any).unref();
