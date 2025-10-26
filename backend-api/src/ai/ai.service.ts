@@ -82,6 +82,10 @@ const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 const LETTER_RUN_BUFFER_SIZE = 2000;
 const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
 const STREAMING_RUN_ORPHAN_THRESHOLD_MS = 2 * 60 * 1000;
+// Stream inactivity timeouts - max time between events before aborting
+const LETTER_STREAM_INACTIVITY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+const RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
 type LetterStreamPayload =
   | { type: 'status'; status: string; remainingCredits?: number | null }
@@ -574,6 +578,52 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     if (this.openaiClientErrorCount > 0) {
       this.logger.log(`OpenAI client recovered after ${this.openaiClientErrorCount} previous errors`);
       this.openaiClientErrorCount = 0;
+    }
+  }
+
+  /**
+   * Wraps an async iterable stream with inactivity timeout protection.
+   * If no events are received within the specified timeout period, the onTimeout
+   * callback is invoked and iteration stops.
+   */
+  private async* createStreamWithTimeout<T>(
+    stream: AsyncIterable<T>,
+    timeoutMs: number,
+    onTimeout: () => void,
+  ): AsyncGenerator<T, void, unknown> {
+    let lastEventTime = Date.now();
+    let timeoutTriggered = false;
+    let timedOut = false;
+
+    // Start a timer that checks for inactivity
+    const checkInterval = setInterval(() => {
+      const elapsed = Date.now() - lastEventTime;
+      if (elapsed >= timeoutMs && !timeoutTriggered) {
+        timeoutTriggered = true;
+        clearInterval(checkInterval);
+        onTimeout();
+      }
+    }, 1000); // Check every second
+
+    try {
+      for await (const event of stream) {
+        lastEventTime = Date.now(); // Reset timeout on each event
+        
+        // If we timed out in the previous iteration, stop yielding
+        if (timedOut) {
+          break;
+        }
+
+        yield event;
+      }
+    } catch (error) {
+      // Re-throw errors, but if timeout triggered, mark as timed out
+      if (timeoutTriggered) {
+        timedOut = true;
+      }
+      throw error;
+    } finally {
+      clearInterval(checkInterval);
     }
   }
 
@@ -1226,7 +1276,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       startQuietPeriodTimer();
 
-      for await (const event of stream) {
+      // Wrap stream with inactivity timeout
+      const timeoutWrappedStream = this.createStreamWithTimeout(
+        stream,
+        LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
+        () => {
+          this.logger.warn(`[letter] Stream inactivity timeout for job ${baselineJob.jobId}`);
+          controller?.abort();
+        }
+      );
+
+      for await (const event of timeoutWrappedStream) {
         // Reset quiet period timer on any activity
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
@@ -1505,10 +1565,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         );
       }
 
-      const message =
-        error instanceof BadRequestException
-          ? error.message
-          : 'Letter composition failed. Please try again in a few moments.';
+      let message: string;
+      if (error instanceof BadRequestException) {
+        message = error.message;
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message;
+        if (errorMsg.includes('timeout') || errorMsg.includes('inactivity')) {
+          message = 'Letter generation timed out due to inactivity. Please try again.';
+        } else {
+          message = 'Letter composition failed. Please try again in a few moments.';
+        }
+      } else {
+        message = 'Letter composition failed. Please try again in a few moments.';
+      }
 
       send({ type: 'error', message, remainingCredits });
       await this.touchStreamingRun('letter', run.key, {
@@ -1979,7 +2048,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         let streamError: unknown = null;
 
         try {
-          for await (const event of currentStream) {
+          // Wrap stream with inactivity timeout
+          const timeoutWrappedStream = this.createStreamWithTimeout(
+            currentStream,
+            RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS,
+            () => {
+              this.logger.warn(`[research] Stream inactivity timeout for job ${baselineJob.jobId}`);
+              openAiStream?.controller?.abort();
+            }
+          );
+
+          for await (const event of timeoutWrappedStream) {
             if (!event) continue;
 
             // Reset quiet period timer on any activity
@@ -2282,10 +2361,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         );
       }
 
-      const message =
-        error instanceof BadRequestException
-          ? error.message
-          : 'Deep research failed. Please try again in a few moments.';
+      let message: string;
+      if (error instanceof BadRequestException) {
+        message = error.message;
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message;
+        if (errorMsg.includes('timeout') || errorMsg.includes('inactivity')) {
+          message = 'Deep research timed out due to inactivity. Please try again.';
+        } else {
+          message = 'Deep research failed. Please try again in a few moments.';
+        }
+      } else {
+        message = 'Deep research failed. Please try again in a few moments.';
+      }
 
       send({
         type: 'error',
@@ -3945,14 +4033,24 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             language: input.language || 'en',
           });
 
-          for await (const event of stream) {
+          // Wrap stream with inactivity timeout
+          const timeoutWrappedStream = this.createStreamWithTimeout(
+            stream,
+            TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS,
+            () => {
+              this.logger.warn(`[transcription] Stream inactivity timeout for user ${userId}`);
+            }
+          );
+
+          for await (const event of timeoutWrappedStream) {
             if (subscriber.closed) break;
             
-            if (event.type === 'transcript.text.delta') {
-              subscriber.next({ data: JSON.stringify({ type: 'delta', text: event.delta }) });
-            } else if (event.type === 'transcript.text.done') {
+            const typedEvent = event as any;
+            if (typedEvent.type === 'transcript.text.delta') {
+              subscriber.next({ data: JSON.stringify({ type: 'delta', text: typedEvent.delta }) });
+            } else if (typedEvent.type === 'transcript.text.done') {
               this.handleOpenAiSuccess();
-              subscriber.next({ data: JSON.stringify({ type: 'complete', text: event.text, remainingCredits: remainingAfterCharge }) });
+              subscriber.next({ data: JSON.stringify({ type: 'complete', text: typedEvent.text, remainingCredits: remainingAfterCharge }) });
               subscriber.complete();
               _settled = true;
               return;
@@ -3977,7 +4075,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           }
           if (!subscriber.closed) {
             await this.refundCredits(userId, TRANSCRIPTION_CREDIT_COST);
-            subscriber.next({ data: JSON.stringify({ type: 'error', message: error instanceof Error ? error.message : 'Transcription failed' }) });
+            let errorMessage = 'Transcription failed';
+            if (error instanceof Error) {
+              const errorMsg = error.message;
+              if (errorMsg.includes('timeout') || errorMsg.includes('inactivity')) {
+                errorMessage = 'Transcription timed out due to inactivity. Please try again.';
+              } else {
+                errorMessage = error.message;
+              }
+            }
+            subscriber.next({ data: JSON.stringify({ type: 'error', message: errorMessage }) });
             subscriber.complete();
           }
         }
