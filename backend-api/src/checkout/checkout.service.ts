@@ -7,6 +7,7 @@ import { PurchaseMetadata } from '../purchases/dto/create-purchase.dto';
 import { CheckoutUser, CreditPackage } from './types';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
+import { AuditLogService } from '../common/audit/audit-log.service';
 
 @Injectable()
 export class CheckoutService {
@@ -21,6 +22,7 @@ export class CheckoutService {
     private readonly userCredits: UserCreditsService,
     private readonly purchases: PurchasesService,
     @InjectConnection() private readonly connection: Connection,
+    private readonly auditService: AuditLogService,
   ) {
     this.checkoutEnabled = this.parseBoolean(this.config.get('STRIPE_CHECKOUT_ENABLED'));
     const secretKey = this.config.get<string>('STRIPE_SECRET_KEY');
@@ -289,7 +291,7 @@ export class CheckoutService {
 
         if (isNewPurchase) {
           // Only add credits if this is a new purchase
-          balance = await this.userCredits.addToMine(userId, credits);
+          balance = await this.userCredits.addToMine(userId, credits, `Purchase: ${session.id}`);
           this.logger.log(`Fulfilled order for session ${session.id}: added ${credits} credits to user ${userId}`);
         } else {
           // Purchase already exists, don't add credits again
@@ -314,12 +316,31 @@ export class CheckoutService {
         }
       }
 
+      // Log successful purchase completion
+      if (!wasAlreadyProcessed && purchase) {
+        const stripe = this.requireStripe();
+        this.auditService.logPurchaseCompleted(
+          { userId },
+          session.id,
+          amountMinor,
+          credits,
+          { currency: session.currency ?? defaultCurrency, priceId },
+        );
+      }
+
       return { 
         alreadyProcessed: wasAlreadyProcessed, 
         creditsAdded: wasAlreadyProcessed ? 0 : credits, 
         balance: balance.credits 
       };
     } catch (error) {
+      // Log purchase failure
+      this.auditService.logPurchaseFailed(
+        { userId },
+        session.id,
+        (error as Error).message || String(error),
+        { amount: amountMinor, credits },
+      );
       this.logger.error(`Transaction failed for session ${session.id}: ${(error as Error).message}`);
       throw error;
     } finally {

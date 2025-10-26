@@ -9,14 +9,22 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app/app.module';
 import { json, urlencoded, Request, Response, NextFunction } from 'express';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { AuditLogService } from './common/audit/audit-log.service';
+import { RequestContextInterceptor } from './common/interceptors/request-context.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
   
-  // Global exception filter to sanitize error messages
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // Get AuditLogService instance for AllExceptionsFilter
+  const auditService = app.get(AuditLogService);
+  
+  // Global exception filter to sanitize error messages and log security events
+  app.useGlobalFilters(new AllExceptionsFilter(auditService));
+  
+  // Register RequestContextInterceptor globally to track user context for audit logs
+  app.useGlobalInterceptors(new RequestContextInterceptor(auditService));
   
   // Stripe webhook requires raw body, but other routes need parsed JSON
   // We'll apply JSON parsing conditionally
@@ -38,16 +46,85 @@ async function bootstrap() {
       transformOptions: { enableImplicitConversion: true },
     })
   );
-  // Security hardening
-  app.use(helmet());
+  
+  // Security headers via Helmet
+  // Note: CSP is disabled here because:
+  // 1. This is an API server (no HTML served)
+  // 2. Frontend handles its own CSP in next.config.js
+  // 3. API responses are JSON, not rendered in browser context
+  const isProduction = process.env.NODE_ENV === 'production';
+  app.use(helmet({
+    // Disable CSP for API server - frontend handles this
+    contentSecurityPolicy: false,
+    
+    // Enable HSTS (only works over HTTPS) - production only
+    hsts: isProduction ? {
+      maxAge: 31536000, // 1 year in seconds
+      includeSubDomains: true,
+      preload: true,
+    } : false,
+    
+    // X-Frame-Options: DENY (prevents clickjacking)
+    frameguard: {
+      action: 'deny',
+    },
+    
+    // X-Content-Type-Options: nosniff (prevents MIME sniffing)
+    noSniff: true,
+    
+    // Referrer-Policy for privacy
+    referrerPolicy: {
+      policy: 'strict-origin-when-cross-origin',
+    },
+    
+    // X-DNS-Prefetch-Control (disable DNS prefetching)
+    dnsPrefetchControl: {
+      allow: false,
+    },
+    
+    // X-Download-Options: noopen (IE8+ security)
+    ieNoOpen: true,
+    
+    // Remove X-Powered-By header (security through obscurity)
+    hidePoweredBy: true,
+  }));
+  
   // CORS for frontend origin; default to localhost:3000
-  const appOrigin = process.env.APP_ORIGIN || 'http://localhost:3000';
-  app.enableCors({
-    origin: appOrigin,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+  // Support comma-separated origins for multiple environments (e.g., staging + production)
+  const originsEnv = process.env.APP_ORIGIN || 'http://localhost:3000';
+  const origins = originsEnv.split(',').map(o => o.trim());
+  
+  // Validate origins - fail-fast on misconfiguration
+  origins.forEach(origin => {
+    // Block wildcard origins for security
+    if (origin === '*' || origin.includes('*')) {
+      throw new Error('CORS origin cannot contain wildcard "*". Specify explicit origins separated by commas.');
+    }
+    
+    // Validate URL format and protocol
+    try {
+      const originUrl = new URL(origin);
+      // Only allow http or https protocols
+      if (!['http:', 'https:'].includes(originUrl.protocol)) {
+        throw new Error(`CORS origin must use http or https protocol, got: ${originUrl.protocol}`);
+      }
+    } catch (err) {
+      throw new Error(`Invalid CORS origin: ${origin}. Must be a valid URL (e.g., https://example.com)`);
+    }
   });
+  
+  // Configure CORS
+  const corsConfig = {
+    origin: origins.length === 1 ? origins[0] : origins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Removed PATCH - not used in codebase
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  };
+  
+  app.enableCors(corsConfig);
+  
+  // Log CORS configuration for visibility
+  Logger.log(`🔒 CORS enabled for ${origins.length === 1 ? 'origin' : 'origins'}: ${origins.join(', ')}`);
   const port = process.env.PORT || 3000;
   await app.listen(port);
   Logger.log(

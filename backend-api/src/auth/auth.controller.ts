@@ -4,12 +4,14 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
+import { AuditLogService } from '../common/audit/audit-log.service';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly config: ConfigService,
+    private readonly auditService: AuditLogService,
   ) {}
 
   // Initiates Google OAuth (redirect flow)
@@ -133,6 +135,25 @@ export class AuthController {
         sameSite: 'lax' as const, 
         path: '/' 
       };
+      
+      // Log authentication failure for refresh token
+      const authContext = {
+        ip: req.ip || req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || 'unknown',
+        endpoint: '/auth/refresh',
+      };
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      let reason = 'Invalid refresh token';
+      if (errorMessage.includes('expired')) {
+        reason = 'Refresh token expired';
+      } else if (errorMessage.includes('malformed') || errorMessage.includes('invalid')) {
+        reason = 'Refresh token malformed or invalid';
+      }
+      
+      this.auditService.logAuthFailure(authContext, reason, {
+        tokenType: 'refresh',
+        error: errorMessage,
+      });
       
       res.clearCookie('mpw_session', cookieOptions);
       res.clearCookie('mpw_refresh', cookieOptions);

@@ -5,11 +5,16 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  ForbiddenException,
+  UnauthorizedException,
 } from '@nestjs/common';
+import { AuditLogService } from '../audit/audit-log.service';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
+
+  constructor(private readonly auditService: AuditLogService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -24,6 +29,23 @@ export class AllExceptionsFilter implements ExceptionFilter {
       // NestJS HTTP exceptions are safe to expose
       status = exception.getStatus();
       message = exception.getResponse();
+
+      // Log permission denials for security audit
+      if (exception instanceof ForbiddenException || exception instanceof UnauthorizedException) {
+        const authContext = {
+          userId: request.user?.id || request.user?._id?.toString?.() || request.user?.userId,
+          ip: request.ip || request.headers['x-forwarded-for']?.split(',')[0] || request.socket?.remoteAddress || 'unknown',
+          endpoint: request.url,
+        };
+
+        const reason = typeof message === 'string' ? message : (message as any)?.message || 'Access denied';
+        this.auditService.logPermissionDenied(
+          authContext,
+          request.url,
+          request.method,
+          { httpStatus: status, reason },
+        );
+      }
     } else {
       // Unknown exceptions - sanitize completely
       status = HttpStatus.INTERNAL_SERVER_ERROR;

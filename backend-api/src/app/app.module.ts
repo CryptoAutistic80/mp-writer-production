@@ -23,6 +23,7 @@ import { WritingDeskJobsModule } from '../writing-desk-jobs/writing-desk-jobs.mo
 import { CheckoutModule } from '../checkout/checkout.module';
 import { UserSavedLettersModule } from '../user-saved-letters/user-saved-letters.module';
 import { StreamingStateModule } from '../streaming-state/streaming-state.module';
+import { AuditModule } from '../common/audit/audit.module';
 
 function validateConfig(config: Record<string, unknown>) {
   const errors: string[] = [];
@@ -166,6 +167,7 @@ function validateConfig(config: Record<string, unknown>) {
     WritingDeskJobsModule,
     UserSavedLettersModule,
     StreamingStateModule,
+    AuditModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
