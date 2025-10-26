@@ -16,6 +16,50 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  const trustProxyEnv = process.env.TRUST_PROXY?.toLowerCase();
+  const isCloudRun = Boolean(process.env.K_SERVICE);
+  const trustProxyEnabled =
+    trustProxyEnv === 'true' ||
+    trustProxyEnv === '1' ||
+    (!trustProxyEnv && isCloudRun);
+
+  if (trustProxyEnabled) {
+    // Honor X-Forwarded-* headers from the upstream proxy (Cloud Run, load balancer, etc.)
+    const expressApp = app.getHttpAdapter().getInstance();
+    expressApp.set('trust proxy', 1);
+  }
+
+  if (isProduction && trustProxyEnabled) {
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      const protoHeader = req.headers['x-forwarded-proto'];
+      const proto = Array.isArray(protoHeader)
+        ? protoHeader[0]
+        : protoHeader?.split(',')[0]?.trim();
+
+      if (proto !== 'https') {
+        const hostHeader = req.headers['x-forwarded-host'] || req.headers.host;
+
+        if (!hostHeader) {
+          return res.status(400).send('HTTPS required');
+        }
+
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          const redirectUrl = `https://${hostHeader}${req.originalUrl}`;
+          return res.redirect(301, redirectUrl);
+        }
+
+        return res.status(400).send('HTTPS required');
+      }
+
+      return next();
+    });
+  } else if (isProduction && !trustProxyEnabled) {
+    Logger.warn(
+      'HTTPS enforcement disabled because TRUST_PROXY is not enabled. Set TRUST_PROXY=1 (or deploy behind Cloud Run) to enforce HTTPS.'
+    );
+  }
   
   // Get AuditLogService instance for AllExceptionsFilter
   const auditService = app.get(AuditLogService);
@@ -52,7 +96,6 @@ async function bootstrap() {
   // 1. This is an API server (no HTML served)
   // 2. Frontend handles its own CSP in next.config.js
   // 3. API responses are JSON, not rendered in browser context
-  const isProduction = process.env.NODE_ENV === 'production';
   app.use(helmet({
     // Disable CSP for API server - frontend handles this
     contentSecurityPolicy: false,

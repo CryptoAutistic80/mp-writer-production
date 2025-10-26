@@ -24,6 +24,7 @@ Environment
     `OPENAI_DEEP_RESEARCH_REASONING_EFFORT` (default `medium`). The default
     `o4-mini-deep-research` model only accepts `medium`; other values will fall back
     automatically.
+- HTTPS enforcement: set `TRUST_PROXY=1` when running behind a reverse proxy (e.g., Cloud Run) so the API redirects HTTP traffic to HTTPS and honors `X-Forwarded-*` headers.
 
 Notes
 - Backend uses `ConfigModule` and `MongooseModule.forRootAsync` with global `ValidationPipe`.
