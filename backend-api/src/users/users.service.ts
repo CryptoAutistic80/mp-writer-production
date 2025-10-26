@@ -26,17 +26,38 @@ export class UsersService {
     name?: string;
     image?: string;
   }) {
-    // Try to find account mapping first
-    const existingAccount = await this.accountModel
+    // Strategy: Always prioritize provider + providerId mapping (most secure)
+    // Only fall back to email lookup if account mapping doesn't exist
+    // This prevents user enumeration via OAuth email discovery
+    
+    let user = null;
+    
+    // Try to find existing account mapping first
+    const accountMapping = await this.accountModel
       .findOne({ provider: input.provider, providerId: input.providerId })
       .lean();
-    if (existingAccount) {
-      const user = await this.userModel.findById(existingAccount.user).lean();
-      if (user) return user;
+    
+    if (accountMapping) {
+      // Existing account mapping found - use it (most secure path)
+      const existingUser = await this.userModel.findById(accountMapping.user).lean();
+      if (existingUser) return existingUser;
     }
-
-    // Fall back to email if available
-    let user = input.email ? await this.userModel.findOne({ email: input.email }) : null;
+    
+    // No account mapping exists - this is either:
+    // 1. First-time OAuth login for this provider
+    // 2. Existing user adding a new OAuth provider
+    
+    // Check if a user with this email already exists (to prevent duplicate accounts)
+    // This lookup happens regardless to maintain consistent timing
+    if (input.email) {
+      const existingUserByEmail = await this.userModel.findOne({ email: input.email }).lean();
+      if (existingUserByEmail) {
+        // User exists with this email - link the OAuth provider
+        user = existingUserByEmail;
+      }
+    }
+    
+    // If no user found by email, create a new user
     if (!user) {
       user = await this.userModel.create({
         email: input.email ?? `${input.provider}:${input.providerId}@example.invalid`,
@@ -44,14 +65,14 @@ export class UsersService {
         image: input.image,
       });
     }
-
-    // Ensure account mapping exists
+    
+    // Ensure account mapping exists for this provider + providerId
     await this.accountModel.updateOne(
       { provider: input.provider, providerId: input.providerId },
       { $setOnInsert: { user: (user as any)._id, provider: input.provider, providerId: input.providerId } },
       { upsert: true }
     );
-
+    
     // Return lean
     const lean = await this.userModel.findById((user as any)._id).lean();
     return lean;

@@ -22,6 +22,9 @@ import { EncryptionService } from '../crypto/encryption.service';
 import { WritingDeskJobsModule } from '../writing-desk-jobs/writing-desk-jobs.module';
 import { CheckoutModule } from '../checkout/checkout.module';
 import { UserSavedLettersModule } from '../user-saved-letters/user-saved-letters.module';
+import { StreamingStateModule } from '../streaming-state/streaming-state.module';
+import { AuditModule } from '../common/audit/audit.module';
+import { CsrfModule } from '../common/csrf/csrf.module';
 
 function validateConfig(config: Record<string, unknown>) {
   const errors: string[] = [];
@@ -40,7 +43,9 @@ function validateConfig(config: Record<string, unknown>) {
     }
   };
 
+  // Core required variables
   requireString('MONGO_URI');
+  requireString('REDIS_URL');
   requireString('JWT_SECRET', { minLength: 32, forbid: ['changeme'] });
 
   const dek = config.DATA_ENCRYPTION_KEY;
@@ -54,11 +59,47 @@ function validateConfig(config: Record<string, unknown>) {
     }
   }
 
+  // OpenAI API key is required for AI operations
+  requireString('OPENAI_API_KEY', { minLength: 20 });
+
+  // Validate APP_ORIGIN format if provided
   const appOrigin = config.APP_ORIGIN;
   if (appOrigin && typeof appOrigin === 'string') {
     if (!/^https?:\/\//i.test(appOrigin)) {
       errors.push('APP_ORIGIN must be an absolute http(s) URL');
     }
+  }
+
+  // Stripe validation - required if checkout is enabled
+  const stripeEnabled = config.STRIPE_CHECKOUT_ENABLED === '1' || config.STRIPE_CHECKOUT_ENABLED === 'true';
+  if (stripeEnabled) {
+    requireString('STRIPE_SECRET_KEY', { minLength: 20 });
+    requireString('STRIPE_WEBHOOK_SECRET', { minLength: 20 });
+    requireString('STRIPE_PRICE_ID_CREDITS_3');
+    requireString('STRIPE_PRICE_ID_CREDITS_5');
+    requireString('STRIPE_PRICE_ID_CREDITS_10');
+    
+    // Validate that stripe keys look correct
+    const stripeKey = config.STRIPE_SECRET_KEY;
+    if (typeof stripeKey === 'string' && !stripeKey.startsWith('sk_')) {
+      errors.push('STRIPE_SECRET_KEY must start with sk_');
+    }
+    const webhookSecret = config.STRIPE_WEBHOOK_SECRET;
+    if (typeof webhookSecret === 'string' && !webhookSecret.startsWith('whsec_')) {
+      errors.push('STRIPE_WEBHOOK_SECRET must start with whsec_');
+    }
+  }
+
+  // Google OAuth validation - if any Google OAuth key is provided, all must be provided
+  const hasGoogleClientId = typeof config.GOOGLE_CLIENT_ID === 'string' && config.GOOGLE_CLIENT_ID.trim().length > 0;
+  const hasGoogleClientSecret = typeof config.GOOGLE_CLIENT_SECRET === 'string' && config.GOOGLE_CLIENT_SECRET.trim().length > 0;
+  const hasGoogleCallback = typeof config.GOOGLE_CALLBACK_URL === 'string' && config.GOOGLE_CALLBACK_URL.trim().length > 0;
+  
+  if (hasGoogleClientId || hasGoogleClientSecret || hasGoogleCallback) {
+    // If any Google OAuth config is provided, all must be provided
+    if (!hasGoogleClientId) errors.push('GOOGLE_CLIENT_ID is required when Google OAuth is configured');
+    if (!hasGoogleClientSecret) errors.push('GOOGLE_CLIENT_SECRET is required when Google OAuth is configured');
+    if (!hasGoogleCallback) errors.push('GOOGLE_CALLBACK_URL is required when Google OAuth is configured');
   }
 
   if (errors.length) {
@@ -75,11 +116,41 @@ function validateConfig(config: Record<string, unknown>) {
       validate: validateConfig,
     }),
     TerminusModule,
-    ThrottlerModule.forRoot([{ ttl: 60, limit: 60 }]),
+    ThrottlerModule.forRoot([
+      { 
+        name: 'default',
+        ttl: 60, 
+        limit: 60 
+      },
+      {
+        name: 'ai',
+        ttl: 300, // 5 minutes
+        limit: 5
+      },
+      {
+        name: 'credit',
+        ttl: 600, // 10 minutes
+        limit: 10
+      },
+      {
+        name: 'webhook',
+        ttl: 60, // 1 minute
+        limit: 10
+      }
+    ]),
     MongooseModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         uri: config.getOrThrow<string>('MONGO_URI'),
+        maxPoolSize: 20,        // Allow up to 20 concurrent connections
+        minPoolSize: 5,         // Keep 5 connections always open
+        maxIdleTimeMS: 30000,   // Close idle connections after 30s
+        serverSelectionTimeoutMS: 5000,  // Fail fast if no server available
+        socketTimeoutMS: 45000, // 45s socket timeout
+        connectTimeoutMS: 10000, // 10s connection timeout
+        heartbeatFrequencyMS: 10000, // Check server health every 10s
+        retryWrites: true,      // Retry failed writes
+        retryReads: true,       // Retry failed reads
       }),
     }),
     NestModulesModule,
@@ -96,6 +167,9 @@ function validateConfig(config: Record<string, unknown>) {
     UserCreditsModule,
     WritingDeskJobsModule,
     UserSavedLettersModule,
+    StreamingStateModule,
+    AuditModule,
+    CsrfModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

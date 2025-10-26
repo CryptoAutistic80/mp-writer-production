@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiClient } from '../lib/api-client';
 
 type Address = {
   id: string;
@@ -48,12 +49,10 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/addresses/lookup?postcode=${encodeURIComponent(pc)}`, { cache: 'no-store', credentials: 'include' });
+      const json: any = await apiClient.get(`/api/addresses/lookup?postcode=${encodeURIComponent(pc)}`);
       let items: Address[] = [];
-      if (res.ok) {
-        const json: any = await res.json();
-        const raw = json?.items ?? json?.addresses ?? json?.result;
-        if (Array.isArray(raw)) {
+      const raw = json?.items ?? json?.addresses ?? json?.result;
+      if (Array.isArray(raw)) {
           // Accept various shapes: strings; label-only suggestions from backend; or full objects
           items = raw.map((r: any, i: number) => {
             if (typeof r === 'string') {
@@ -89,12 +88,6 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
             } as Address;
           });
         }
-      } else {
-        const msg = await res.text().catch(() => '');
-        setAddresses([]);
-        setError(msg || `Address provider error (HTTP ${res.status}). Please check configuration.`);
-        return;
-      }
       setAddresses(items);
       if (!items.length) setError('No addresses found for that postcode.');
     } catch (err) {
@@ -137,9 +130,7 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
     setLoading(true);
     try {
       const pc = chosen?.postcode || normalisePostcode(postcode) || '';
-      const res = await fetch(`/api/addresses/get?id=${encodeURIComponent(id)}${pc ? `&postcode=${encodeURIComponent(pc)}` : ''}`, { cache: 'no-store', credentials: 'include' });
-      if (!res.ok) throw new Error(`Failed to fetch address details (${res.status})`);
-      const json: any = await res.json();
+      const json: any = await apiClient.get(`/api/addresses/get?id=${encodeURIComponent(id)}${pc ? `&postcode=${encodeURIComponent(pc)}` : ''}`);
       const item = json?.item || json?.address || json;
       if (item && item.id) {
         const a: Address = {
@@ -169,9 +160,7 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/user/address', { credentials: 'include', cache: 'no-store' });
-        if (!res.ok) return;
-        const json: any = await res.json().catch(() => null);
+        const json: any = await apiClient.get('/api/user/address').catch(() => null);
         const a = json?.address;
         if (a && a.postcode) {
           const addr: Address = { id: 'saved', line1: a.line1 || '', line2: a.line2 || '', city: a.city || '', county: a.county || '', postcode: a.postcode || '', label: '' };
@@ -197,16 +186,7 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
         postcode: current.postcode,
         telephone: trimmedTelephone,
       };
-      const res = await fetch('/api/user/address', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const msg = await res.text().catch(() => '');
-        throw new Error(msg || `Save failed (${res.status})`);
-      }
+      await apiClient.put('/api/user/address', body);
       setSavedMsg('Details saved');
     } catch (e: any) {
       setSavedMsg(e?.message || 'Save failed');
@@ -218,7 +198,7 @@ export default function AddressForm({ seedPostcode }: AddressFormProps) {
   const clearSaved = useCallback(async () => {
     setSavedMsg(null);
     try {
-      await fetch('/api/user/address', { method: 'DELETE', credentials: 'include' });
+      await apiClient.delete('/api/user/address');
       setSelected(null);
       setTelephone('');
     } catch {}

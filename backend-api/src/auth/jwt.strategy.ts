@@ -18,18 +18,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         (req: any) => {
           const raw = req?.headers?.cookie as string | undefined;
           if (!raw) return null;
-          // Minimal cookie parser for 'mpw_session'
+          // Minimal cookie parser for both cookie names (dev and prod)
           const parts = raw.split(';');
           for (const part of parts) {
             const [k, v] = part.trim().split('=');
-            if (k === 'mpw_session') return decodeURIComponent(v || '');
+            if (k === '__Host-mpw_session' || k === 'mpw_session') {
+              return decodeURIComponent(v || '');
+            }
           }
           return null;
         },
         ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('JWT_SECRET', 'changeme'),
+      secretOrKey: config.get<string>('JWT_SECRET'),
     });
   }
 

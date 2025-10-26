@@ -7,6 +7,7 @@ import { PurchaseMetadata } from '../purchases/dto/create-purchase.dto';
 import { CheckoutUser, CreditPackage } from './types';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
+import { AuditLogService } from '../common/audit/audit-log.service';
 
 @Injectable()
 export class CheckoutService {
@@ -21,6 +22,7 @@ export class CheckoutService {
     private readonly userCredits: UserCreditsService,
     private readonly purchases: PurchasesService,
     @InjectConnection() private readonly connection: Connection,
+    private readonly auditService: AuditLogService,
   ) {
     this.checkoutEnabled = this.parseBoolean(this.config.get('STRIPE_CHECKOUT_ENABLED'));
     const secretKey = this.config.get<string>('STRIPE_SECRET_KEY');
@@ -241,7 +243,7 @@ export class CheckoutService {
 
   /**
    * Fulfill the order: add credits and create purchase record
-   * Uses MongoDB transaction for atomicity
+   * Uses MongoDB transaction for atomicity and idempotency
    */
   private async fulfillOrder(session: Stripe.Checkout.Session, credits: number) {
     const userId = session.metadata?.userId || session.client_reference_id;
@@ -268,40 +270,77 @@ export class CheckoutService {
     // Use transaction for atomicity
     const mongoSession = await this.connection.startSession();
     let balance;
+    let purchase;
+    let wasAlreadyProcessed = false;
 
     try {
       await mongoSession.withTransaction(async () => {
-        // Add credits
-        balance = await this.userCredits.addToMine(userId, credits);
-        
-        // Create purchase record
-        await this.purchases.create(userId, {
+        // Try to create purchase record first (idempotency check via unique index)
+        purchase = await this.purchases.create(userId, {
           plan: `credit_pack_${credits}`,
           amount: amountMinor,
           currency: session.currency ?? defaultCurrency,
           metadata,
         });
+
+        // Check if this is a newly created purchase or a duplicate
+        // If duplicate, the create() method returns existing purchase
+        const purchaseCreatedAt = new Date(purchase.createdAt || Date.now()).getTime();
+        const transactionStartTime = Date.now();
+        const isNewPurchase = (transactionStartTime - purchaseCreatedAt) < 5000; // Within 5 seconds
+
+        if (isNewPurchase) {
+          // Only add credits if this is a new purchase
+          balance = await this.userCredits.addToMine(userId, credits, `Purchase: ${session.id}`);
+          this.logger.log(`Fulfilled order for session ${session.id}: added ${credits} credits to user ${userId}`);
+        } else {
+          // Purchase already exists, don't add credits again
+          balance = await this.userCredits.getMine(userId);
+          wasAlreadyProcessed = true;
+          this.logger.log(`Session ${session.id} already processed, skipping credit addition`);
+        }
       });
 
       // Mark session as fulfilled in Stripe (outside transaction)
-      try {
+      if (!wasAlreadyProcessed) {
+        try {
+          const stripe = this.requireStripe();
+          await stripe.checkout.sessions.update(session.id, {
+            metadata: {
+              ...session.metadata,
+              fulfilled: 'true',
+            },
+          });
+        } catch (error) {
+          this.logger.warn(`Unable to mark session ${session.id} as fulfilled in Stripe: ${(error as Error).message}`);
+        }
+      }
+
+      // Log successful purchase completion
+      if (!wasAlreadyProcessed && purchase) {
         const stripe = this.requireStripe();
-        await stripe.checkout.sessions.update(session.id, {
-          metadata: {
-            ...session.metadata,
-            fulfilled: 'true',
-          },
-        });
-      } catch (error) {
-        this.logger.warn(`Unable to mark session ${session.id} as fulfilled in Stripe: ${(error as Error).message}`);
+        this.auditService.logPurchaseCompleted(
+          { userId },
+          session.id,
+          amountMinor,
+          credits,
+          { currency: session.currency ?? defaultCurrency, priceId },
+        );
       }
 
       return { 
-        alreadyProcessed: false, 
-        creditsAdded: credits, 
+        alreadyProcessed: wasAlreadyProcessed, 
+        creditsAdded: wasAlreadyProcessed ? 0 : credits, 
         balance: balance.credits 
       };
     } catch (error) {
+      // Log purchase failure
+      this.auditService.logPurchaseFailed(
+        { userId },
+        session.id,
+        (error as Error).message || String(error),
+        { amount: amountMinor, credits },
+      );
       this.logger.error(`Transaction failed for session ${session.id}: ${(error as Error).message}`);
       throw error;
     } finally {

@@ -18,9 +18,9 @@ import { UserCreditsModule } from '../user-credits/user-credits.module';
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'changeme'),
-        // Session length: 3 hours
-        signOptions: { expiresIn: '3h' },
+        secret: config.get<string>('JWT_SECRET'),
+        // Access token: 1 hour (long enough for deep research operations)
+        signOptions: { expiresIn: '1h' },
       }),
     }),
   ],

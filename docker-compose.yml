@@ -1,28 +1,48 @@
+# Docker Compose configuration for MP Writer
+#
+# IMPORTANT: Copy env.example..txt to .env and fill in required values
+# Critical security variables use ${VAR:?error} syntax and will fail if not set
+# Optional variables use ${VAR:-default} syntax and have safe defaults
+#
+# See env.example..txt for all required variables and their descriptions
+
 services:
   backend-api:
     build:
       context: .
       dockerfile: backend-api/Dockerfile
+    depends_on:
+      - redis
     environment:
+      # Required Security Variables
       - MONGO_URI=${MONGO_URI:?MONGO_URI is required}
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required - generate with openssl rand -hex 32}
+      - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:?DATA_ENCRYPTION_KEY required - generate with openssl rand -hex 32}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      
+      # Application Configuration
       - PORT=4000
       - APP_ORIGIN=http://localhost:3000
-      - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:-}
-      # Address lookup provider (getaddress.io)
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      
+      # Optional Address Lookup Provider (getaddress.io)
       - GETADDRESS_API_KEY=${GETADDRESS_API_KEY:-}
       - ADDRESS_DEBUG=${ADDRESS_DEBUG:-}
+      
+      # Development Settings
       - ALLOW_DEV_CREDIT_MUTATION=${ALLOW_DEV_CREDIT_MUTATION:-1}
-      # Google OAuth (set these in your local override if needed)
+      
+      # Optional Google OAuth (set in local override if needed)
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - GOOGLE_CALLBACK_URL=http://localhost:4000/api/auth/google/callback
-      # OpenAI
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      
+      # OpenAI Model Configuration
       - OPENAI_MODEL=gpt-4o-mini
       - OPENAI_DEEP_RESEARCH_REASONING_SUMMARY=${OPENAI_DEEP_RESEARCH_REASONING_SUMMARY:-auto}
       - OPENAI_DEEP_RESEARCH_REASONING_EFFORT=${OPENAI_DEEP_RESEARCH_REASONING_EFFORT:-medium} # o4-mini-deep-research supports medium only
-      # Stripe
+      
+      # Optional Stripe Integration (set STRIPE_CHECKOUT_ENABLED=1 and provide all Stripe vars)
       - STRIPE_CHECKOUT_ENABLED=${STRIPE_CHECKOUT_ENABLED:-0}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
@@ -57,3 +77,8 @@ services:
       - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
     ports:
       - "3000:3000"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"

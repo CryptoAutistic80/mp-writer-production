@@ -1,5 +1,7 @@
-import { BadGatewayException, Injectable } from '@nestjs/common';
+import { BadGatewayException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { circuitBreaker, ConsecutiveBreaker, handleAll, timeout, wrap } from 'cockatiel';
+import { TimeoutStrategy } from 'cockatiel';
 
 export interface NormalizedAddress {
   id: string;
@@ -19,6 +21,17 @@ function normalizePostcode(input: string) {
 
 @Injectable()
 export class AddressesService {
+  private readonly logger = new Logger(AddressesService.name);
+  
+  // Circuit breaker for GetAddress.io API
+  private readonly getAddressPolicy = wrap(
+    timeout(5000, TimeoutStrategy.Aggressive),
+    circuitBreaker(handleAll, {
+      halfOpenAfter: 30000,
+      breaker: new ConsecutiveBreaker(5),
+    })
+  );
+
   constructor(private readonly config: ConfigService) {}
 
   async lookup(postcode: string): Promise<NormalizedAddress[]> {
@@ -30,12 +43,24 @@ export class AddressesService {
     // Single provider: getAddress.io
     if (getAddressKey) {
       const attemptAutocomplete = async (pcParam: string) => {
-        const url = `https://api.getaddress.io/autocomplete/${encodeURIComponent(pcParam)}?api-key=${encodeURIComponent(getAddressKey)}`;
-        const logUrl = `https://api.getaddress.io/autocomplete/${encodeURIComponent(pcParam)}`;
-        if (debug) console.log(`[addresses] GET ${logUrl}`);
-        const res = await fetch(url);
-        if (debug) console.log(`[addresses] <= ${res.status}`);
-        return { res, url: logUrl };
+        const url = `https://api.getaddress.io/autocomplete/${encodeURIComponent(pcParam)}`;
+        if (debug) console.log(`[addresses] GET ${url}`);
+        try {
+          const res = await this.getAddressPolicy.execute(() =>
+            fetch(url, {
+              headers: {
+                'api-key': getAddressKey,
+              },
+            })
+          );
+          if (debug) console.log(`[addresses] <= ${res.status}`);
+          return { res, url };
+        } catch (error) {
+          this.logger.error(`GetAddress.io API failed: ${(error as Error)?.message ?? error}`);
+          throw new ServiceUnavailableException(
+            'The address lookup service is temporarily unavailable. Please try again in a moment.'
+          );
+        }
       };
 
       try {
@@ -97,38 +122,62 @@ export class AddressesService {
     // In production, return empty list
     return [];
   }
+
+  /**
+   * Fetch a single full address by id with circuit breaker protection
+   * This avoids N+1 request amplification during lookup.
+   */
+  async getById(id: string, defaultPostcode?: string): Promise<NormalizedAddress | null> {
+    const getAddressKey = this.config.get<string>('GETADDRESS_API_KEY');
+    const debug = this.config.get<string>('ADDRESS_DEBUG') === '1';
+    if (!getAddressKey) return null;
+    if (!id) return null;
+
+    const url = `https://api.getaddress.io/get/${encodeURIComponent(id)}`;
+    if (debug) console.log(`[addresses] GET ${url}`);
+    
+    try {
+      const res = await this.getAddressPolicy.execute(() =>
+        fetch(url, {
+          headers: {
+            'api-key': getAddressKey,
+          },
+        })
+      );
+      
+      if (debug) console.log(`[addresses] <= ${res.status}`);
+      if (!res.ok) return null;
+
+      const full: any = await res.json();
+      const line1 = (full.line_1 || `${full.building_number || ''} ${full.thoroughfare || ''}`).trim();
+      const line2 = (full.line_2 || '').trim();
+      const city = full.town_or_city || '';
+      const county = full.county || '';
+      const postcode = full.postcode || defaultPostcode || '';
+      const label = [line1, line2, city, county, postcode].filter(Boolean).join(', ');
+
+      return {
+        id: id.toString(),
+        line1,
+        line2,
+        city,
+        county,
+        postcode,
+        label,
+      } as NormalizedAddress;
+    } catch (error) {
+      this.logger.error(`GetAddress.io getById failed: ${(error as Error)?.message ?? error}`);
+      throw new ServiceUnavailableException(
+        'The address lookup service is temporarily unavailable. Please try again in a moment.'
+      );
+    }
+  }
 }
 
-// Separate function on the service to fetch a single full address by id.
-// This avoids N+1 request amplification during lookup.
+// Backward compatibility wrapper
 export async function getAddressById(config: ConfigService, id: string, defaultPostcode?: string): Promise<NormalizedAddress | null> {
-  const getAddressKey = config.get<string>('GETADDRESS_API_KEY');
-  const debug = config.get<string>('ADDRESS_DEBUG') === '1';
-  if (!getAddressKey) return null;
-  if (!id) return null;
-
-  const url = `https://api.getaddress.io/get/${encodeURIComponent(id)}?api-key=${encodeURIComponent(getAddressKey)}`;
-  const logUrl = `https://api.getaddress.io/get/${encodeURIComponent(id)}`;
-  if (debug) console.log(`[addresses] GET ${logUrl}`);
-  const res = await fetch(url);
-  if (debug) console.log(`[addresses] <= ${res.status}`);
-  if (!res.ok) return null;
-
-  const full: any = await res.json();
-  const line1 = (full.line_1 || `${full.building_number || ''} ${full.thoroughfare || ''}`).trim();
-  const line2 = (full.line_2 || '').trim();
-  const city = full.town_or_city || '';
-  const county = full.county || '';
-  const postcode = full.postcode || defaultPostcode || '';
-  const label = [line1, line2, city, county, postcode].filter(Boolean).join(', ');
-
-  return {
-    id: id.toString(),
-    line1,
-    line2,
-    city,
-    county,
-    postcode,
-    label,
-  } as NormalizedAddress;
+  // This function is deprecated but kept for backward compatibility
+  // Callers should use AddressesService.getById() instead
+  const service = new AddressesService(config);
+  return service.getById(id, defaultPostcode);
 }

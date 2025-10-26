@@ -215,6 +215,11 @@ pre {
 .letter-preview p:last-child {
   margin-bottom: 0;
 }
+
+.letter-preview a {
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
 .list-item-link svg:last-child {
   height: 1rem;
   transition-property: all;

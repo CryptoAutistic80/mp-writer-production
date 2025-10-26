@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { circuitBreaker, ConsecutiveBreaker, handleAll, timeout, wrap } from 'cockatiel';
+import { TimeoutStrategy } from 'cockatiel';
 
 interface LookupResult {
   constituency: string;
@@ -17,22 +19,64 @@ interface LookupResult {
 
 @Injectable()
 export class MpsService {
+  private readonly logger = new Logger(MpsService.name);
+  
+  // Circuit breaker for Postcodes.io API
+  private readonly postcodesPolicy = wrap(
+    timeout(5000, TimeoutStrategy.Aggressive),
+    circuitBreaker(handleAll, {
+      halfOpenAfter: 30000, // 30 seconds
+      breaker: new ConsecutiveBreaker(5), // Open after 5 consecutive failures
+    })
+  );
+  
+  // Circuit breaker for Parliament Members API
+  private readonly parliamentPolicy = wrap(
+    timeout(5000, TimeoutStrategy.Aggressive),
+    circuitBreaker(handleAll, {
+      halfOpenAfter: 30000,
+      breaker: new ConsecutiveBreaker(5),
+    })
+  );
   private normalizePostcode(input: string): string {
     return input.replace(/\s+/g, '').toUpperCase();
+  }
+
+  /**
+   * Wrapper for Parliament API calls with circuit breaker and timeout
+   */
+  private async fetchParliament(url: string): Promise<Response> {
+    try {
+      return await this.parliamentPolicy.execute(() => fetch(url));
+    } catch (error) {
+      this.logger.warn(`Parliament API call failed: ${url} - ${(error as Error)?.message ?? error}`);
+      throw error;
+    }
   }
 
   async lookupByPostcode(postcodeRaw: string): Promise<LookupResult> {
     const postcode = this.normalizePostcode(postcodeRaw);
 
-    // First: fetch constituency via postcodes.io
-    const pcRes = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`);
+    // First: fetch constituency via postcodes.io with circuit breaker
+    let pcRes: Response;
+    try {
+      pcRes = await this.postcodesPolicy.execute(() =>
+        fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`)
+      );
+    } catch (error) {
+      this.logger.error(`Postcodes.io API failed: ${(error as Error)?.message ?? error}`);
+      throw new ServiceUnavailableException(
+        'The postcode lookup service is temporarily unavailable. Please try again in a moment.'
+      );
+    }
+    
     if (!pcRes.ok) {
-      throw new Error('POSTCODE_NOT_FOUND');
+      throw new NotFoundException('Postcode not found. Please check the postcode and try again.');
     }
     const pcJson: any = await pcRes.json();
     const constituency: string | undefined = pcJson?.result?.parliamentary_constituency;
     if (!constituency) {
-      throw new Error('CONSTITUENCY_NOT_FOUND');
+      throw new NotFoundException('No parliamentary constituency found for this postcode.');
     }
 
     // Second: look up current MP via UK Parliament Members API
@@ -47,7 +91,7 @@ export class MpsService {
     try {
       const cUrl = new URL('https://members-api.parliament.uk/api/Location/Constituency/Search');
       cUrl.searchParams.set('searchText', constituency);
-      const cRes = await fetch(cUrl.toString());
+      const cRes = await this.fetchParliament(cUrl.toString());
       if (cRes.ok) {
         const cj: any = await cRes.json().catch(() => ({}));
         const cItems: any[] = cj?.items || cj?.results || [];
@@ -62,7 +106,7 @@ export class MpsService {
           mUrl.searchParams.set('House', '1');
           mUrl.searchParams.set('IsCurrentMember', 'true');
           mUrl.searchParams.set('ConstituencyId', String(cId));
-          const mRes = await fetch(mUrl.toString());
+          const mRes = await this.fetchParliament(mUrl.toString());
           if (mRes.ok) {
             const mj: any = await mRes.json().catch(() => ({}));
             const mItems: any[] = mj?.items || mj?.results || [];
@@ -83,7 +127,7 @@ export class MpsService {
         byConst.searchParams.set('IsCurrentMember', 'true');
         byConst.searchParams.set('Constituency', constituency);
         byConst.searchParams.set('Take', '50');
-        const res = await fetch(byConst.toString());
+        const res = await this.fetchParliament(byConst.toString());
         if (res.ok) {
           const json: any = await res.json().catch(() => ({}));
           const items: any[] = json?.items || json?.results || [];
@@ -107,7 +151,7 @@ export class MpsService {
         url.searchParams.set('House', '1');
         url.searchParams.set('IsCurrentMember', 'true');
         url.searchParams.set('Take', '650');
-        const mpRes = await fetch(url.toString());
+        const mpRes = await this.fetchParliament(url.toString());
         if (mpRes.ok) {
           const json: any = await mpRes.json().catch(() => ({}));
           const items: any[] = json?.items || json?.results || [];
@@ -143,7 +187,7 @@ export class MpsService {
       if (id) {
         try {
           const contactUrl = `https://members-api.parliament.uk/api/Members/${id}/Contact`; // returns items
-          const resp = await fetch(contactUrl);
+          const resp = await this.fetchParliament(contactUrl);
           if (resp.ok) {
             const j: any = await resp.json().catch(() => ({}));
             const items: any[] = j?.items || j?.value || [];

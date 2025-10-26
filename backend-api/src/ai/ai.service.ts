@@ -1,4 +1,13 @@
-import { BadRequestException, Injectable, Logger, MessageEvent } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  MessageEvent,
+  InternalServerErrorException,
+  ServiceUnavailableException,
+  OnModuleInit,
+  OnApplicationShutdown,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
 import { WritingDeskFollowUpDto } from './dto/writing-desk-follow-up.dto';
@@ -18,6 +27,8 @@ import {
 import { UpsertActiveWritingDeskJobDto } from '../writing-desk-jobs/dto/upsert-active-writing-desk-job.dto';
 import { Observable, ReplaySubject, Subscription } from 'rxjs';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
+import { StreamingStateService } from '../streaming-state/streaming-state.service';
+import { StreamingRunState, StreamingRunKind } from '../streaming-state/streaming-state.types';
 
 const FOLLOW_UP_CREDIT_COST = 0.1;
 const DEEP_RESEARCH_CREDIT_COST = 0.7;
@@ -70,6 +81,11 @@ const BACKGROUND_POLL_INTERVAL_MS = 2000;
 const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 const LETTER_RUN_BUFFER_SIZE = 2000;
 const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
+const STREAMING_RUN_ORPHAN_THRESHOLD_MS = 2 * 60 * 1000;
+// Stream inactivity timeouts - max time between events before aborting
+const LETTER_STREAM_INACTIVITY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+const RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
 type LetterStreamPayload =
   | { type: 'status'; status: string; remainingCredits?: number | null }
@@ -367,11 +383,18 @@ Output:
 Return only the JSON object defined by the schema. Do not output explanations or text outside the JSON.`;
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(AiService.name);
   private openaiClient: any | null = null;
+  private openaiClientCreatedAt: number | null = null;
+  private openaiClientErrorCount: number = 0;
   private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
   private readonly letterRuns = new Map<string, LetterRun>();
+  private readonly instanceId: string;
+  private cleanupSweepInterval: NodeJS.Timeout | null = null;
+  
+  private static readonly CLIENT_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+  private static readonly CLIENT_MAX_ERRORS = 5;
 
   constructor(
     private readonly config: ConfigService,
@@ -380,13 +403,228 @@ export class AiService {
     private readonly userMp: UserMpService,
     private readonly users: UsersService,
     private readonly userAddress: UserAddressService,
-  ) {}
+    private readonly streamingState: StreamingStateService,
+  ) {
+    this.instanceId = this.streamingState.getInstanceId();
+  }
+
+  async onModuleInit() {
+    await this.recoverStaleStreamingRuns();
+    this.startCleanupSweep();
+  }
+
+  onModuleDestroy() {
+    if (this.cleanupSweepInterval) {
+      clearInterval(this.cleanupSweepInterval);
+      this.cleanupSweepInterval = null;
+    }
+  }
+
+  async onApplicationShutdown(signal?: string) {
+    this.logger.log(`Graceful shutdown triggered (signal: ${signal ?? 'unknown'}), draining streaming operations...`);
+    
+    try {
+      // Stop periodic cleanup sweep
+      if (this.cleanupSweepInterval) {
+        clearInterval(this.cleanupSweepInterval);
+        this.cleanupSweepInterval = null;
+      }
+
+      // Get all active runs from Redis
+      const allRuns = await this.streamingState.listAllRuns();
+      const activeRuns = allRuns.filter(run => run.status === 'running' && run.instanceId === this.instanceId);
+      
+      this.logger.log(`Found ${activeRuns.length} active streaming runs to drain`);
+
+      // Drain each active run
+      const drainPromises = activeRuns.map(async (run) => {
+        try {
+          const runKey = run.runKey;
+          
+          // Try to abort the run in local memory maps
+          const localRun = run.type === 'deep_research' 
+            ? this.deepResearchRuns.get(runKey)
+            : this.letterRuns.get(runKey);
+          
+          if (localRun) {
+            // Abort OpenAI controller if exists
+            // Note: The streaming operations store controller references in promises
+            // We'll mark the run as cancelled in Redis and let existing cleanup handle it
+            
+            // Update status to cancelled in Redis
+            await this.streamingState.updateRun(run.type, runKey, { status: 'cancelled' });
+            
+            this.logger.log(`Cancelled ${run.type} run: ${runKey}`);
+          } else {
+            // Run exists in Redis but not in local memory - mark as cancelled
+            await this.streamingState.updateRun(run.type, runKey, { status: 'cancelled' });
+            this.logger.log(`Marked orphaned ${run.type} run as cancelled: ${runKey}`);
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to drain run ${run.runKey}: ${(error as Error)?.message ?? error}`);
+        }
+      });
+
+      await Promise.allSettled(drainPromises);
+      
+      this.logger.log('Streaming operations drained successfully');
+    } catch (error) {
+      this.logger.error(`Error during streaming drain: ${(error as Error)?.message ?? error}`);
+    }
+  }
+
+  /**
+   * Periodic sweep to remove stale Map entries as a safety net
+   * Prevents memory leaks if cleanup timers fail or are not scheduled
+   */
+  private startCleanupSweep() {
+    const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // Every 10 minutes
+    // Use longer threshold for letter runs (typically complete in < 5 min)
+    const LETTER_STALE_THRESHOLD_MS = LETTER_RUN_TTL_MS + (2 * 60 * 1000); // 7 minutes
+    // Use much longer threshold for research runs (can take up to 20 min)
+    const RESEARCH_STALE_THRESHOLD_MS = BACKGROUND_POLL_TIMEOUT_MS + (5 * 60 * 1000); // 25 minutes
+
+    this.cleanupSweepInterval = setInterval(() => {
+      const now = Date.now();
+      let cleanedLetter = 0;
+      let cleanedResearch = 0;
+
+      // Sweep letter runs - only remove if completed/errored AND old enough
+      for (const [key, run] of this.letterRuns.entries()) {
+        const age = now - run.startedAt;
+        const isStale = age > LETTER_STALE_THRESHOLD_MS;
+        const isTerminated = run.status === 'completed' || run.status === 'error';
+        
+        if (isStale && isTerminated) {
+          this.letterRuns.delete(key);
+          cleanedLetter++;
+          void this.clearStreamingRun('letter', key).catch((err) => {
+            this.logger.warn(`Failed to clear stale letter run ${key}: ${(err as Error)?.message}`);
+          });
+        }
+      }
+
+      // Sweep deep research runs - longer threshold since they can run 20+ minutes
+      for (const [key, run] of this.deepResearchRuns.entries()) {
+        const age = now - run.startedAt;
+        const isStale = age > RESEARCH_STALE_THRESHOLD_MS;
+        const isTerminated = run.status === 'completed' || run.status === 'error';
+        
+        if (isStale && isTerminated) {
+          this.deepResearchRuns.delete(key);
+          cleanedResearch++;
+          void this.clearStreamingRun('deep_research', key).catch((err) => {
+            this.logger.warn(`Failed to clear stale research run ${key}: ${(err as Error)?.message}`);
+          });
+        }
+      }
+
+      if (cleanedLetter > 0 || cleanedResearch > 0) {
+        this.logger.log(
+          `Cleanup sweep removed ${cleanedLetter} letter runs and ${cleanedResearch} research runs`
+        );
+      }
+    }, SWEEP_INTERVAL_MS);
+
+    // Don't keep process alive just for cleanup sweeps
+    if (typeof (this.cleanupSweepInterval as any)?.unref === 'function') {
+      (this.cleanupSweepInterval as any).unref();
+    }
+  }
 
   private async getOpenAiClient(apiKey: string) {
-    if (this.openaiClient) return this.openaiClient;
-    const { default: OpenAI } = await import('openai');
-    this.openaiClient = new OpenAI({ apiKey });
+    // Check if client needs recreation due to age or error count
+    const now = Date.now();
+    const needsRecreation =
+      !this.openaiClient ||
+      (this.openaiClientCreatedAt && now - this.openaiClientCreatedAt > AiService.CLIENT_MAX_AGE_MS) ||
+      this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS;
+
+    if (needsRecreation) {
+      if (this.openaiClient) {
+        const reason = 
+          !this.openaiClientCreatedAt ? 'no timestamp' :
+          (now - this.openaiClientCreatedAt > AiService.CLIENT_MAX_AGE_MS) ? 'age limit (30 minutes)' :
+          `error count (${this.openaiClientErrorCount})`;
+        this.logger.log(`Recreating OpenAI client due to: ${reason}`);
+      }
+      const { default: OpenAI } = await import('openai');
+      this.openaiClient = new OpenAI({
+        apiKey,
+        timeout: 60000, // 60 seconds - accommodates streaming operations
+        maxRetries: 3,
+      });
+      this.openaiClientCreatedAt = now;
+      this.openaiClientErrorCount = 0;
+    }
+    
     return this.openaiClient;
+  }
+
+  private handleOpenAiError(error: any, context: string): never {
+    this.openaiClientErrorCount++;
+    const errorMessage = error?.message || 'unknown error';
+    this.logger.error(`OpenAI error in ${context}: ${errorMessage} (error count: ${this.openaiClientErrorCount})`);
+    
+    if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+      this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+    }
+    
+    throw error;
+  }
+
+  private handleOpenAiSuccess() {
+    // Reset error count on successful operation
+    if (this.openaiClientErrorCount > 0) {
+      this.logger.log(`OpenAI client recovered after ${this.openaiClientErrorCount} previous errors`);
+      this.openaiClientErrorCount = 0;
+    }
+  }
+
+  /**
+   * Wraps an async iterable stream with inactivity timeout protection.
+   * If no events are received within the specified timeout period, the onTimeout
+   * callback is invoked and iteration stops.
+   */
+  private async* createStreamWithTimeout<T>(
+    stream: AsyncIterable<T>,
+    timeoutMs: number,
+    onTimeout: () => void,
+  ): AsyncGenerator<T, void, unknown> {
+    let lastEventTime = Date.now();
+    let timeoutTriggered = false;
+    let timedOut = false;
+
+    // Start a timer that checks for inactivity
+    const checkInterval = setInterval(() => {
+      const elapsed = Date.now() - lastEventTime;
+      if (elapsed >= timeoutMs && !timeoutTriggered) {
+        timeoutTriggered = true;
+        clearInterval(checkInterval);
+        onTimeout();
+      }
+    }, 1000); // Check every second
+
+    try {
+      for await (const event of stream) {
+        lastEventTime = Date.now(); // Reset timeout on each event
+        
+        // If we timed out in the previous iteration, stop yielding
+        if (timedOut) {
+          break;
+        }
+
+        yield event;
+      }
+    } catch (error) {
+      // Re-throw errors, but if timeout triggered, mark as timed out
+      if (timeoutTriggered) {
+        timedOut = true;
+      }
+      throw error;
+    } finally {
+      clearInterval(checkInterval);
+    }
   }
 
   private resolveTranscriptionModel(modelFromRequest?: TranscriptionModel): TranscriptionModel {
@@ -417,14 +655,19 @@ export class AiService {
       // In dev without key, return a stub so flows work
       return { content: `DEV-STUB: ${input.prompt.slice(0, 120)}...` };
     }
-    const client = await this.getOpenAiClient(apiKey);
-    const resp = await client.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: input.prompt }],
-      temperature: 0.7,
-    });
-    const content = resp.choices?.[0]?.message?.content ?? '';
-    return { content };
+    try {
+      const client = await this.getOpenAiClient(apiKey);
+      const resp = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: input.prompt }],
+        temperature: 0.7,
+      });
+      this.handleOpenAiSuccess();
+      const content = resp.choices?.[0]?.message?.content ?? '';
+      return { content };
+    } catch (error) {
+      this.handleOpenAiError(error, 'generate');
+    }
   }
 
   async generateWritingDeskFollowUps(userId: string | null | undefined, input: WritingDeskIntakeDto) {
@@ -550,6 +793,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         })}`,
       );
 
+      this.handleOpenAiSuccess();
       return {
         model,
         responseId: (response as any)?.id ?? null,
@@ -563,6 +807,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           error instanceof Error ? `${error.name}: ${error.message}` : (error as unknown as string)
         }`,
       );
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in generateWritingDeskFollowUps (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
       await this.refundCredits(userId, FOLLOW_UP_CREDIT_COST);
       throw error;
     }
@@ -639,7 +894,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       };
 
-      void attach();
+      attach().catch((error) => {
+        // Handle any unhandled promise rejections from attach()
+        // This should never happen due to try-catch above, but provides defense-in-depth
+        if (!_settled && !subscriber.closed) {
+          subscriber.error(error);
+        }
+      });
 
       return () => {
         subscription?.unsubscribe();
@@ -700,7 +961,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       };
 
-      void attach();
+      attach().catch((error) => {
+        // Handle any unhandled promise rejections from attach()
+        // This should never happen due to try-catch above, but provides defense-in-depth
+        if (!subscriber.closed) {
+          subscriber.error(error);
+        }
+      });
 
       return () => {
         if (subscription) {
@@ -742,8 +1009,20 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       } else {
         return existing;
       }
-    } else if (options?.createIfMissing === false) {
-      throw new BadRequestException('We could not resume letter composition. Please start a new letter.');
+    } else {
+      const persisted = await this.streamingState.getRun('letter', key);
+      if (persisted) {
+        if (persisted.responseId) {
+          return this.resumeLetterRunFromState({
+            persisted,
+            userId,
+            baselineJob,
+          });
+        }
+        await this.handleOrphanedRun(persisted);
+      } else if (options?.createIfMissing === false) {
+        throw new BadRequestException('We could not resume letter composition. Please start a new letter.');
+      }
     }
 
     const tone = this.normaliseLetterTone(options?.tone ?? baselineJob.letterTone ?? null);
@@ -773,6 +1052,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     this.letterRuns.set(key, run);
 
+    await this.registerStreamingRun({
+      type: 'letter',
+      runKey: key,
+      userId,
+      jobId: baselineJob.jobId,
+      meta: { tone },
+    });
+
     run.promise = this.executeLetterRun({
       run,
       userId,
@@ -793,11 +1080,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     baselineJob: ActiveWritingDeskJobResource;
     subject: ReplaySubject<LetterStreamPayload>;
     researchContent: string;
+    resumeFromState?: { responseId: string | null; charged: boolean; remainingCredits: number | null };
   }) {
-    const { run, userId, baselineJob, subject, researchContent } = params;
+    const { run, userId, baselineJob, subject, researchContent, resumeFromState } = params;
+    const heartbeat = this.createStreamingHeartbeat('letter', run.key);
     const tone = run.tone;
     let deductionApplied = false;
-    let remainingCredits: number | null = null;
+    let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
     let controller: { abort: () => void } | null = null;
     let jsonBuffer = '';
     let quietPeriodTimer: NodeJS.Timeout | null = null;
@@ -807,6 +1096,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     const send = (payload: LetterStreamPayload) => {
       subject.next(payload);
+      heartbeat();
     };
 
     const persistProgressIfNeeded = async (html: string) => {
@@ -834,10 +1124,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     };
 
     try {
-      const { credits: creditsAfterCharge } = await this.userCredits.deductFromMine(userId, LETTER_CREDIT_COST);
-      deductionApplied = true;
-      remainingCredits = Math.round(creditsAfterCharge * 100) / 100;
-      run.remainingCredits = remainingCredits;
+      if (resumeFromState?.responseId) {
+        deductionApplied = resumeFromState.charged;
+        remainingCredits = resumeFromState.remainingCredits ?? run.remainingCredits;
+        run.remainingCredits = remainingCredits;
+      } else {
+        const { credits: creditsAfterCharge } = await this.userCredits.deductFromMine(userId, LETTER_CREDIT_COST);
+        deductionApplied = true;
+        remainingCredits = Math.round(creditsAfterCharge * 100) / 100;
+        run.remainingCredits = remainingCredits;
+        await this.touchStreamingRun('letter', run.key, {
+          meta: { charged: true, remainingCredits },
+        });
+      }
 
       await this.persistLetterState(userId, baselineJob, {
         status: 'generating',
@@ -849,6 +1148,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       });
 
       send({ type: 'status', status: 'Composing your letter…', remainingCredits });
+      heartbeat({ status: 'running', responseId: run.responseId });
 
       const apiKey = this.config.get<string>('OPENAI_API_KEY');
       const model = this.config.get<string>('OPENAI_LETTER_MODEL')?.trim() || 'gpt-5';
@@ -903,6 +1203,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           ),
           remainingCredits,
         });
+        await this.touchStreamingRun('letter', run.key, {
+          status: 'completed',
+          responseId: 'dev-stub',
+          meta: { tone },
+        });
+        await this.clearStreamingRun('letter', run.key);
         subject.complete();
         
         // Clean up the quiet period timer
@@ -914,29 +1220,33 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       const client = await this.getOpenAiClient(apiKey);
-      const stream = client.responses.stream({
-        model,
-        input: [
-          { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
-          { role: 'user', content: [{ type: 'input_text', text: prompt }] },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'mp_letter',
-            strict: true,
-            schema: this.buildLetterResponseSchema(context),
-          },
-          verbosity,
-        },
-        reasoning: {
-          effort: reasoningEffort,
-          summary: 'auto',
-        },
-        tools: [],
-        store: true,
-        include: ['reasoning.encrypted_content'],
-      }) as ResponseStreamLike;
+      const stream = resumeFromState?.responseId
+        ? (client.responses.stream({
+            response_id: resumeFromState.responseId,
+          }) as ResponseStreamLike)
+        : (client.responses.stream({
+            model,
+            input: [
+              { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
+              { role: 'user', content: [{ type: 'input_text', text: prompt }] },
+            ],
+            text: {
+              format: {
+                type: 'json_schema',
+                name: 'mp_letter',
+                strict: true,
+                schema: this.buildLetterResponseSchema(context),
+              },
+              verbosity,
+            },
+            reasoning: {
+              effort: reasoningEffort,
+              summary: 'auto',
+            },
+            tools: [],
+            store: true,
+            include: ['reasoning.encrypted_content'],
+          }) as ResponseStreamLike);
 
       controller = stream.controller ?? null;
 
@@ -966,7 +1276,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       startQuietPeriodTimer();
 
-      for await (const event of stream) {
+      // Wrap stream with inactivity timeout
+      const timeoutWrappedStream = this.createStreamWithTimeout(
+        stream,
+        LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
+        () => {
+          this.logger.warn(`[letter] Stream inactivity timeout for job ${baselineJob.jobId}`);
+          controller?.abort();
+        }
+      );
+
+      for await (const event of timeoutWrappedStream) {
         // Reset quiet period timer on any activity
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
@@ -1048,6 +1368,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         if (eventType === 'response.completed') {
           const responseId = (normalised as any)?.response?.id ?? null;
           run.responseId = typeof responseId === 'string' ? responseId : null;
+          await this.touchStreamingRun('letter', run.key, { responseId: run.responseId ?? null });
           const usage = (normalised as any)?.response?.usage ?? null;
           this.logger.log(
             `[writing-desk letter-usage] ${JSON.stringify({
@@ -1112,6 +1433,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             ),
             remainingCredits,
           });
+          await this.touchStreamingRun('letter', run.key, {
+            status: 'completed',
+            responseId: responseId ?? run.responseId,
+          });
+          this.handleOpenAiSuccess();
           subject.complete();
           
           // Clean up the quiet period timer
@@ -1165,7 +1491,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       );
       
-      throw new Error('Letter composition ended unexpectedly. Please try again in a few moments.');
+      throw new ServiceUnavailableException('Letter composition ended unexpectedly. Please try again in a few moments.');
     } catch (error) {
       if (deductionApplied) {
         await this.refundCredits(userId, LETTER_CREDIT_COST);
@@ -1199,6 +1525,18 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         service: 'writing-desk-letter-composition'
       };
 
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in generateLetterForUser (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
+
       // Log the error with full context for debugging
       this.logger.error(
         `LETTER_COMPOSITION_ERROR: ${errorContext.errorMessage}`,
@@ -1227,12 +1565,25 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         );
       }
 
-      const message =
-        error instanceof BadRequestException
-          ? error.message
-          : 'Letter composition failed. Please try again in a few moments.';
+      let message: string;
+      if (error instanceof BadRequestException) {
+        message = error.message;
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message;
+        if (errorMsg.includes('timeout') || errorMsg.includes('inactivity')) {
+          message = 'Letter generation timed out due to inactivity. Please try again.';
+        } else {
+          message = 'Letter composition failed. Please try again in a few moments.';
+        }
+      } else {
+        message = 'Letter composition failed. Please try again in a few moments.';
+      }
 
       send({ type: 'error', message, remainingCredits });
+      await this.touchStreamingRun('letter', run.key, {
+        status: 'error',
+        responseId: run.responseId,
+      });
       subject.complete();
       
       // Clean up the quiet period timer
@@ -1249,6 +1600,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       }
 
+      await this.clearStreamingRun('letter', run.key);
       this.scheduleLetterRunCleanup(run);
     }
   }
@@ -1263,6 +1615,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.letterRuns.delete(run.key);
+      void this.clearStreamingRun('letter', run.key).catch((err) => {
+        this.logger.warn(`Failed to clear letter run ${run.key}: ${(err as Error)?.message}`);
+      });
     }, LETTER_RUN_TTL_MS);
     if (typeof (timer as any)?.unref === 'function') {
       (timer as any).unref();
@@ -1301,8 +1656,20 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       } else {
         return existing;
       }
-    } else if (options?.createIfMissing === false) {
-      throw new BadRequestException('We could not resume deep research. Please start a new run.');
+    } else {
+      const persisted = await this.streamingState.getRun('deep_research', key);
+      if (persisted) {
+        if (persisted.responseId) {
+          return this.resumeDeepResearchRunFromState({
+            persisted,
+            userId,
+            baselineJob,
+          });
+        }
+        await this.handleOrphanedRun(persisted);
+      } else if (options?.createIfMissing === false) {
+        throw new BadRequestException('We could not resume deep research. Please start a new run.');
+      }
     }
 
     const subject = new ReplaySubject<DeepResearchStreamPayload>(DEEP_RESEARCH_RUN_BUFFER_SIZE);
@@ -1320,8 +1687,147 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     this.deepResearchRuns.set(key, run);
 
+    await this.registerStreamingRun({
+      type: 'deep_research',
+      runKey: key,
+      userId,
+      jobId: baselineJob.jobId,
+    });
+
     run.promise = this.executeDeepResearchRun({ run, userId, baselineJob, subject }).catch((error) => {
       this.logger.error(`Deep research run encountered an unhandled error: ${(error as Error)?.message ?? error}`);
+      subject.error(error);
+    });
+
+    return run;
+  }
+
+  private async resumeDeepResearchRunFromState(params: {
+    persisted: StreamingRunState;
+    userId: string;
+    baselineJob: ActiveWritingDeskJobResource;
+  }): Promise<DeepResearchRun> {
+    const { persisted, userId, baselineJob } = params;
+    const subject = new ReplaySubject<DeepResearchStreamPayload>(DEEP_RESEARCH_RUN_BUFFER_SIZE);
+    const run: DeepResearchRun = {
+      key: persisted.runKey,
+      userId,
+      jobId: baselineJob.jobId,
+      subject,
+      status: 'running',
+      startedAt: persisted.startedAt,
+      cleanupTimer: null,
+      promise: null,
+      responseId: typeof persisted.responseId === 'string' ? persisted.responseId : null,
+    };
+
+    this.deepResearchRuns.set(persisted.runKey, run);
+    
+    const resumeMeta = persisted.meta ?? {};
+    const charged = (resumeMeta as Record<string, unknown>)?.charged === true;
+    const remainingCredits =
+      typeof (resumeMeta as Record<string, unknown>)?.remainingCredits === 'number'
+        ? ((resumeMeta as Record<string, unknown>).remainingCredits as number)
+        : null;
+
+    await this.touchStreamingRun('deep_research', run.key, {
+      status: 'running',
+      responseId: run.responseId,
+      meta: { charged, remainingCredits },
+    });
+
+    subject.next({
+      type: 'status',
+      status: 'Reconnecting to your research run…',
+      remainingCredits,
+    });
+
+    run.promise = this.executeDeepResearchRun({
+      run,
+      userId,
+      baselineJob,
+      subject,
+      resumeFromState: {
+        responseId: run.responseId,
+        charged,
+        remainingCredits,
+      },
+    }).catch((error) => {
+      this.logger.error(
+        `Deep research resume encountered an error: ${(error as Error)?.message ?? error}`,
+      );
+      subject.error(error);
+    });
+
+    return run;
+  }
+
+  private async resumeLetterRunFromState(params: {
+    persisted: StreamingRunState;
+    userId: string;
+    baselineJob: ActiveWritingDeskJobResource;
+  }): Promise<LetterRun> {
+    const { persisted, userId, baselineJob } = params;
+    const tone = this.normaliseLetterTone(
+      ((persisted.meta as Record<string, unknown>)?.tone as string | undefined) ?? baselineJob.letterTone ?? null,
+    );
+    if (!tone) {
+      throw new BadRequestException('Select a tone before composing the letter.');
+    }
+    const researchContent = this.normaliseResearchContent(baselineJob.researchContent ?? null);
+    if (!researchContent) {
+      throw new BadRequestException('Run deep research before composing the letter.');
+    }
+
+    const subject = new ReplaySubject<LetterStreamPayload>(LETTER_RUN_BUFFER_SIZE);
+    const resumeMeta = persisted.meta ?? {};
+    const charged = (resumeMeta as Record<string, unknown>)?.charged === true;
+    const remainingCredits =
+      typeof (resumeMeta as Record<string, unknown>)?.remainingCredits === 'number'
+        ? ((resumeMeta as Record<string, unknown>).remainingCredits as number)
+        : null;
+
+    const run: LetterRun = {
+      key: persisted.runKey,
+      userId,
+      jobId: baselineJob.jobId,
+      tone,
+      subject,
+      status: 'running',
+      startedAt: persisted.startedAt,
+      cleanupTimer: null,
+      promise: null,
+      responseId: typeof persisted.responseId === 'string' ? persisted.responseId : null,
+      remainingCredits,
+    };
+
+    this.letterRuns.set(persisted.runKey, run);
+
+    subject.next({
+      type: 'status',
+      status: 'Reconnecting to your letter composition…',
+      remainingCredits,
+    });
+
+    await this.touchStreamingRun('letter', run.key, {
+      status: 'running',
+      responseId: run.responseId,
+      meta: { tone, charged, remainingCredits },
+    });
+
+    run.promise = this.executeLetterRun({
+      run,
+      userId,
+      baselineJob,
+      subject,
+      researchContent,
+      resumeFromState: {
+        responseId: run.responseId,
+        charged,
+        remainingCredits,
+      },
+    }).catch((error) => {
+      this.logger.error(`Letter resume encountered an error: ${(error as Error)?.message ?? error}`);
       subject.error(error);
     });
 
@@ -1333,14 +1839,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     userId: string;
     baselineJob: ActiveWritingDeskJobResource;
     subject: ReplaySubject<DeepResearchStreamPayload>;
+    resumeFromState?: { responseId: string | null; charged: boolean; remainingCredits: number | null };
   }) {
-    const { run, userId, baselineJob, subject } = params;
+    const { run, userId, baselineJob, subject, resumeFromState } = params;
+    const heartbeat = this.createStreamingHeartbeat('deep_research', run.key);
     let deductionApplied = false;
-    let remainingCredits: number | null = null;
+    let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
     let aggregatedText = '';
     let _settled = false;
     let openAiStream: ResponseStreamLike | null = null;
-    let responseId: string | null = run.responseId ?? null;
+    let responseId: string | null = resumeFromState?.responseId ?? run.responseId ?? null;
     let quietPeriodTimer: NodeJS.Timeout | null = null;
 
     const captureResponseId = async (candidate: unknown) => {
@@ -1351,10 +1859,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       if (!trimmed || trimmed === responseId) return;
       responseId = trimmed;
       run.responseId = trimmed;
+      heartbeat({ responseId: trimmed });
       try {
         await this.persistDeepResearchResult(userId, baselineJob, {
           responseId: trimmed,
-          status: 'running',
+          status: run.status,
         });
       } catch (error) {
         this.logger.warn(
@@ -1365,6 +1874,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     const send = (payload: DeepResearchStreamPayload) => {
       subject.next(payload);
+      heartbeat();
     };
 
     const pushDelta = (next: string | null | undefined) => {
@@ -1391,12 +1901,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
 
     send({ type: 'status', status: 'starting' });
+    heartbeat({ status: 'running', responseId });
 
     try {
-      const { credits } = await this.userCredits.deductFromMine(userId, DEEP_RESEARCH_CREDIT_COST);
-      deductionApplied = true;
-      remainingCredits = credits;
-      send({ type: 'status', status: 'charged', remainingCredits: credits });
+      if (resumeFromState?.responseId) {
+        deductionApplied = resumeFromState.charged;
+        remainingCredits = resumeFromState.remainingCredits;
+      } else {
+        const { credits } = await this.userCredits.deductFromMine(userId, DEEP_RESEARCH_CREDIT_COST);
+        deductionApplied = true;
+        remainingCredits = credits;
+        heartbeat({ meta: { charged: true, remainingCredits } });
+      }
+      send({ type: 'status', status: 'charged', remainingCredits });
 
       const apiKey = this.config.get<string>('OPENAI_API_KEY');
       const model = this.config.get<string>('OPENAI_DEEP_RESEARCH_MODEL')?.trim() || 'o4-mini-deep-research';
@@ -1420,6 +1937,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           responseId: 'dev-stub',
           remainingCredits,
         });
+        await this.touchStreamingRun('deep_research', run.key, {
+          status: 'completed',
+          responseId: 'dev-stub',
+        });
+        await this.clearStreamingRun('deep_research', run.key);
         subject.complete();
         return;
       }
@@ -1437,14 +1959,21 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         })}`,
       );
 
-      openAiStream = (await client.responses.create({
-        model,
-        input: prompt,
-        background: true,
-        store: true,
-        stream: true,
-        ...requestExtras,
-      })) as ResponseStreamLike;
+      if (resumeFromState?.responseId) {
+        openAiStream = client.responses.stream({
+          response_id: resumeFromState.responseId,
+          tools: requestExtras.tools,
+        }) as ResponseStreamLike;
+      } else {
+        openAiStream = (await client.responses.create({
+          model,
+          input: prompt,
+          background: true,
+          store: true,
+          stream: true,
+          ...requestExtras,
+        })) as ResponseStreamLike;
+      }
 
       let lastSequenceNumber: number | null = null;
       let currentStream: ResponseStreamLike | null = openAiStream;
@@ -1519,7 +2048,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         let streamError: unknown = null;
 
         try {
-          for await (const event of currentStream) {
+          // Wrap stream with inactivity timeout
+          const timeoutWrappedStream = this.createStreamWithTimeout(
+            currentStream,
+            RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS,
+            () => {
+              this.logger.warn(`[research] Stream inactivity timeout for job ${baselineJob.jobId}`);
+              openAiStream?.controller?.abort();
+            }
+          );
+
+          for await (const event of timeoutWrappedStream) {
             if (!event) continue;
 
             // Reset quiet period timer on any activity
@@ -1585,7 +2124,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               case 'response.failed':
               case 'response.incomplete': {
                 const errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
-                throw new Error(errorMessage);
+                throw new ServiceUnavailableException('Deep research failed. Please try again later.');
               }
               case 'response.completed': {
                 const finalResponse = event.response;
@@ -1617,6 +2156,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                   responseId: resolvedResponseId,
                   remainingCredits,
                   usage: (finalResponse as any)?.usage ?? null,
+                });
+                await this.touchStreamingRun('deep_research', run.key, {
+                  status: 'completed',
+                  responseId: resolvedResponseId ?? responseId,
                 });
                 subject.complete();
                 return;
@@ -1718,7 +2261,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       if (!_settled) {
         if (!responseId) {
-          throw new Error('Deep research stream ended before a response id was available');
+          throw new ServiceUnavailableException('Deep research stream ended unexpectedly. Please try again.');
         }
 
         this.logger.warn(
@@ -1755,6 +2298,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             remainingCredits,
             usage: (finalResponse as any)?.usage ?? null,
           });
+          await this.touchStreamingRun('deep_research', run.key, {
+            status: 'completed',
+            responseId,
+          });
+          this.handleOpenAiSuccess();
           subject.complete();
         } else {
           const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus);
@@ -1765,6 +2313,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           run.status = 'error';
           _settled = true;
           send({ type: 'error', message, remainingCredits });
+          await this.touchStreamingRun('deep_research', run.key, {
+            status: 'error',
+            responseId,
+          });
           subject.complete();
         }
       }
@@ -1775,6 +2327,18 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         quietPeriodTimer = null;
       }
     } catch (error) {
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in startDeepResearch (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
+
       this.logger.error(
         `[writing-desk research] failure ${error instanceof Error ? error.message : 'unknown'}`,
       );
@@ -1797,15 +2361,28 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         );
       }
 
-      const message =
-        error instanceof BadRequestException
-          ? error.message
-          : 'Deep research failed. Please try again in a few moments.';
+      let message: string;
+      if (error instanceof BadRequestException) {
+        message = error.message;
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message;
+        if (errorMsg.includes('timeout') || errorMsg.includes('inactivity')) {
+          message = 'Deep research timed out due to inactivity. Please try again.';
+        } else {
+          message = 'Deep research failed. Please try again in a few moments.';
+        }
+      } else {
+        message = 'Deep research failed. Please try again in a few moments.';
+      }
 
       send({
         type: 'error',
         message,
         remainingCredits,
+      });
+      await this.touchStreamingRun('deep_research', run.key, {
+        status: 'error',
+        responseId,
       });
       subject.complete();
 
@@ -1825,6 +2402,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       }
 
+      await this.clearStreamingRun('deep_research', run.key);
       this.scheduleRunCleanup(run);
     }
   }
@@ -1839,6 +2417,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.deepResearchRuns.delete(run.key);
+      void this.clearStreamingRun('deep_research', run.key).catch((err) => {
+        this.logger.warn(`Failed to clear deep research run ${run.key}: ${(err as Error)?.message}`);
+      });
     }, DEEP_RESEARCH_RUN_TTL_MS);
     if (typeof (timer as any)?.unref === 'function') {
       (timer as any).unref();
@@ -1859,14 +2440,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
 
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new Error('Timed out waiting for deep research to finish');
+          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
         }
       } catch (error) {
         if (error instanceof Error && error.message.includes('Timed out waiting')) {
           throw error;
         }
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new Error('Timed out waiting for deep research to finish');
+          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
         }
         this.logger.warn(
           `[writing-desk research] failed to retrieve background response ${responseId}: ${
@@ -1928,6 +2509,112 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       );
     }
     return job;
+  }
+
+  private async registerStreamingRun(params: {
+    type: StreamingRunKind;
+    runKey: string;
+    userId: string;
+    jobId: string;
+    status?: 'running' | 'completed' | 'error';
+    responseId?: string | null;
+    meta?: Record<string, unknown>;
+  }) {
+    try {
+      await this.streamingState.registerRun(params);
+    } catch (error) {
+      this.logger.error(
+        `[streaming-state] Failed to register ${params.type} run ${params.runKey}: ${
+          (error as Error)?.message ?? error
+        }`,
+      );
+      throw new ServiceUnavailableException('Streaming is temporarily unavailable. Please try again in a moment.');
+    }
+  }
+
+  private async touchStreamingRun(
+    type: StreamingRunKind,
+    runKey: string,
+    patch?: { status?: 'running' | 'completed' | 'error'; responseId?: string | null; meta?: Record<string, unknown> },
+  ) {
+    try {
+      await this.streamingState.touchRun(type, runKey, patch);
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to update ${type} run ${runKey}: ${(error as Error)?.message ?? error}`,
+      );
+    }
+  }
+
+  private async clearStreamingRun(type: StreamingRunKind, runKey: string) {
+    try {
+      await this.streamingState.removeRun(type, runKey);
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to remove ${type} run ${runKey}: ${(error as Error)?.message ?? error}`,
+      );
+    }
+  }
+
+  private createStreamingHeartbeat(type: StreamingRunKind, runKey: string) {
+    let lastBeatAt = 0;
+    return (patch?: { status?: 'running' | 'completed' | 'error'; responseId?: string | null; meta?: Record<string, unknown> }) => {
+      const now = Date.now();
+      if (!patch && now - lastBeatAt < 1000) {
+        return;
+      }
+      lastBeatAt = now;
+      void this.touchStreamingRun(type, runKey, patch);
+    };
+  }
+
+  async recoverStaleStreamingRuns() {
+    try {
+      const staleRuns = await this.streamingState.findStaleRuns(STREAMING_RUN_ORPHAN_THRESHOLD_MS);
+      for (const state of staleRuns) {
+        await this.handleOrphanedRun(state);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to sweep stale runs: ${(error as Error)?.message ?? error}`,
+      );
+    }
+  }
+
+  private async handleOrphanedRun(state: StreamingRunState) {
+    try {
+      const job = await this.writingDeskJobs.getActiveJobForUser(state.userId);
+      if (!job || job.jobId !== state.jobId) {
+        await this.clearStreamingRun(state.type, state.runKey);
+        return;
+      }
+
+      if (state.type === 'deep_research') {
+        await this.persistDeepResearchStatus(state.userId, job, 'error');
+        if (this.isRunCharged(state)) {
+          await this.refundCredits(state.userId, DEEP_RESEARCH_CREDIT_COST);
+        }
+      } else {
+        await this.persistLetterState(state.userId, job, { status: 'error', tone: job.letterTone ?? null });
+        if (this.isRunCharged(state)) {
+          await this.refundCredits(state.userId, LETTER_CREDIT_COST);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `[streaming-state] Failed to recover run ${state.type}:${state.runKey}: ${(error as Error)?.message ?? error}`,
+      );
+    } finally {
+      await this.clearStreamingRun(state.type, state.runKey);
+    }
+  }
+
+  private isRunCharged(state: StreamingRunState): boolean {
+    if (!state.meta) {
+      return false;
+    }
+    const charged = (state.meta as Record<string, unknown>).charged;
+    return charged === true;
   }
 
   private buildDeepResearchPrompt(
@@ -2786,7 +3473,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     try {
       const parsed = JSON.parse(text) as WritingDeskLetterResult;
       if (!parsed || typeof parsed !== 'object') {
-        throw new Error('Letter response was not an object');
+        throw new InternalServerErrorException('Letter response was not in the expected format.');
       }
       return this.normaliseLetterResultTypography({
         mp_name: parsed.mp_name ?? '',
@@ -2809,7 +3496,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         references: Array.isArray(parsed.references) ? parsed.references : [],
       });
     } catch (error) {
-      throw new Error(`Failed to parse letter JSON: ${(error as Error)?.message ?? error}`);
+      throw new InternalServerErrorException('Failed to parse letter response. Please try again.');
     }
   }
 
@@ -3278,6 +3965,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       this.logger.log(`[transcription] Raw response: ${JSON.stringify(transcription)}`);
 
+      this.handleOpenAiSuccess();
+
       const bundle = {
         model,
         text: transcription.text || transcription || 'No transcription text received',
@@ -3288,6 +3977,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       return bundle;
     } catch (error) {
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in transcribeAudio (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
       await this.refundCredits(userId, TRANSCRIPTION_CREDIT_COST);
       throw error;
     }
@@ -3333,13 +4033,24 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             language: input.language || 'en',
           });
 
-          for await (const event of stream) {
+          // Wrap stream with inactivity timeout
+          const timeoutWrappedStream = this.createStreamWithTimeout(
+            stream,
+            TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS,
+            () => {
+              this.logger.warn(`[transcription] Stream inactivity timeout for user ${userId}`);
+            }
+          );
+
+          for await (const event of timeoutWrappedStream) {
             if (subscriber.closed) break;
             
-            if (event.type === 'transcript.text.delta') {
-              subscriber.next({ data: JSON.stringify({ type: 'delta', text: event.delta }) });
-            } else if (event.type === 'transcript.text.done') {
-              subscriber.next({ data: JSON.stringify({ type: 'complete', text: event.text, remainingCredits: remainingAfterCharge }) });
+            const typedEvent = event as any;
+            if (typedEvent.type === 'transcript.text.delta') {
+              subscriber.next({ data: JSON.stringify({ type: 'delta', text: typedEvent.delta }) });
+            } else if (typedEvent.type === 'transcript.text.done') {
+              this.handleOpenAiSuccess();
+              subscriber.next({ data: JSON.stringify({ type: 'complete', text: typedEvent.text, remainingCredits: remainingAfterCharge }) });
               subscriber.complete();
               _settled = true;
               return;
@@ -3351,9 +4062,29 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             subscriber.complete();
           }
         } catch (error) {
+          // Check if this is an OpenAI-related error
+          if (error && typeof error === 'object' && 'message' in error) {
+            const errorMsg = (error as Error).message?.toLowerCase() || '';
+            if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+              this.openaiClientErrorCount++;
+              this.logger.warn(`OpenAI error detected in streamTranscription (error count: ${this.openaiClientErrorCount})`);
+              if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+                this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+              }
+            }
+          }
           if (!subscriber.closed) {
             await this.refundCredits(userId, TRANSCRIPTION_CREDIT_COST);
-            subscriber.next({ data: JSON.stringify({ type: 'error', message: error instanceof Error ? error.message : 'Transcription failed' }) });
+            let errorMessage = 'Transcription failed';
+            if (error instanceof Error) {
+              const errorMsg = error.message;
+              if (errorMsg.includes('timeout') || errorMsg.includes('inactivity')) {
+                errorMessage = 'Transcription timed out due to inactivity. Please try again.';
+              } else {
+                errorMessage = error.message;
+              }
+            }
+            subscriber.next({ data: JSON.stringify({ type: 'error', message: errorMessage }) });
             subscriber.complete();
           }
         }

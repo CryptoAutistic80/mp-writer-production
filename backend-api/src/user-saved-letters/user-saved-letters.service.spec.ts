@@ -22,33 +22,22 @@ const createFindChain = () => {
 
 describe('UserSavedLettersService', () => {
   let service: UserSavedLettersService;
-  const model = {
-    find: jest.fn(),
-    countDocuments: jest.fn(),
-  };
-  const encryption = {
-    encryptObject: jest.fn(),
-    decryptObject: jest.fn((value) => value),
-  } as unknown as EncryptionService;
+  let model: any;
+  let encryption: any;
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    model = {
+      find: jest.fn(),
+      countDocuments: jest.fn(),
+    };
+    
+    encryption = {
+      encryptObject: jest.fn((value) => value),
+      decryptObject: jest.fn((value) => value),
+    };
 
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        UserSavedLettersService,
-        {
-          provide: getModelToken(UserSavedLetter.name),
-          useValue: model,
-        },
-        {
-          provide: EncryptionService,
-          useValue: encryption,
-        },
-      ],
-    }).compile();
-
-    service = module.get(UserSavedLettersService);
+    // Directly instantiate the service with mocks
+    service = new UserSavedLettersService(model as any, encryption as any);
   });
 
   describe('findByDateRange', () => {
