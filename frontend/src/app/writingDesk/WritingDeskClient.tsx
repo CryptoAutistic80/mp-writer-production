@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
+import { apiClient } from '../../lib/api-client';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
 import StartOverConfirmModal from '../../features/writing-desk/components/StartOverConfirmModal';
@@ -300,6 +301,7 @@ export default function WritingDeskClient() {
   const lastLetterEventRef = useRef<number>(0);
   const lastLetterResumeAttemptRef = useRef<number>(0);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isEditingFollowUpsFromSummary = useRef<boolean>(false);
 
   const clearToast = useCallback(() => {
     if (toastTimeoutRef.current) {
@@ -1398,22 +1400,13 @@ export default function WritingDeskClient() {
     setLoading(true);
     setServerError(null);
     try {
-      const res = await fetch('/api/ai/writing-desk/follow-up/answers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          issueDescription: form.issueDescription.trim(),
-          followUpQuestions: questions,
-          followUpAnswers: answers.map((answer) => answer.trim()),
-          notes: (context?.notes ?? notes) ?? undefined,
-          responseId: (context?.responseId ?? responseId) ?? undefined,
-        }),
+      await apiClient.post('/api/ai/writing-desk/follow-up/answers', {
+        issueDescription: form.issueDescription.trim(),
+        followUpQuestions: questions,
+        followUpAnswers: answers.map((answer) => answer.trim()),
+        notes: (context?.notes ?? notes) ?? undefined,
+        responseId: (context?.responseId ?? responseId) ?? undefined,
       });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || `Request failed (${res.status})`);
-      }
       const trimmedAnswers = answers.map((answer) => answer.trim());
       const resolvedNotes = (context?.notes ?? notes) ?? null;
       const resolvedResponseId = (context?.responseId ?? responseId) ?? null;
@@ -1485,19 +1478,14 @@ export default function WritingDeskClient() {
       }
 
       try {
-        const res = await fetch('/api/ai/writing-desk/follow-up', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            issueDescription: form.issueDescription.trim(),
-          }),
+        const json = await apiClient.post<{
+          followUpQuestions: string[];
+          notes: string | null;
+          responseId: string | null;
+          remainingCredits?: number;
+        }>('/api/ai/writing-desk/follow-up', {
+          issueDescription: form.issueDescription.trim(),
         });
-        if (!res.ok) {
-          const text = await res.text().catch(() => '');
-          throw new Error(text || `Request failed (${res.status})`);
-        }
-        const json = await res.json();
         const questions: string[] = Array.isArray(json?.followUpQuestions)
           ? json.followUpQuestions.filter((q: unknown) => typeof q === 'string' && q.trim().length > 0)
           : [];
@@ -1605,6 +1593,10 @@ export default function WritingDeskClient() {
     }
 
     await submitBundle(followUps, nextAnswers);
+    // Reset the edit flag after submitting and returning to summary
+    if (isEditingFollowUpsFromSummary.current) {
+      isEditingFollowUpsFromSummary.current = false;
+    }
   };
 
   const handleStartOver = useCallback(async () => {
@@ -1660,6 +1652,7 @@ export default function WritingDeskClient() {
     setError(null);
     setPhase('followup');
     setFollowUpIndex(index);
+    isEditingFollowUpsFromSummary.current = true;
   }, [followUps.length]);
 
   const handleConfirmInitialFollowUps = useCallback(() => {
@@ -2051,21 +2044,29 @@ export default function WritingDeskClient() {
               </div>
             )}
 
-            <div className="actions" style={{ marginTop: 12, display: 'flex', gap: 12 }}>
-              <button
-                type="button"
-                className="btn-link"
-                onClick={handleFollowUpBack}
-                disabled={loading}
-              >
-                Back
-              </button>
+            <div className={`actions${followUpIndex === 0 && isEditingFollowUpsFromSummary.current ? ' actions--primary-only' : ''}`} style={{ marginTop: 12, display: 'flex', gap: 12 }}>
+              {!(followUpIndex === 0 && isEditingFollowUpsFromSummary.current) && (
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={handleFollowUpBack}
+                  disabled={loading}
+                >
+                  Back
+                </button>
+              )}
               <button
                 type="submit"
                 className="btn-primary"
                 disabled={loading}
               >
-                {loading ? 'Saving…' : followUpIndex === followUps.length - 1 ? 'Save answers' : 'Next'}
+                {loading
+                  ? 'Saving…'
+                  : followUpIndex === followUps.length - 1
+                    ? isEditingFollowUpsFromSummary.current
+                      ? 'Back to research'
+                      : 'Save answers'
+                    : 'Next'}
               </button>
             </div>
           </form>

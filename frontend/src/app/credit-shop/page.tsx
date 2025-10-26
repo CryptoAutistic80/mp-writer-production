@@ -101,21 +101,7 @@ export default function CreditShopPage() {
         return;
       }
 
-      const res = await fetch('/api/user/credits/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: dealCredits }),
-      });
-      if (!res.ok) {
-        setState((prev) => ({
-          ...prev,
-          status: 'error',
-          message: 'Unable to complete your purchase right now. Please try again shortly.',
-          pendingCredits: null,
-        }));
-        return;
-      }
-      const data = await res.json();
+      const data = await apiClient.post('/api/user/credits/add', { amount: dealCredits });
       setState((prev) => {
         const credits =
           typeof data?.credits === 'number' ? data.credits : prevCreditsAfterPurchase(prev.credits, dealCredits);

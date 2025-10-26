@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { apiClient } from '../../../lib/api-client';
 
 type ConfirmationState = {
   status: 'idle' | 'loading' | 'success' | 'error';
@@ -32,13 +33,7 @@ export default function CheckoutSuccessPage() {
     const confirm = async () => {
       setState({ status: 'loading', message: 'Confirming your payment…' });
       try {
-        const res = await fetch('/api/checkout/confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId }),
-        });
-        if (!res.ok) throw new Error('Unable to confirm checkout session');
-        const data = await res.json();
+        const data = await apiClient.post('/api/checkout/confirm', { sessionId });
         if (cancelled) return;
         setState({
           status: 'success',

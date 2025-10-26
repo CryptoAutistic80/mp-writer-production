@@ -122,8 +122,9 @@ class ApiClient {
     this.isRefreshing = true;
     this.refreshPromise = this.performTokenRefresh();
 
+    let result = false;
     try {
-      const result = await this.refreshPromise;
+      result = await this.refreshPromise;
       return result;
     } finally {
       this.isRefreshing = false;
