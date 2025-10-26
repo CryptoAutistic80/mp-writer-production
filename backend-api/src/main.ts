@@ -11,6 +11,7 @@ import { json, urlencoded, Request, Response, NextFunction } from 'express';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AuditLogService } from './common/audit/audit-log.service';
 import { RequestContextInterceptor } from './common/interceptors/request-context.interceptor';
+import { CsrfGuard } from './common/csrf/csrf.guard';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
@@ -73,6 +74,7 @@ async function bootstrap() {
   
   // Register RequestContextInterceptor globally to track user context for audit logs
   app.useGlobalInterceptors(new RequestContextInterceptor(auditService));
+  app.useGlobalGuards(app.get(CsrfGuard));
   
   // Stripe webhook requires raw body, but other routes need parsed JSON
   // We'll apply JSON parsing conditionally

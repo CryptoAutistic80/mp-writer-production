@@ -5,6 +5,7 @@ import { CheckoutService } from './checkout.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { ConfirmCheckoutSessionDto } from './dto/confirm-checkout-session.dto';
 import { ThrottleCredit, ThrottleWebhook } from '../common/decorators/throttle.decorators';
+import { SkipCsrf } from '../common/csrf/csrf.decorator';
 
 @Controller('checkout')
 export class CheckoutController {
@@ -35,6 +36,7 @@ export class CheckoutController {
    * Note: This must NOT use body parsing middleware - we need the raw body
    */
   @ThrottleWebhook()
+  @SkipCsrf()
   @Post('webhook')
   async handleWebhook(
     @Headers('stripe-signature') signature: string,

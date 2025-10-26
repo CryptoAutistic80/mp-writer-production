@@ -29,23 +29,39 @@ export class WritingDeskJobsController {
 
   @Get()
   async getActiveJob(@Req() req: any) {
-    return this.jobs.getActiveJobForUser(req.user.id);
+    const userId = req?.user?.id ?? req?.user?._id;
+    if (!userId) {
+      throw new BadRequestException('User authentication required');
+    }
+    return this.jobs.getActiveJobForUser(userId);
   }
 
   @Put()
   async upsertActiveJob(@Req() req: any, @Body() body: UpsertActiveWritingDeskJobDto) {
-    return this.jobs.upsertActiveJob(req.user.id, body);
+    const userId = req?.user?.id ?? req?.user?._id;
+    if (!userId) {
+      throw new BadRequestException('User authentication required');
+    }
+    return this.jobs.upsertActiveJob(userId, body);
   }
 
   @Delete()
   async deleteActiveJob(@Req() req: any) {
-    await this.jobs.deleteActiveJob(req.user.id);
+    const userId = req?.user?.id ?? req?.user?._id;
+    if (!userId) {
+      throw new BadRequestException('User authentication required');
+    }
+    await this.jobs.deleteActiveJob(userId);
     return { success: true };
   }
 
   @Post('research/start')
   async startDeepResearch(@Req() req: any, @Body() body: StartDeepResearchDto) {
-    const activeJob = await this.jobs.getActiveJobForUser(req.user.id);
+    const userId = req?.user?.id ?? req?.user?._id;
+    if (!userId) {
+      throw new BadRequestException('User authentication required');
+    }
+    const activeJob = await this.jobs.getActiveJobForUser(userId);
     if (!activeJob) {
       throw new BadRequestException('We could not find an active letter to research. Save your answers and try again.');
     }
@@ -56,9 +72,9 @@ export class WritingDeskJobsController {
 
     const resume = body?.resume === true;
     if (resume) {
-      await this.ai.ensureDeepResearchRun(req.user.id, activeJob.jobId, { createIfMissing: false });
+      await this.ai.ensureDeepResearchRun(userId, activeJob.jobId, { createIfMissing: false });
     } else {
-      await this.ai.ensureDeepResearchRun(req.user.id, activeJob.jobId, { restart: true });
+      await this.ai.ensureDeepResearchRun(userId, activeJob.jobId, { restart: true });
     }
 
     const params = new URLSearchParams();
@@ -72,7 +88,11 @@ export class WritingDeskJobsController {
 
   @Post('letter/start')
   async startLetter(@Req() req: any, @Body() body: StartLetterDto) {
-    const activeJob = await this.jobs.getActiveJobForUser(req.user.id);
+    const userId = req?.user?.id ?? req?.user?._id;
+    if (!userId) {
+      throw new BadRequestException('User authentication required');
+    }
+    const activeJob = await this.jobs.getActiveJobForUser(userId);
     if (!activeJob) {
       throw new BadRequestException('We could not find an active letter to compose. Save your answers and try again.');
     }
@@ -93,9 +113,9 @@ export class WritingDeskJobsController {
     }
 
     if (resume) {
-      await this.ai.ensureLetterRun(req.user.id, activeJob.jobId, { createIfMissing: false });
+      await this.ai.ensureLetterRun(userId, activeJob.jobId, { createIfMissing: false });
     } else {
-      await this.ai.ensureLetterRun(req.user.id, activeJob.jobId, { tone, restart: true });
+      await this.ai.ensureLetterRun(userId, activeJob.jobId, { tone, restart: true });
     }
 
     const params = new URLSearchParams();

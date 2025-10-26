@@ -4,7 +4,12 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
+import { CsrfService } from '../common/csrf/csrf.service';
+import { SkipCsrf } from '../common/csrf/csrf.decorator';
 import { AuditLogService } from '../common/audit/audit-log.service';
+
+const CSRF_COOKIE_PROD = '__Host-csrf-token';
+const CSRF_COOKIE_DEV = 'mpw_csrf';
 
 @Controller('auth')
 export class AuthController {
@@ -12,10 +17,12 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly config: ConfigService,
     private readonly auditService: AuditLogService,
+    private readonly csrf: CsrfService,
   ) {}
 
   // Initiates Google OAuth (redirect flow)
   @Get('google')
+  @SkipCsrf()
   @UseGuards(AuthGuard('google'))
   async googleAuth() {
     return;
@@ -23,6 +30,7 @@ export class AuthController {
 
   // Google OAuth callback
   @Get('google/callback')
+  @SkipCsrf()
   @UseGuards(AuthGuard('google'))
   async googleCallback(
     @Req() req: any,
@@ -82,6 +90,7 @@ export class AuthController {
 
   // Refresh access token using refresh token
   @Get('refresh')
+  @SkipCsrf()
   async refresh(@Req() req: any, @Res() res: Response) {
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
     const isSecure = appOrigin.startsWith('https://');
@@ -154,12 +163,13 @@ export class AuthController {
         tokenType: 'refresh',
         error: errorMessage,
       });
-      
+
       res.clearCookie('mpw_session', cookieOptions);
       res.clearCookie('mpw_refresh', cookieOptions);
       res.clearCookie('__Host-mpw_session', cookieOptions);
       res.clearCookie('__Host-mpw_refresh', cookieOptions);
-      
+      this.clearCsrfCookies(res, isSecure);
+
       return res.status(401).json({ message: 'Invalid refresh token' });
     }
   }
@@ -173,6 +183,7 @@ export class AuthController {
 
   // Proxy Google profile images to avoid CORS issues
   @Get('avatar/:userId')
+  @SkipCsrf()
   @UseGuards(JwtAuthGuard)
   async getAvatar(@Req() req: any, @Res() res: Response, @Param('userId') userId: string) {
     // Only allow users to access their own avatar
@@ -206,8 +217,57 @@ export class AuthController {
     }
   }
 
+  private setCsrfCookie(res: Response, isSecure: boolean, token: string) {
+    if (isSecure) {
+      res.cookie(CSRF_COOKIE_PROD, token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'strict',
+        maxAge: this.csrf.getTokenTtlMs(),
+        path: '/',
+      });
+    } else {
+      res.cookie(CSRF_COOKIE_DEV, token, {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: this.csrf.getTokenTtlMs(),
+        path: '/',
+      });
+    }
+  }
+
+  private clearCsrfCookies(res: Response, isSecure: boolean) {
+    const options = {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: isSecure ? ('strict' as const) : ('lax' as const),
+      path: '/',
+    };
+
+    res.clearCookie(CSRF_COOKIE_PROD, options);
+    res.clearCookie(CSRF_COOKIE_DEV, options);
+  }
+
+  private getCsrfCookieName(isSecure: boolean) {
+    return isSecure ? CSRF_COOKIE_PROD : CSRF_COOKIE_DEV;
+  }
+
+  @Get('csrf-token')
+  @SkipCsrf()
+  async getCsrfToken(@Req() req: any, @Res() res: Response) {
+    const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
+    const isSecure = appOrigin.startsWith('https://');
+    const token = this.csrf.generateToken();
+
+    this.setCsrfCookie(res, isSecure, token);
+
+    return res.json({ csrfToken: token, cookie: this.getCsrfCookieName(isSecure) });
+  }
+
   // Logout clears cookies and redirects to app
   @Get('logout')
+  @SkipCsrf()
   async logout(@Res() res: Response) {
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
     const isSecure = appOrigin.startsWith('https://');
@@ -223,6 +283,7 @@ export class AuthController {
     res.clearCookie('mpw_refresh', cookieOptions);
     res.clearCookie('__Host-mpw_session', cookieOptions);
     res.clearCookie('__Host-mpw_refresh', cookieOptions);
+    this.clearCsrfCookies(res, isSecure);
     
     return res.redirect(appOrigin);
   }
