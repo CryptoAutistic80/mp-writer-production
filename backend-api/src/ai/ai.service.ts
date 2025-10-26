@@ -382,10 +382,15 @@ Return only the JSON object defined by the schema. Do not output explanations or
 export class AiService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(AiService.name);
   private openaiClient: any | null = null;
+  private openaiClientCreatedAt: number | null = null;
+  private openaiClientErrorCount: number = 0;
   private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
   private readonly letterRuns = new Map<string, LetterRun>();
   private readonly instanceId: string;
   private cleanupSweepInterval: NodeJS.Timeout | null = null;
+  
+  private static readonly CLIENT_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+  private static readonly CLIENT_MAX_ERRORS = 5;
 
   constructor(
     private readonly config: ConfigService,
@@ -524,10 +529,52 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private async getOpenAiClient(apiKey: string) {
-    if (this.openaiClient) return this.openaiClient;
-    const { default: OpenAI } = await import('openai');
-    this.openaiClient = new OpenAI({ apiKey });
+    // Check if client needs recreation due to age or error count
+    const now = Date.now();
+    const needsRecreation =
+      !this.openaiClient ||
+      (this.openaiClientCreatedAt && now - this.openaiClientCreatedAt > AiService.CLIENT_MAX_AGE_MS) ||
+      this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS;
+
+    if (needsRecreation) {
+      if (this.openaiClient) {
+        const reason = 
+          !this.openaiClientCreatedAt ? 'no timestamp' :
+          (now - this.openaiClientCreatedAt > AiService.CLIENT_MAX_AGE_MS) ? 'age limit (30 minutes)' :
+          `error count (${this.openaiClientErrorCount})`;
+        this.logger.log(`Recreating OpenAI client due to: ${reason}`);
+      }
+      const { default: OpenAI } = await import('openai');
+      this.openaiClient = new OpenAI({
+        apiKey,
+        timeout: 60000, // 60 seconds - accommodates streaming operations
+        maxRetries: 3,
+      });
+      this.openaiClientCreatedAt = now;
+      this.openaiClientErrorCount = 0;
+    }
+    
     return this.openaiClient;
+  }
+
+  private handleOpenAiError(error: any, context: string): never {
+    this.openaiClientErrorCount++;
+    const errorMessage = error?.message || 'unknown error';
+    this.logger.error(`OpenAI error in ${context}: ${errorMessage} (error count: ${this.openaiClientErrorCount})`);
+    
+    if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+      this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+    }
+    
+    throw error;
+  }
+
+  private handleOpenAiSuccess() {
+    // Reset error count on successful operation
+    if (this.openaiClientErrorCount > 0) {
+      this.logger.log(`OpenAI client recovered after ${this.openaiClientErrorCount} previous errors`);
+      this.openaiClientErrorCount = 0;
+    }
   }
 
   private resolveTranscriptionModel(modelFromRequest?: TranscriptionModel): TranscriptionModel {
@@ -558,14 +605,19 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
       // In dev without key, return a stub so flows work
       return { content: `DEV-STUB: ${input.prompt.slice(0, 120)}...` };
     }
-    const client = await this.getOpenAiClient(apiKey);
-    const resp = await client.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: input.prompt }],
-      temperature: 0.7,
-    });
-    const content = resp.choices?.[0]?.message?.content ?? '';
-    return { content };
+    try {
+      const client = await this.getOpenAiClient(apiKey);
+      const resp = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: input.prompt }],
+        temperature: 0.7,
+      });
+      this.handleOpenAiSuccess();
+      const content = resp.choices?.[0]?.message?.content ?? '';
+      return { content };
+    } catch (error) {
+      this.handleOpenAiError(error, 'generate');
+    }
   }
 
   async generateWritingDeskFollowUps(userId: string | null | undefined, input: WritingDeskIntakeDto) {
@@ -691,6 +743,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         })}`,
       );
 
+      this.handleOpenAiSuccess();
       return {
         model,
         responseId: (response as any)?.id ?? null,
@@ -704,6 +757,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           error instanceof Error ? `${error.name}: ${error.message}` : (error as unknown as string)
         }`,
       );
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in generateWritingDeskFollowUps (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
       await this.refundCredits(userId, FOLLOW_UP_CREDIT_COST);
       throw error;
     }
@@ -1313,6 +1377,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             status: 'completed',
             responseId: responseId ?? run.responseId,
           });
+          this.handleOpenAiSuccess();
           subject.complete();
           
           // Clean up the quiet period timer
@@ -1399,6 +1464,18 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         userAgent: 'backend-api',
         service: 'writing-desk-letter-composition'
       };
+
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in generateLetterForUser (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
 
       // Log the error with full context for debugging
       this.logger.error(
@@ -2146,6 +2223,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             status: 'completed',
             responseId,
           });
+          this.handleOpenAiSuccess();
           subject.complete();
         } else {
           const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus);
@@ -2170,6 +2248,18 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         quietPeriodTimer = null;
       }
     } catch (error) {
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in startDeepResearch (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
+
       this.logger.error(
         `[writing-desk research] failure ${error instanceof Error ? error.message : 'unknown'}`,
       );
@@ -3787,6 +3877,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       this.logger.log(`[transcription] Raw response: ${JSON.stringify(transcription)}`);
 
+      this.handleOpenAiSuccess();
+
       const bundle = {
         model,
         text: transcription.text || transcription || 'No transcription text received',
@@ -3797,6 +3889,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       return bundle;
     } catch (error) {
+      // Check if this is an OpenAI-related error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMsg = (error as Error).message?.toLowerCase() || '';
+        if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+          this.openaiClientErrorCount++;
+          this.logger.warn(`OpenAI error detected in transcribeAudio (error count: ${this.openaiClientErrorCount})`);
+          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          }
+        }
+      }
       await this.refundCredits(userId, TRANSCRIPTION_CREDIT_COST);
       throw error;
     }
@@ -3848,6 +3951,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             if (event.type === 'transcript.text.delta') {
               subscriber.next({ data: JSON.stringify({ type: 'delta', text: event.delta }) });
             } else if (event.type === 'transcript.text.done') {
+              this.handleOpenAiSuccess();
               subscriber.next({ data: JSON.stringify({ type: 'complete', text: event.text, remainingCredits: remainingAfterCharge }) });
               subscriber.complete();
               _settled = true;
@@ -3860,6 +3964,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             subscriber.complete();
           }
         } catch (error) {
+          // Check if this is an OpenAI-related error
+          if (error && typeof error === 'object' && 'message' in error) {
+            const errorMsg = (error as Error).message?.toLowerCase() || '';
+            if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+              this.openaiClientErrorCount++;
+              this.logger.warn(`OpenAI error detected in streamTranscription (error count: ${this.openaiClientErrorCount})`);
+              if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
+                this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+              }
+            }
+          }
           if (!subscriber.closed) {
             await this.refundCredits(userId, TRANSCRIPTION_CREDIT_COST);
             subscriber.next({ data: JSON.stringify({ type: 'error', message: error instanceof Error ? error.message : 'Transcription failed' }) });
