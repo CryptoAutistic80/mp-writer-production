@@ -170,7 +170,7 @@ export class StreamingStateService implements OnModuleInit, OnModuleDestroy {
     return Date.now() - oldest;
   }
 
-  private async listAllRuns(): Promise<StreamingRunState[]> {
+  async listAllRuns(): Promise<StreamingRunState[]> {
     const results: StreamingRunState[] = [];
     let cursor = '0';
     do {

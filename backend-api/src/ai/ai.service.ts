@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
   ServiceUnavailableException,
   OnModuleInit,
+  OnApplicationShutdown,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WritingDeskIntakeDto } from './dto/writing-desk-intake.dto';
@@ -378,7 +379,7 @@ Output:
 Return only the JSON object defined by the schema. Do not output explanations or text outside the JSON.`;
 
 @Injectable()
-export class AiService implements OnModuleInit {
+export class AiService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(AiService.name);
   private openaiClient: any | null = null;
   private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
@@ -407,6 +408,59 @@ export class AiService implements OnModuleInit {
     if (this.cleanupSweepInterval) {
       clearInterval(this.cleanupSweepInterval);
       this.cleanupSweepInterval = null;
+    }
+  }
+
+  async onApplicationShutdown(signal?: string) {
+    this.logger.log(`Graceful shutdown triggered (signal: ${signal ?? 'unknown'}), draining streaming operations...`);
+    
+    try {
+      // Stop periodic cleanup sweep
+      if (this.cleanupSweepInterval) {
+        clearInterval(this.cleanupSweepInterval);
+        this.cleanupSweepInterval = null;
+      }
+
+      // Get all active runs from Redis
+      const allRuns = await this.streamingState.listAllRuns();
+      const activeRuns = allRuns.filter(run => run.status === 'running' && run.instanceId === this.instanceId);
+      
+      this.logger.log(`Found ${activeRuns.length} active streaming runs to drain`);
+
+      // Drain each active run
+      const drainPromises = activeRuns.map(async (run) => {
+        try {
+          const runKey = run.runKey;
+          
+          // Try to abort the run in local memory maps
+          const localRun = run.type === 'deep_research' 
+            ? this.deepResearchRuns.get(runKey)
+            : this.letterRuns.get(runKey);
+          
+          if (localRun) {
+            // Abort OpenAI controller if exists
+            // Note: The streaming operations store controller references in promises
+            // We'll mark the run as cancelled in Redis and let existing cleanup handle it
+            
+            // Update status to cancelled in Redis
+            await this.streamingState.updateRun(run.type, runKey, { status: 'cancelled' });
+            
+            this.logger.log(`Cancelled ${run.type} run: ${runKey}`);
+          } else {
+            // Run exists in Redis but not in local memory - mark as cancelled
+            await this.streamingState.updateRun(run.type, runKey, { status: 'cancelled' });
+            this.logger.log(`Marked orphaned ${run.type} run as cancelled: ${runKey}`);
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to drain run ${run.runKey}: ${(error as Error)?.message ?? error}`);
+        }
+      });
+
+      await Promise.allSettled(drainPromises);
+      
+      this.logger.log('Streaming operations drained successfully');
+    } catch (error) {
+      this.logger.error(`Error during streaming drain: ${(error as Error)?.message ?? error}`);
     }
   }
 

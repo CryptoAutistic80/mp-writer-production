@@ -1,6 +1,6 @@
 export type StreamingRunKind = 'deep_research' | 'letter';
 
-export type StreamingRunStatus = 'running' | 'completed' | 'error';
+export type StreamingRunStatus = 'running' | 'completed' | 'error' | 'cancelled';
 
 export interface StreamingRunMetadata {
   [key: string]: unknown;

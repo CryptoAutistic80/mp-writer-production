@@ -14,6 +14,10 @@ import { RequestContextInterceptor } from './common/interceptors/request-context
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  
+  // Enable graceful shutdown hooks
+  app.enableShutdownHooks();
+  
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
 
@@ -173,6 +177,31 @@ async function bootstrap() {
   Logger.log(
     `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`
   );
+
+  // Setup graceful shutdown
+  const gracefulShutdown = async (signal: string) => {
+    Logger.log(`Received ${signal}, starting graceful shutdown...`);
+    
+    const shutdownTimeout = setTimeout(() => {
+      Logger.error('Graceful shutdown timeout exceeded, forcing exit');
+      process.exit(1);
+    }, 30000); // 30 second timeout
+
+    try {
+      await app.close();
+      clearTimeout(shutdownTimeout);
+      Logger.log('Graceful shutdown completed');
+      process.exit(0);
+    } catch (error) {
+      clearTimeout(shutdownTimeout);
+      Logger.error(`Error during graceful shutdown: ${(error as Error)?.message ?? error}`);
+      process.exit(1);
+    }
+  };
+
+  // Handle shutdown signals
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 bootstrap();
