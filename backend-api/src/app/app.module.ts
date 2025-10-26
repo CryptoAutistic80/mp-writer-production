@@ -24,6 +24,7 @@ import { CheckoutModule } from '../checkout/checkout.module';
 import { UserSavedLettersModule } from '../user-saved-letters/user-saved-letters.module';
 import { StreamingStateModule } from '../streaming-state/streaming-state.module';
 import { AuditModule } from '../common/audit/audit.module';
+import { CsrfModule } from '../common/csrf/csrf.module';
 
 function validateConfig(config: Record<string, unknown>) {
   const errors: string[] = [];
@@ -168,6 +169,7 @@ function validateConfig(config: Record<string, unknown>) {
     UserSavedLettersModule,
     StreamingStateModule,
     AuditModule,
+    CsrfModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

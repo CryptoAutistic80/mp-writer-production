@@ -8,6 +8,7 @@ export enum AuditEventType {
   CREDIT_ADDITION = 'CREDIT_ADDITION',
   PURCHASE_COMPLETED = 'PURCHASE_COMPLETED',
   PURCHASE_FAILED = 'PURCHASE_FAILED',
+  CSRF_FAILURE = 'CSRF_FAILURE',
 }
 
 export interface AuditLogEntry {
@@ -149,6 +150,13 @@ export class AuditLogService {
       `Purchase failed: ${sessionId} - ${reason}`,
       { sessionId, ...metadata },
     );
+  }
+
+  /**
+   * Log CSRF validation failure
+   */
+  logCsrfFailure(context: RequestContext, reason: string, metadata?: Record<string, any>) {
+    this.log(AuditEventType.CSRF_FAILURE, context, false, reason, metadata);
   }
 }
 
