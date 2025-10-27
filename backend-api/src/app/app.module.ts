@@ -48,14 +48,65 @@ function validateConfig(config: Record<string, unknown>) {
   requireString('REDIS_URL');
   requireString('JWT_SECRET', { minLength: 32, forbid: ['changeme'] });
 
-  const dek = config.DATA_ENCRYPTION_KEY;
-  if (typeof dek !== 'string' || dek.trim().length === 0) {
-    errors.push('DATA_ENCRYPTION_KEY is required');
+  const dekPrimary = config.DATA_ENCRYPTION_KEY_PRIMARY;
+  const dekKeyring = config.DATA_ENCRYPTION_KEYS;
+  const legacyDek = config.DATA_ENCRYPTION_KEY;
+
+  if (typeof dekPrimary === 'string' || typeof dekKeyring === 'string') {
+    const primary = typeof dekPrimary === 'string' ? dekPrimary.trim() : '';
+    const keyringRaw = typeof dekKeyring === 'string' ? dekKeyring.trim() : '';
+
+    if (!primary) {
+      errors.push('DATA_ENCRYPTION_KEY_PRIMARY must be set when using DATA_ENCRYPTION_KEYS');
+    }
+    if (!keyringRaw) {
+      errors.push('DATA_ENCRYPTION_KEYS must be set when using DATA_ENCRYPTION_KEY_PRIMARY');
+    }
+
+    if (primary && keyringRaw) {
+      const seen = new Set<string>();
+      const entries = keyringRaw
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+      if (entries.length === 0) {
+        errors.push('DATA_ENCRYPTION_KEYS must include at least one <version>:<key> entry');
+      }
+
+      for (const entry of entries) {
+        const [versionRaw, keyRaw] = entry.split(':');
+        const version = versionRaw?.trim();
+        const key = keyRaw?.trim();
+        if (!version || !key) {
+          errors.push(`DATA_ENCRYPTION_KEYS entry '${entry}' must be formatted as <version>:<key>`);
+          continue;
+        }
+        if (seen.has(version)) {
+          errors.push(`DATA_ENCRYPTION_KEYS contains duplicate version '${version}'`);
+          continue;
+        }
+        seen.add(version);
+        try {
+          EncryptionService.deriveKey(key);
+        } catch (e: unknown) {
+          errors.push(`DATA_ENCRYPTION_KEYS entry '${version}' invalid: ${(e as Error).message}`);
+        }
+      }
+
+      if (!seen.has(primary)) {
+        errors.push(`DATA_ENCRYPTION_KEYS must include the primary version '${primary}'`);
+      }
+    }
   } else {
-    try {
-      EncryptionService.deriveKey(dek);
-    } catch (e: unknown) {
-      errors.push(`DATA_ENCRYPTION_KEY invalid: ${(e as Error).message}`);
+    if (typeof legacyDek !== 'string' || legacyDek.trim().length === 0) {
+      errors.push('DATA_ENCRYPTION_KEY is required');
+    } else {
+      try {
+        EncryptionService.deriveKey(legacyDek);
+      } catch (e: unknown) {
+        errors.push(`DATA_ENCRYPTION_KEY invalid: ${(e as Error).message}`);
+      }
     }
   }
 

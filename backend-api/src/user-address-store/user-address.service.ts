@@ -21,7 +21,11 @@ export class UserAddressService {
     const doc = await this.model.findOne({ user: userId }).lean();
     if (!doc) return { address: null };
     try {
-      const address = this.enc.decryptObject<any>(doc.ciphertext) ?? {};
+      const { payload, ciphertext, rotated } = this.enc.decryptObjectWithRotation<any>(doc.ciphertext);
+      if (doc._id && rotated) {
+        await this.model.updateOne({ _id: doc._id }, { $set: { ciphertext } }).exec();
+      }
+      const address = payload ?? {};
       const normalised = {
         line1: typeof address.line1 === 'string' ? address.line1 : '',
         line2: typeof address.line2 === 'string' ? address.line2 : '',

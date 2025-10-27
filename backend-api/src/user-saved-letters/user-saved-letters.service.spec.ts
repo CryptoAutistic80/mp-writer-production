@@ -29,11 +29,12 @@ describe('UserSavedLettersService', () => {
     model = {
       find: jest.fn(),
       countDocuments: jest.fn(),
+      updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(undefined) }),
     };
-    
+
     encryption = {
       encryptObject: jest.fn((value) => value),
-      decryptObject: jest.fn((value) => value),
+      decryptObjectWithRotation: jest.fn((value) => ({ payload: value, ciphertext: value, rotated: false })),
     };
 
     // Directly instantiate the service with mocks
@@ -134,5 +135,34 @@ describe('UserSavedLettersService', () => {
       expect(findChain.skip).toHaveBeenCalledWith(0);
       expect(findChain.limit).toHaveBeenCalledWith(20);
     });
+  });
+
+  it('refreshes ciphertext when rotation occurs during lookup', async () => {
+    const doc = {
+      _id: 'abc123',
+      user: 'user-1',
+      responseId: 'resp-1',
+      letterHtmlCiphertext: 'oldHtml',
+      metadataCiphertext: { references: [] },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const findChain: any = {
+      lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([doc]) }),
+    };
+    (model.find as jest.Mock).mockReturnValue(findChain);
+
+    (encryption.decryptObjectWithRotation as jest.Mock).mockImplementation((value: any) => {
+      if (value === 'oldHtml') {
+        return { payload: '<p>Hello</p>', ciphertext: 'newHtml', rotated: true };
+      }
+      return { payload: value, ciphertext: value, rotated: false };
+    });
+
+    const result = await service.findByResponseIds('user-1', ['resp-1']);
+
+    expect(result[0].letterHtml).toBe('<p>Hello</p>');
+    expect(model.updateOne).toHaveBeenCalledWith({ _id: 'abc123' }, { $set: { letterHtmlCiphertext: 'newHtml' } });
   });
 });

@@ -26,7 +26,7 @@ export class WritingDeskJobsService {
   async getActiveJobForUser(userId: string): Promise<ActiveWritingDeskJobResource | null> {
     const record = await this.repository.findActiveByUserId(userId);
     if (!record) return null;
-    const snapshot = this.toSnapshot(record);
+    const snapshot = await this.toSnapshot(record);
     return this.toResource(snapshot);
   }
 
@@ -54,12 +54,13 @@ export class WritingDeskJobsService {
       letterTone: sanitized.letterTone,
       letterResponseId: sanitized.letterResponseId,
       letterContentCiphertext: sanitized.letterContent ? this.encryption.encryptObject(sanitized.letterContent) : null,
-      letterReferencesCiphertext: sanitized.letterReferences.length > 0 ? this.encryption.encryptObject(sanitized.letterReferences) : null,
+      letterReferencesCiphertext:
+        sanitized.letterReferences.length > 0 ? this.encryption.encryptObject(sanitized.letterReferences) : null,
       letterJsonCiphertext: sanitized.letterJson ? this.encryption.encryptObject(sanitized.letterJson) : null,
     };
 
     const saved = await this.repository.upsertActiveJob(userId, payload);
-    const snapshot = this.toSnapshot(saved);
+    const snapshot = await this.toSnapshot(saved);
     return this.toResource(snapshot);
   }
 
@@ -109,9 +110,10 @@ export class WritingDeskJobsService {
     }
 
     const stepIndex = Number.isFinite(input.stepIndex) && input.stepIndex >= 0 ? Math.floor(input.stepIndex) : 0;
-    const followUpIndex = Number.isFinite(input.followUpIndex) && input.followUpIndex >= 0
-      ? Math.min(Math.floor(input.followUpIndex), Math.max(maxFollowUps - 1, 0))
-      : 0;
+    const followUpIndex =
+      Number.isFinite(input.followUpIndex) && input.followUpIndex >= 0
+        ? Math.min(Math.floor(input.followUpIndex), Math.max(maxFollowUps - 1, 0))
+        : 0;
 
     const rawStatus = typeof input.researchStatus === 'string' ? input.researchStatus.trim() : '';
     const researchStatus = (WRITING_DESK_RESEARCH_STATUSES as readonly string[]).includes(rawStatus)
@@ -155,18 +157,29 @@ export class WritingDeskJobsService {
     };
   }
 
-  private toSnapshot(record: WritingDeskJobRecord): WritingDeskJobSnapshot {
-    const form = this.decryptForm(record);
-    const followUpQuestions = this.decryptStringArray(record.followUpQuestionsCiphertext);
-    const followUpAnswers = this.decryptFollowUpAnswers(record);
-    const notes = this.decryptNullableString((record as any).notesCiphertext);
-    const researchContent = this.decryptNullableString((record as any).researchContentCiphertext);
-    const letterContent = this.decryptNullableString((record as any).letterContentCiphertext);
-    const letterReferences = this.decryptNullableStringArray((record as any).letterReferencesCiphertext);
-    const letterJson = this.decryptNullableString((record as any).letterJsonCiphertext);
+  private async toSnapshot(record: WritingDeskJobRecord): Promise<WritingDeskJobSnapshot> {
+    const updates: Record<string, string> = {};
+    const form = this.decryptForm(record, updates);
+    const followUpQuestions = this.decryptStringArray(record.followUpQuestionsCiphertext, updates, 'followUpQuestionsCiphertext');
+    const followUpAnswers = this.decryptFollowUpAnswers(record, updates);
+    const notes = this.decryptNullableString((record as any).notesCiphertext, updates, 'notesCiphertext');
+    const researchContent = this.decryptNullableString(
+      (record as any).researchContentCiphertext,
+      updates,
+      'researchContentCiphertext',
+    );
+    const letterContent = this.decryptNullableString((record as any).letterContentCiphertext, updates, 'letterContentCiphertext');
+    const letterReferences = this.decryptNullableStringArray(
+      (record as any).letterReferencesCiphertext,
+      updates,
+      'letterReferencesCiphertext',
+    );
+    const letterJson = this.decryptNullableString((record as any).letterJsonCiphertext, updates, 'letterJsonCiphertext');
 
     const createdAt = record.createdAt instanceof Date ? record.createdAt : new Date(record.createdAt);
     const updatedAt = record.updatedAt instanceof Date ? record.updatedAt : new Date(record.updatedAt);
+
+    await this.applyCiphertextUpdates(record.userId, updates);
 
     return {
       jobId: record.jobId,
@@ -193,10 +206,18 @@ export class WritingDeskJobsService {
     };
   }
 
-  private decryptForm(record: WritingDeskJobRecord): WritingDeskJobFormSnapshot {
+  private decryptForm(record: WritingDeskJobRecord, updates: Record<string, string>): WritingDeskJobFormSnapshot {
     if (record.formCiphertext) {
       try {
-        return this.encryption.decryptObject<WritingDeskJobFormSnapshot>(record.formCiphertext);
+        const { payload, ciphertext, rotated } = this.encryption.decryptObjectWithRotation<WritingDeskJobFormSnapshot>(
+          record.formCiphertext,
+        );
+        if (rotated) {
+          updates.formCiphertext = ciphertext;
+        }
+        if (payload && typeof payload.issueDescription === 'string') {
+          return payload;
+        }
       } catch {
         // fall through to legacy/plain handling
       }
@@ -229,12 +250,17 @@ export class WritingDeskJobsService {
     };
   }
 
-  private decryptFollowUpAnswers(record: WritingDeskJobRecord): string[] {
+  private decryptFollowUpAnswers(record: WritingDeskJobRecord, updates: Record<string, string>): string[] {
     if (record.followUpAnswersCiphertext) {
       try {
-        const decrypted = this.encryption.decryptObject<string[]>(record.followUpAnswersCiphertext);
-        if (Array.isArray(decrypted)) {
-          return decrypted.map((value) => (typeof value === 'string' ? value : ''));
+        const { payload, ciphertext, rotated } = this.encryption.decryptObjectWithRotation<string[]>(
+          record.followUpAnswersCiphertext,
+        );
+        if (rotated) {
+          updates.followUpAnswersCiphertext = ciphertext;
+        }
+        if (Array.isArray(payload)) {
+          return payload.map((value) => (typeof value === 'string' ? value : ''));
         }
       } catch {
         // fall through to legacy/plain handling
@@ -273,12 +299,19 @@ export class WritingDeskJobsService {
     };
   }
 
-  private decryptStringArray(ciphertext: string | undefined): string[] {
+  private decryptStringArray(
+    ciphertext: string | undefined,
+    updates: Record<string, string>,
+    field: string,
+  ): string[] {
     if (!ciphertext) return [];
     try {
-      const decrypted = this.encryption.decryptObject<string[]>(ciphertext);
-      if (Array.isArray(decrypted)) {
-        return decrypted.map((value) => (typeof value === 'string' ? value : ''));
+      const { payload, ciphertext: refreshed, rotated } = this.encryption.decryptObjectWithRotation<string[]>(ciphertext);
+      if (rotated) {
+        updates[field] = refreshed;
+      }
+      if (Array.isArray(payload)) {
+        return payload.map((value) => (typeof value === 'string' ? value : ''));
       }
     } catch {
       // Decryption failed
@@ -286,28 +319,49 @@ export class WritingDeskJobsService {
     return [];
   }
 
-  private decryptNullableString(ciphertext: string | null | undefined): string | null {
+  private decryptNullableString(
+    ciphertext: string | null | undefined,
+    updates: Record<string, string>,
+    field: string,
+  ): string | null {
     if (!ciphertext) return null;
     try {
-      const decrypted = this.encryption.decryptObject<string>(ciphertext);
-      return typeof decrypted === 'string' ? decrypted : null;
+      const { payload, ciphertext: refreshed, rotated } = this.encryption.decryptObjectWithRotation<string>(ciphertext);
+      if (rotated) {
+        updates[field] = refreshed;
+      }
+      return typeof payload === 'string' ? payload : null;
     } catch {
       // Decryption failed
     }
     return null;
   }
 
-  private decryptNullableStringArray(ciphertext: string | null | undefined): string[] {
+  private decryptNullableStringArray(
+    ciphertext: string | null | undefined,
+    updates: Record<string, string>,
+    field: string,
+  ): string[] {
     if (!ciphertext) return [];
     try {
-      const decrypted = this.encryption.decryptObject<string[]>(ciphertext);
-      if (Array.isArray(decrypted)) {
-        return decrypted.map((value) => (typeof value === 'string' ? value : ''));
+      const { payload, ciphertext: refreshed, rotated } = this.encryption.decryptObjectWithRotation<string[]>(ciphertext);
+      if (rotated) {
+        updates[field] = refreshed;
+      }
+      if (Array.isArray(payload)) {
+        return payload.map((value) => (typeof value === 'string' ? value : ''));
       }
     } catch {
       // Decryption failed
     }
     return [];
+  }
+
+  private async applyCiphertextUpdates(userId: string, updates: Record<string, string>): Promise<void> {
+    if (Object.keys(updates).length === 0) {
+      return;
+    }
+    await this.repository.updateCiphertexts(userId, updates);
   }
 
   private isUuid(value: string) {

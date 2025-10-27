@@ -76,4 +76,19 @@ export class WritingDeskJobsRepository {
   async deleteActiveJob(userId: string): Promise<void> {
     await this.model.deleteOne({ userId });
   }
+
+  async updateCiphertexts(userId: string, updates: Record<string, string>): Promise<void> {
+    const fields = Object.entries(updates).reduce<Record<string, string>>((acc, [key, value]) => {
+      if (typeof value === 'string') {
+        acc[key] = value;
+      }
+      return acc;
+    }, {});
+
+    if (Object.keys(fields).length === 0) {
+      return;
+    }
+
+    await this.model.updateOne({ userId }, { $set: fields }).exec();
+  }
 }
