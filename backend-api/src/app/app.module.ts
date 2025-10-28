@@ -48,66 +48,92 @@ function validateConfig(config: Record<string, unknown>) {
   requireString('REDIS_URL');
   requireString('JWT_SECRET', { minLength: 32, forbid: ['changeme'] });
 
-  const dekPrimary = config.DATA_ENCRYPTION_KEY_PRIMARY;
-  const dekKeyring = config.DATA_ENCRYPTION_KEYS;
-  const legacyDek = config.DATA_ENCRYPTION_KEY;
+  const dekPrimary = typeof config.DATA_ENCRYPTION_KEY_PRIMARY === 'string' ? config.DATA_ENCRYPTION_KEY_PRIMARY.trim() : '';
+  const dekKeyring = typeof config.DATA_ENCRYPTION_KEYS === 'string' ? config.DATA_ENCRYPTION_KEYS.trim() : '';
+  const dekMaster = typeof config.DATA_ENCRYPTION_KEY_MASTER === 'string' ? config.DATA_ENCRYPTION_KEY_MASTER.trim() : '';
+  const dekVersions = typeof config.DATA_ENCRYPTION_KEY_VERSIONS === 'string' ? config.DATA_ENCRYPTION_KEY_VERSIONS.trim() : '';
+  const legacyDek = typeof config.DATA_ENCRYPTION_KEY === 'string' ? config.DATA_ENCRYPTION_KEY.trim() : '';
 
-  if (typeof dekPrimary === 'string' || typeof dekKeyring === 'string') {
-    const primary = typeof dekPrimary === 'string' ? dekPrimary.trim() : '';
-    const keyringRaw = typeof dekKeyring === 'string' ? dekKeyring.trim() : '';
+  const usingExplicitKeyring = dekPrimary.length > 0 && dekKeyring.length > 0;
+  const usingDerivedKeyring = dekPrimary.length > 0 && dekMaster.length > 0 && dekVersions.length > 0;
+  if (!dekPrimary && (dekKeyring || dekMaster || dekVersions)) {
+    errors.push('DATA_ENCRYPTION_KEY_PRIMARY is required when configuring a keyring');
+  }
 
-    if (!primary) {
-      errors.push('DATA_ENCRYPTION_KEY_PRIMARY must be set when using DATA_ENCRYPTION_KEYS');
+  if (usingExplicitKeyring && usingDerivedKeyring) {
+    errors.push('Use either DATA_ENCRYPTION_KEYS or DATA_ENCRYPTION_KEY_VERSIONS with DATA_ENCRYPTION_KEY_MASTER, not both');
+  }
+
+  if (usingExplicitKeyring) {
+    const seen = new Set<string>();
+    const entries = dekKeyring
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+
+    if (entries.length === 0) {
+      errors.push('DATA_ENCRYPTION_KEYS must include at least one <version>:<key> entry');
     }
-    if (!keyringRaw) {
-      errors.push('DATA_ENCRYPTION_KEYS must be set when using DATA_ENCRYPTION_KEY_PRIMARY');
+
+    for (const entry of entries) {
+      const [versionRaw, keyRaw] = entry.split(':');
+      const version = versionRaw?.trim();
+      const key = keyRaw?.trim();
+      if (!version || !key) {
+        errors.push(`DATA_ENCRYPTION_KEYS entry '${entry}' must be formatted as <version>:<key>`);
+        continue;
+      }
+      if (seen.has(version)) {
+        errors.push(`DATA_ENCRYPTION_KEYS contains duplicate version '${version}'`);
+        continue;
+      }
+      seen.add(version);
+      try {
+        EncryptionService.deriveKey(key);
+      } catch (e: unknown) {
+        errors.push(`DATA_ENCRYPTION_KEYS entry '${version}' invalid: ${(e as Error).message}`);
+      }
     }
 
-    if (primary && keyringRaw) {
-      const seen = new Set<string>();
-      const entries = keyringRaw
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0);
+    if (!seen.has(dekPrimary)) {
+      errors.push(`DATA_ENCRYPTION_KEYS must include the primary version '${dekPrimary}'`);
+    }
+  } else if (usingDerivedKeyring) {
+    try {
+      EncryptionService.deriveKey(dekMaster);
+    } catch (e: unknown) {
+      errors.push(`DATA_ENCRYPTION_KEY_MASTER invalid: ${(e as Error).message}`);
+    }
 
-      if (entries.length === 0) {
-        errors.push('DATA_ENCRYPTION_KEYS must include at least one <version>:<key> entry');
-      }
+    const versions = dekVersions
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
 
-      for (const entry of entries) {
-        const [versionRaw, keyRaw] = entry.split(':');
-        const version = versionRaw?.trim();
-        const key = keyRaw?.trim();
-        if (!version || !key) {
-          errors.push(`DATA_ENCRYPTION_KEYS entry '${entry}' must be formatted as <version>:<key>`);
-          continue;
-        }
-        if (seen.has(version)) {
-          errors.push(`DATA_ENCRYPTION_KEYS contains duplicate version '${version}'`);
-          continue;
-        }
-        seen.add(version);
-        try {
-          EncryptionService.deriveKey(key);
-        } catch (e: unknown) {
-          errors.push(`DATA_ENCRYPTION_KEYS entry '${version}' invalid: ${(e as Error).message}`);
-        }
-      }
+    if (versions.length === 0) {
+      errors.push('DATA_ENCRYPTION_KEY_VERSIONS must list at least one version when using DATA_ENCRYPTION_KEY_MASTER');
+    }
 
-      if (!seen.has(primary)) {
-        errors.push(`DATA_ENCRYPTION_KEYS must include the primary version '${primary}'`);
+    const seen = new Set<string>();
+    for (const version of versions) {
+      if (seen.has(version)) {
+        errors.push(`DATA_ENCRYPTION_KEY_VERSIONS contains duplicate version '${version}'`);
+        continue;
       }
+      seen.add(version);
+    }
+
+    if (!seen.has(dekPrimary)) {
+      errors.push(`DATA_ENCRYPTION_KEY_VERSIONS must include the primary version '${dekPrimary}'`);
+    }
+  } else if (legacyDek.length > 0 && !usingExplicitKeyring && !usingDerivedKeyring) {
+    try {
+      EncryptionService.deriveKey(legacyDek);
+    } catch (e: unknown) {
+      errors.push(`DATA_ENCRYPTION_KEY invalid: ${(e as Error).message}`);
     }
   } else {
-    if (typeof legacyDek !== 'string' || legacyDek.trim().length === 0) {
-      errors.push('DATA_ENCRYPTION_KEY is required');
-    } else {
-      try {
-        EncryptionService.deriveKey(legacyDek);
-      } catch (e: unknown) {
-        errors.push(`DATA_ENCRYPTION_KEY invalid: ${(e as Error).message}`);
-      }
-    }
+    errors.push('Provide either DATA_ENCRYPTION_KEY, DATA_ENCRYPTION_KEYS with DATA_ENCRYPTION_KEY_PRIMARY, or DATA_ENCRYPTION_KEY_MASTER with DATA_ENCRYPTION_KEY_VERSIONS and DATA_ENCRYPTION_KEY_PRIMARY');
   }
 
   // OpenAI API key is required for AI operations

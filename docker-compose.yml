@@ -17,10 +17,14 @@ services:
       # Required Security Variables
       - MONGO_URI=${MONGO_URI:?MONGO_URI is required}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required - generate with openssl rand -hex 32}
-      # Provide either DATA_ENCRYPTION_KEY for legacy installs or both DATA_ENCRYPTION_KEY_PRIMARY and DATA_ENCRYPTION_KEYS
+      # Provide either DATA_ENCRYPTION_KEY for legacy installs or DATA_ENCRYPTION_KEY_PRIMARY plus one of:
+      #   - DATA_ENCRYPTION_KEYS (explicit keyring entries)
+      #   - DATA_ENCRYPTION_KEY_MASTER + DATA_ENCRYPTION_KEY_VERSIONS (derived keyring)
       - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:-}
       - DATA_ENCRYPTION_KEY_PRIMARY=${DATA_ENCRYPTION_KEY_PRIMARY:-}
       - DATA_ENCRYPTION_KEYS=${DATA_ENCRYPTION_KEYS:-}
+      - DATA_ENCRYPTION_KEY_MASTER=${DATA_ENCRYPTION_KEY_MASTER:-}
+      - DATA_ENCRYPTION_KEY_VERSIONS=${DATA_ENCRYPTION_KEY_VERSIONS:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       
       # Application Configuration

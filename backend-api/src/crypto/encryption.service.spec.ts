@@ -51,4 +51,24 @@ describe('EncryptionService keyring', () => {
       /DATA_ENCRYPTION_KEYS is missing primary version 'v3'/,
     );
   });
+
+  it('derives key versions from a master key and rotates automatically', () => {
+    const master = Buffer.alloc(32, 7).toString('hex');
+    const legacyService = createService({ DATA_ENCRYPTION_KEY: Buffer.alloc(32, 5).toString('hex') });
+    const ciphertextV1 = legacyService.encryptObject({ foo: 'bar' });
+
+    const derivedService = createService({
+      DATA_ENCRYPTION_KEY_PRIMARY: 'v3',
+      DATA_ENCRYPTION_KEY_MASTER: master,
+      DATA_ENCRYPTION_KEY_VERSIONS: 'v1,v2,v3',
+    });
+
+    const freshCipher = derivedService.encryptObject({ foo: 'bar' });
+    expect(freshCipher.startsWith('v3.')).toBe(true);
+
+    const result = derivedService.decryptObjectWithRotation<{ foo: string }>(ciphertextV1);
+    expect(result.payload).toEqual({ foo: 'bar' });
+    expect(result.rotated).toBe(true);
+    expect(result.ciphertext.startsWith('v3.')).toBe(true);
+  });
 });

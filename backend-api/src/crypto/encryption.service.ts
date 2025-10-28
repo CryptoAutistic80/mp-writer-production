@@ -45,6 +45,8 @@ export class EncryptionService {
 
     const rawPrimary = this.config.get<string>('DATA_ENCRYPTION_KEY_PRIMARY');
     const rawKeyring = this.config.get<string>('DATA_ENCRYPTION_KEYS');
+    const rawMaster = this.config.get<string>('DATA_ENCRYPTION_KEY_MASTER');
+    const rawVersions = this.config.get<string>('DATA_ENCRYPTION_KEY_VERSIONS');
     const legacyKey = this.config.get<string>('DATA_ENCRYPTION_KEY');
 
     const keyring = new Map<string, Buffer>();
@@ -83,6 +85,31 @@ export class EncryptionService {
       }
 
       primaryVersion = trimmedPrimary;
+    } else if (rawPrimary && rawMaster && rawVersions) {
+      const trimmedPrimary = rawPrimary.trim();
+      const master = EncryptionService.deriveKey(rawMaster);
+
+      const versions = rawVersions
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+      if (versions.length === 0) {
+        throw new Error('DATA_ENCRYPTION_KEY_VERSIONS must list at least one version');
+      }
+
+      for (const version of versions) {
+        if (keyring.has(version)) {
+          throw new Error(`Duplicate DATA_ENCRYPTION_KEY_VERSIONS entry '${version}'`);
+        }
+        keyring.set(version, this.deriveVersionedKey(master, version));
+      }
+
+      if (!keyring.has(trimmedPrimary)) {
+        throw new Error(`DATA_ENCRYPTION_KEY_VERSIONS is missing primary version '${trimmedPrimary}'`);
+      }
+
+      primaryVersion = trimmedPrimary;
     } else if (legacyKey) {
       const derived = EncryptionService.deriveKey(legacyKey);
       keyring.set('v1', derived);
@@ -96,6 +123,10 @@ export class EncryptionService {
     this.keyring = keyring;
     this.primaryVersion = primaryVersion;
     return { keyring, primaryVersion };
+  }
+
+  private deriveVersionedKey(master: Buffer, version: string): Buffer {
+    return crypto.createHmac('sha256', master).update(version).digest();
   }
 
   encryptObject(payload: unknown): string {
