@@ -73,11 +73,11 @@ STRIPE_SECRET_KEY=sk_test_your_key_here
 STRIPE_PUBLISHABLE_KEY=pk_test_your_key_here
 STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
 STRIPE_PRICE_ID_CREDITS_3=price_...
-STRIPE_PRICE_ID_CREDITS_5=price_...
-STRIPE_PRICE_ID_CREDITS_10=price_...
-STRIPE_AMOUNT_CREDITS_3=299
-STRIPE_AMOUNT_CREDITS_5=499
-STRIPE_AMOUNT_CREDITS_10=999
+STRIPE_PRICE_ID_CREDITS_6=price_...
+STRIPE_PRICE_ID_CREDITS_12=price_...
+STRIPE_AMOUNT_CREDITS_3=699
+STRIPE_AMOUNT_CREDITS_6=1249
+STRIPE_AMOUNT_CREDITS_12=2199
 STRIPE_CURRENCY=gbp
 
 # Frontend
@@ -353,6 +353,5 @@ For issues with:
 - **Database issues**: Check MongoDB connection and indexes
 
 Happy testing! 🎉
-
 
 

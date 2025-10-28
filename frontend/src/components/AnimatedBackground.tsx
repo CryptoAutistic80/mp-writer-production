@@ -124,13 +124,14 @@ export default function AnimatedBackground() {
             instanced?.geometry?.dispose?.();
             instanced?.material?.dispose?.();
             renderer.dispose?.();
-          } catch {}
+          } catch {
+            // Ignore disposal errors
+          }
           if (container && renderer?.domElement?.parentNode === container) {
             container.removeChild(renderer.domElement);
           }
         };
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.warn('Animated background failed to load', err);
       }
     })();

@@ -283,7 +283,7 @@ export default function WritingDeskClient() {
   const [letterError, setLetterError] = useState<string | null>(null);
   const [letterEvents, setLetterEvents] = useState<Array<{ id: string; text: string }>>([]);
   const [letterStatusMessage, setLetterStatusMessage] = useState<string | null>(null);
-  const [letterRemainingCredits, setLetterRemainingCredits] = useState<number | null>(null);
+  const [_letterRemainingCredits, setLetterRemainingCredits] = useState<number | null>(null);
   const [letterReasoningVisible, setLetterReasoningVisible] = useState(true);
   const [letterMetadata, setLetterMetadata] = useState<WritingDeskLetterPayload | null>(null);
   const [letterPendingAutoResume, setLetterPendingAutoResume] = useState(false);
@@ -2144,7 +2144,7 @@ export default function WritingDeskClient() {
                           <ReactMarkdown
                             skipHtml
                             components={{
-                              a: ({ node, ...props }) => (
+                              a: ({ node: _node, ...props }) => (
                                 <a {...props} target="_blank" rel="noreferrer noopener" />
                               ),
                             }}

@@ -62,7 +62,7 @@ export class AuthService {
       }
       
       return this.signJwt({ id: user._id, email: user.email });
-    } catch (error) {
+    } catch (_error) {
       throw new Error('Invalid refresh token');
     }
   }

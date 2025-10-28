@@ -23,16 +23,26 @@ const STRIPE_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED 
 
 // Fallback packages if backend is unavailable
 const FALLBACK_PACKAGES: CreditPackage[] = [
-  { credits: 3, priceId: '', amount: 299, currency: 'gbp' },
-  { credits: 5, priceId: '', amount: 499, currency: 'gbp' },
-  { credits: 10, priceId: '', amount: 999, currency: 'gbp' },
+  { credits: 3, priceId: '', amount: 699, currency: 'gbp' },
+  { credits: 6, priceId: '', amount: 1249, currency: 'gbp' },
+  { credits: 12, priceId: '', amount: 2199, currency: 'gbp' },
 ];
+
+const PACKAGE_COPY: Record<number, { name: string; subtitle: string }> = {
+  3: { name: 'Beginner Pack', subtitle: '3 credits to get you started' },
+  6: { name: 'Novice Pack', subtitle: '6 credits for regular writers' },
+  12: { name: 'Pro Scribe Pack', subtitle: '12 credits — best value' },
+};
 
 function formatPrice(amount: number, currency: string) {
   return new Intl.NumberFormat('en-GB', { 
     style: 'currency', 
     currency: currency.toUpperCase() 
   }).format(amount / 100); // Amount is in minor units
+}
+
+function formatCreditQuantity(credits: number) {
+  return `${credits} credit${credits === 1 ? '' : 's'}`;
 }
 
 export default function CreditShopPage() {
@@ -153,15 +163,21 @@ export default function CreditShopPage() {
                   {packages.map((pkg) => {
                     const isProcessing = state.status === 'loading' && state.pendingCredits === pkg.credits;
                     const processingLabel = STRIPE_CHECKOUT_ENABLED ? 'Redirecting to checkout…' : 'Processing purchase…';
+                    const packageCopy = PACKAGE_COPY[pkg.credits];
+                    const defaultName = `${pkg.credits}-credit pack`;
+                    const displayName = packageCopy?.name ?? defaultName;
+                    const subtitle = packageCopy?.subtitle ?? formatCreditQuantity(pkg.credits);
+                    const priceLabel = formatPrice(pkg.amount, pkg.currency);
                     return (
                       <div
                         key={pkg.credits}
                         className="card"
                         style={{ border: '1px solid #e2e8f0', background: '#fff', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}
                       >
-                        <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{pkg.credits} credits</h2>
+                        <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{displayName}</h2>
+                        <p style={{ margin: 0, color: '#475569' }}>{subtitle}</p>
                         <p style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
-                          {formatPrice(pkg.amount, pkg.currency)}
+                          {priceLabel}
                         </p>
                         <button
                           type="button"
@@ -170,7 +186,7 @@ export default function CreditShopPage() {
                           disabled={state.status === 'loading'}
                           style={{ marginTop: 'auto' }}
                         >
-                          {isProcessing ? processingLabel : `Buy for ${formatPrice(pkg.amount, pkg.currency)}`}
+                          {isProcessing ? processingLabel : `Buy for ${priceLabel}`}
                         </button>
                       </div>
                     );

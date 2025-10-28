@@ -318,7 +318,7 @@ export class CheckoutService {
 
       // Log successful purchase completion
       if (!wasAlreadyProcessed && purchase) {
-        const stripe = this.requireStripe();
+        const _stripe = this.requireStripe();
         this.auditService.logPurchaseCompleted(
           { userId },
           session.id,
@@ -379,8 +379,8 @@ export class CheckoutService {
   private loadPriceMap(): Record<number, string> {
     const entries: Array<[number, string | undefined]> = [
       [3, this.config.get<string>('STRIPE_PRICE_ID_CREDITS_3')],
-      [5, this.config.get<string>('STRIPE_PRICE_ID_CREDITS_5')],
-      [10, this.config.get<string>('STRIPE_PRICE_ID_CREDITS_10')],
+      [6, this.config.get<string>('STRIPE_PRICE_ID_CREDITS_6')],
+      [12, this.config.get<string>('STRIPE_PRICE_ID_CREDITS_12')],
     ];
 
     const map: Record<number, string> = {};
@@ -396,8 +396,8 @@ export class CheckoutService {
     // Amounts in minor units (pence for GBP, cents for USD, etc.)
     const entries: Array<[number, string | undefined]> = [
       [3, this.config.get<string>('STRIPE_AMOUNT_CREDITS_3')],
-      [5, this.config.get<string>('STRIPE_AMOUNT_CREDITS_5')],
-      [10, this.config.get<string>('STRIPE_AMOUNT_CREDITS_10')],
+      [6, this.config.get<string>('STRIPE_AMOUNT_CREDITS_6')],
+      [12, this.config.get<string>('STRIPE_AMOUNT_CREDITS_12')],
     ];
 
     const map: Record<number, number> = {};

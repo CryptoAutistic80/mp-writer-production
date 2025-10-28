@@ -157,7 +157,7 @@ async function bootstrap() {
       if (!['http:', 'https:'].includes(originUrl.protocol)) {
         throw new Error(`CORS origin must use http or https protocol, got: ${originUrl.protocol}`);
       }
-    } catch (err) {
+    } catch (_err) {
       throw new Error(`Invalid CORS origin: ${origin}. Must be a valid URL (e.g., https://example.com)`);
     }
   });

@@ -2123,7 +2123,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 break;
               case 'response.failed':
               case 'response.incomplete': {
-                const errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
+                const _errorMessage = (event as any)?.error?.message ?? 'Deep research failed';
                 throw new ServiceUnavailableException('Deep research failed. Please try again later.');
               }
               case 'response.completed': {
@@ -3495,7 +3495,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         sender_phone: parsed.sender_phone ?? '',
         references: Array.isArray(parsed.references) ? parsed.references : [],
       });
-    } catch (error) {
+    } catch (_error) {
       throw new InternalServerErrorException('Failed to parse letter response. Please try again.');
     }
   }

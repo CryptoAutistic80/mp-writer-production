@@ -26,7 +26,7 @@ export function MicButton({
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [transcriptionText, setTranscriptionText] = useState('');
+  const [_transcriptionText, setTranscriptionText] = useState('');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);

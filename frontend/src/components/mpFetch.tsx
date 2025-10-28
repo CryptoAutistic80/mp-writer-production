@@ -47,8 +47,10 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
       // Try to persist for signed-in users; ignore failures
       try {
         await apiClient.put('/api/user/mp', { constituency: json.constituency, mp: json.mp ?? null });
-      } catch {}
-    } catch (err: any) {
+      } catch {
+        // Ignore errors saving MP selection
+      }
+    } catch (_err: any) {
       setError('We couldn\'t find a match for that postcode.');
     } finally {
       setLoading(false);
@@ -135,7 +137,9 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
               onChange={(e) => {
                 const v = e.target.value;
                 setPostcode(v);
-                try { onPostcodeChange?.(v); } catch {}
+                try { onPostcodeChange?.(v); } catch {
+                  // Ignore errors in postcode change callback
+                }
               }}
               disabled={loading}
               aria-invalid={!valid && postcode.length > 0}
@@ -155,7 +159,6 @@ export default function MpFetch({ onPostcodeChange }: MpFetchProps) {
           {data && (
             <article className="mp-card">
               {data.mp?.portraitUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={data.mp.portraitUrl} alt="" className="mp-portrait" />
               )}
               <div className="mp-body">
