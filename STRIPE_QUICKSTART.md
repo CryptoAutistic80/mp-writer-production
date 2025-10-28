@@ -99,7 +99,7 @@ db.purchases.find().pretty()
 
 - **Testing Guide**: `STRIPE_TESTING.md`
 - **Implementation Details**: `STRIPE_IMPLEMENTATION.md`
-- **Environment Config**: `env.example.txt`
+- **Environment Config**: `.env.example`
 
 ## ✅ Pre-Launch Checklist
 
@@ -127,4 +127,3 @@ db.purchases.find().pretty()
 ---
 
 **Ready to test?** → `./scripts/stripe-local-setup.sh` 🎉
-

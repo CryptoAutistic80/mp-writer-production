@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { fetchMyLetters, type MyLettersListMeta, type MyLettersListParams } from '../api/listLetters';
 
 const QUERY_KEY = ['my-letters'] as const;
@@ -28,7 +28,7 @@ export function useMyLettersQuery(params: MyLettersListParams = {}) {
       from: normalized.from ?? undefined,
       to: normalized.to ?? undefined,
     }),
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
 

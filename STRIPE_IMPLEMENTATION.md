@@ -94,7 +94,7 @@
   - Provides webhook secret
 
 #### 13. **Environment Configuration** ✅
-- **Updated**: `env.example.txt` with detailed comments
+- **Updated**: `.env.example` with detailed comments
 - **Added**: `STRIPE_AMOUNT_CREDITS_X` validation vars
 - **Docker**: Updated `docker-compose.yml` with all Stripe vars
 
@@ -142,7 +142,7 @@ GET /api/checkout/packages
 6. `backend-api/src/purchases/schemas/purchase.schema.ts` - Added index
 7. `backend-api/src/main.ts` - Raw body handling for webhooks
 8. `frontend/src/app/credit-shop/page.tsx` - Dynamic pricing from API
-9. `env.example.txt` - Comprehensive Stripe config
+9. `.env.example` - Comprehensive Stripe config
 10. `docker-compose.yml` - Stripe environment variables
 
 ---
@@ -245,5 +245,4 @@ Your Stripe integration is now **production-ready** with:
 - ✅ Scalable and maintainable code
 
 **Status**: Ready for production deployment! 🚀
-
 

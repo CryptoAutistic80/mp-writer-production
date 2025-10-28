@@ -1,7 +1,7 @@
 {
   "name": "@mp-writer/source",
   "version": "0.0.0",
-  "license": "MIT",
+  "license": "Proprietary",
   "scripts": {
     "clear-dev-data": "npx tsx backend-api/src/scripts/clear-unencrypted-data.ts"
   },

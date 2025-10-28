@@ -1,0 +1,73 @@
+services:
+  backend-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: npx nx serve backend-api
+    env_file:
+      - .env.local
+    environment:
+      # Override connection strings so containers talk to each other
+      - MONGO_URI=mongodb://mongo:27017/mp_writer
+      - REDIS_URL=redis://redis:6379
+      - PORT=4000
+      - APP_ORIGIN=http://localhost:3000
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./:/workspace
+      - node_modules:/workspace/node_modules
+      - backend_api_node_modules:/workspace/backend-api/node_modules
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    working_dir: /workspace
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: npx nx dev frontend --port=3000 --hostname=0.0.0.0
+    env_file:
+      - .env.local
+    environment:
+      - NEXT_PUBLIC_API_URL=/api
+      - NEXT_BACKEND_ORIGIN=http://backend-api:4000
+      - PORT=3000
+      - MONGO_URI=mongodb://mongo:27017/mp_writer
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./:/workspace
+      - node_modules:/workspace/node_modules
+      - frontend_node_modules:/workspace/frontend/node_modules
+    depends_on:
+      backend-api:
+        condition: service_started
+    working_dir: /workspace
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  node_modules:
+  backend_api_node_modules:
+  frontend_node_modules:
+  mongo-data:
