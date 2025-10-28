@@ -52,7 +52,6 @@ export default function Avatar({ src, alt = '', size = 28, className = '' }: Ava
   }
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
     <img
       className={`profile-avatar ${className}`.trim()}
       src={src!}

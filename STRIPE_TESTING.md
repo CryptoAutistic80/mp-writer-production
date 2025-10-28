@@ -39,19 +39,19 @@ This will open your browser to authorize the CLI.
 
 **Product 1: 3 Credits**
 - Name: `3 Credits`
-- Price: `£2.99` (or `$2.99` for USD)
+- Price: `£6.99` (or local currency equivalent)
 - Recurring: One-time
 - Copy the **Price ID** (format: `price_...`)
 
-**Product 2: 5 Credits**
-- Name: `5 Credits`
-- Price: `£4.99`
+**Product 2: 6 Credits**
+- Name: `6 Credits`
+- Price: `£12.49`
 - Recurring: One-time
 - Copy the **Price ID**
 
-**Product 3: 10 Credits**
-- Name: `10 Credits`
-- Price: `£9.99`
+**Product 3: 12 Credits**
+- Name: `12 Credits`
+- Price: `£21.99`
 - Recurring: One-time
 - Copy the **Price ID**
 
@@ -64,7 +64,7 @@ This will open your browser to authorize the CLI.
 
 ### 5. Configure Environment Variables
 
-Create a `.env` file in the workspace root (copy from `env.example.txt`):
+Create a `.env` file in the workspace root (copy from `.env.example`):
 
 ```bash
 # Stripe Configuration
@@ -73,11 +73,11 @@ STRIPE_SECRET_KEY=sk_test_your_key_here
 STRIPE_PUBLISHABLE_KEY=pk_test_your_key_here
 STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
 STRIPE_PRICE_ID_CREDITS_3=price_...
-STRIPE_PRICE_ID_CREDITS_5=price_...
-STRIPE_PRICE_ID_CREDITS_10=price_...
-STRIPE_AMOUNT_CREDITS_3=299
-STRIPE_AMOUNT_CREDITS_5=499
-STRIPE_AMOUNT_CREDITS_10=999
+STRIPE_PRICE_ID_CREDITS_6=price_...
+STRIPE_PRICE_ID_CREDITS_12=price_...
+STRIPE_AMOUNT_CREDITS_3=699
+STRIPE_AMOUNT_CREDITS_6=1249
+STRIPE_AMOUNT_CREDITS_12=2199
 STRIPE_CURRENCY=gbp
 
 # Frontend
@@ -108,21 +108,23 @@ STRIPE_WEBHOOK_SECRET=whsec_abc123...
 
 ```bash
 # Terminal 1: Backend
-npm run serve backend-api
+PORT=4000 npx nx serve backend-api
 
 # Terminal 2: Frontend
-npm run dev frontend
+npx nx dev frontend
 
 # Terminal 3: Stripe webhook listener
 stripe listen --forward-to localhost:4000/api/checkout/webhook
 ```
+
+> Prefer Docker? Run `docker compose -f docker-compose.dev.yml up --build` instead of the first two terminals and keep the Stripe CLI in a separate window.
 
 ## Testing the Integration
 
 ### Test Scenario 1: Successful Payment
 
 1. Navigate to `http://localhost:3000/credit-shop`
-2. Click "Buy for £2.99" on any package
+2. Click “Buy” on any package
 3. You'll be redirected to Stripe Checkout
 4. Use test card: `4242 4242 4242 4242`
    - Expiry: Any future date (e.g., `12/34`)
@@ -271,7 +273,7 @@ db.purchases.find({ "metadata.stripeSessionId": "cs_test_..." }).pretty()
 
 - Ensure `STRIPE_AMOUNT_CREDITS_X` values match your Stripe prices
 - Amounts must be in minor units (pence/cents)
-- Example: £2.99 = 299 pence
+- Example: £6.99 = 699 pence
 
 ## API Endpoints
 
@@ -353,6 +355,3 @@ For issues with:
 - **Database issues**: Check MongoDB connection and indexes
 
 Happy testing! 🎉
-
-
-

@@ -41,7 +41,7 @@ export function WaveformVisualizer({
 
       // Calculate bar heights from frequency data
       const barCount = 20; // Number of bars to display
-      const barWidth = canvas.width / barCount;
+      const _barWidth = canvas.width / barCount;
       const newBars: number[] = [];
 
       for (let i = 0; i < barCount; i++) {

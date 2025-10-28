@@ -12,8 +12,8 @@ echo ""
 # Check if .env exists
 if [ ! -f ".env" ]; then
     echo "❌ .env file not found!"
-    echo "📝 Creating .env from env.example.txt..."
-    cp env.example.txt .env
+    echo "📝 Creating .env from .env.example..."
+    cp .env.example .env
     echo "✅ Created .env file"
     echo ""
 fi
@@ -56,5 +56,4 @@ echo "Press Ctrl+C to stop when done testing"
 echo ""
 
 stripe listen --forward-to localhost:4000/api/checkout/webhook
-
 

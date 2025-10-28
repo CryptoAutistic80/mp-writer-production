@@ -1,5 +1,4 @@
 import { BadRequestException, Body, Controller, Get, Headers, Post, RawBodyRequest, Req, UseGuards } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CheckoutService } from './checkout.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';

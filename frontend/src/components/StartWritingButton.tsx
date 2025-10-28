@@ -99,7 +99,6 @@ export default function StartWritingButton() {
         aria-busy={checking}
         onClick={handleClick}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/assets/start_writing.png"
           alt="Start writing"

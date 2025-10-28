@@ -159,7 +159,7 @@ export function LetterViewer({
         throw new Error('Clipboard API not available');
       }
       setCopyState('copied');
-    } catch (error) {
+    } catch (_error) {
       try {
         if (navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(letterHtmlToPlainText(letterHtmlForExport));

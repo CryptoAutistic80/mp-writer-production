@@ -1,0 +1,9 @@
+FROM node:20
+
+# Install dependencies once at build time
+WORKDIR /workspace
+COPY package.json package-lock.json ./
+RUN npm install
+
+# Leave command execution to docker-compose services
+CMD ["sleep", "infinity"]

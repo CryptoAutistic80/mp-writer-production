@@ -76,8 +76,8 @@ function validateConfig(config: Record<string, unknown>) {
     requireString('STRIPE_SECRET_KEY', { minLength: 20 });
     requireString('STRIPE_WEBHOOK_SECRET', { minLength: 20 });
     requireString('STRIPE_PRICE_ID_CREDITS_3');
-    requireString('STRIPE_PRICE_ID_CREDITS_5');
-    requireString('STRIPE_PRICE_ID_CREDITS_10');
+    requireString('STRIPE_PRICE_ID_CREDITS_6');
+    requireString('STRIPE_PRICE_ID_CREDITS_12');
     
     // Validate that stripe keys look correct
     const stripeKey = config.STRIPE_SECRET_KEY;

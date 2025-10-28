@@ -28,11 +28,11 @@ STRIPE_CHECKOUT_ENABLED=1
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 STRIPE_PRICE_ID_CREDITS_3=price_...
-STRIPE_PRICE_ID_CREDITS_5=price_...
-STRIPE_PRICE_ID_CREDITS_10=price_...
-STRIPE_AMOUNT_CREDITS_3=299    # £2.99 in pence
-STRIPE_AMOUNT_CREDITS_5=499    # £4.99 in pence
-STRIPE_AMOUNT_CREDITS_10=999   # £9.99 in pence
+STRIPE_PRICE_ID_CREDITS_6=price_...
+STRIPE_PRICE_ID_CREDITS_12=price_...
+STRIPE_AMOUNT_CREDITS_3=699    # £6.99 in pence
+STRIPE_AMOUNT_CREDITS_6=1249   # £12.49 in pence
+STRIPE_AMOUNT_CREDITS_12=2199  # £21.99 in pence
 STRIPE_CURRENCY=gbp
 
 # Frontend
@@ -99,7 +99,7 @@ db.purchases.find().pretty()
 
 - **Testing Guide**: `STRIPE_TESTING.md`
 - **Implementation Details**: `STRIPE_IMPLEMENTATION.md`
-- **Environment Config**: `env.example.txt`
+- **Environment Config**: `.env.example`
 
 ## ✅ Pre-Launch Checklist
 
@@ -127,5 +127,3 @@ db.purchases.find().pretty()
 ---
 
 **Ready to test?** → `./scripts/stripe-local-setup.sh` 🎉
-
-
