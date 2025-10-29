@@ -142,6 +142,11 @@ export default function CreditShopPage() {
           <header>
             <h1 className="section-title">Credit shop</h1>
             <p>Purchase additional credits to continue crafting powerful letters to your MP.</p>
+            <p style={{ marginTop: 8, color: '#64748b' }}>
+              Each credit includes: full AI-powered research with citations, letter composition in your chosen tone,
+              unlimited revisions within the same session, and unlimited exports (PDF/DOCX). Credits never expire and
+              you only pay for what you use.
+            </p>
           </header>
           <div className="card" style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
             <div className="container" style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'flex-start' }}>
@@ -149,6 +154,10 @@ export default function CreditShopPage() {
                 Choose your top-up
               </p>
               <p style={{ margin: 0, fontSize: '1.125rem' }}>Pick the package that suits your writing needs.</p>
+              <p style={{ margin: 0, color: '#64748b', fontSize: '0.9375rem' }}>
+                <strong>New to MP Writer?</strong> Start with 3 credits to try the service. Regular advocates may prefer 6 credits.
+                Campaigners and those with multiple issues often choose 12 credits for the best value per letter.
+              </p>
               {packagesLoading ? (
                 <p style={{ margin: 0, color: '#64748b' }}>Loading packages...</p>
               ) : (
@@ -194,9 +203,18 @@ export default function CreditShopPage() {
                 </div>
               )}
               {STRIPE_CHECKOUT_ENABLED && (
-                <p style={{ margin: 0, color: '#475569', fontSize: '0.875rem' }}>
-                  Payments are securely processed by Stripe. You will be redirected to checkout to complete your purchase.
-                </p>
+                <>
+                  <p style={{ margin: 0, color: '#475569', fontSize: '0.875rem' }}>
+                    <strong>Secure checkout:</strong> Payments are processed securely by Stripe. All transactions are encrypted
+                    and we accept major credit and debit cards. You'll receive a receipt via email for your records, and VAT invoices
+                    are available for business accounts upon request.
+                  </p>
+                  <p style={{ margin: 0, color: '#475569', fontSize: '0.875rem', marginTop: 8 }}>
+                    <strong>After purchase:</strong> Credits are added immediately to your account after successful payment. You can
+                    start drafting letters right away. If you have any questions about credits, billing, or refunds, please{' '}
+                    <a className="micro-link" href="/contact">contact us</a>.
+                  </p>
+                </>
               )}
               {state.message && (
                 <p

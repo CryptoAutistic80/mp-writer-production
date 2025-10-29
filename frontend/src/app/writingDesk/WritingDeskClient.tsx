@@ -38,11 +38,11 @@ const steps: Array<{
 }> = [
   {
     key: 'issueDescription',
-    title: 'Describe your issue in as much detail as you can',
+    title: 'Tell us everything — feel free to vent',
     description:
-      'Share the full story, including who is affected, what has happened so far, and what you hope your MP can help achieve.',
+      'This is your space to get it all out. Who is affected, what’s happened, why it matters, what you’ve tried, and what you want your MP to do. The more detail, the better.',
     placeholder:
-      'E.g. The heating in my flat has been broken since December. My children are getting sick, I have reported it twice, and I need the housing association to replace the boiler within two weeks…',
+      'Start from the beginning — what’s going on, how it’s affecting you or others, what you’ve already done, timelines, names or departments if relevant, and what outcome you need. If it’s easier, use the mic button to speak and we’ll transcribe…',
   },
 ];
 
