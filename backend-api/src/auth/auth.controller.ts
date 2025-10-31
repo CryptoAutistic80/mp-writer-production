@@ -47,7 +47,7 @@ export class AuthController {
     // Issue HttpOnly session cookies with __Host- prefix for enhanced security
     const appOrigin = this.config.get<string>('APP_ORIGIN', 'http://localhost:3000');
     const isSecure = appOrigin.startsWith('https://');
-    const fifteenMinutesMs = 15 * 60 * 1000; // Access token: 15 minutes
+    const oneHourMs = 60 * 60 * 1000; // Access token: 1 hour
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000; // Refresh token: 7 days
     
     // Cookie options for access token (short-lived)
@@ -55,7 +55,7 @@ export class AuthController {
       httpOnly: true,
       secure: isSecure,
       sameSite: 'lax' as const,
-      maxAge: fifteenMinutesMs,
+      maxAge: oneHourMs,
       path: '/',
     };
     
@@ -105,7 +105,7 @@ export class AuthController {
     try {
       const tokens = await this.auth.refreshAccessToken(refreshToken);
       
-      const fifteenMinutesMs = 15 * 60 * 1000; // Access token: 15 minutes
+      const oneHourMs = 60 * 60 * 1000; // Access token: 1 hour
       const sevenDaysMs = 7 * 24 * 60 * 60 * 1000; // Refresh token: 7 days
       
       // Cookie options for access token (short-lived)
@@ -113,7 +113,7 @@ export class AuthController {
         httpOnly: true,
         secure: isSecure,
         sameSite: 'lax' as const,
-        maxAge: fifteenMinutesMs,
+        maxAge: oneHourMs,
         path: '/',
       };
       

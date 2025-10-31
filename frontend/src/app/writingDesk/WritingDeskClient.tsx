@@ -12,6 +12,7 @@ import ResearchConfirmModal from '../../features/writing-desk/components/Researc
 import FollowUpsConfirmModal from '../../features/writing-desk/components/FollowUpsConfirmModal';
 import EditFollowUpsConfirmModal from '../../features/writing-desk/components/EditFollowUpsConfirmModal';
 import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
+import CreateLetterConfirmModal from '../../features/writing-desk/components/CreateLetterConfirmModal';
 import { LetterViewer } from '../../features/writing-desk/components/LetterViewer';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import {
@@ -293,6 +294,7 @@ export default function WritingDeskClient() {
   const [savedLetterResponseId, setSavedLetterResponseId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
+  const [createLetterConfirmOpen, setCreateLetterConfirmOpen] = useState(false);
   const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
   const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
   const [editFollowUpsConfirmOpen, setEditFollowUpsConfirmOpen] = useState(false);
@@ -509,9 +511,12 @@ export default function WritingDeskClient() {
     if (availableCredits === null) return 'loading';
     return availableCredits < deepResearchCreditCost ? 'low' : 'ok';
   }, [availableCredits, deepResearchCreditCost]);
+  const letterCreditState = useMemo<'loading' | 'low' | 'ok'>(() => {
+    if (availableCredits === null) return 'loading';
+    return availableCredits < letterCreditCost ? 'low' : 'ok';
+  }, [availableCredits, letterCreditCost]);
   const hasResearchContent = researchContent.trim().length > 0;
-  const researchButtonDisabled =
-    researchStatus === 'running' || researchCreditState === 'loading' || researchCreditState === 'low';
+  const researchButtonDisabled = researchStatus === 'running' || researchCreditState !== 'ok';
   const researchButtonLabel =
     researchStatus === 'running'
       ? 'Deep research in progress…'
@@ -1671,8 +1676,9 @@ export default function WritingDeskClient() {
   }, []);
 
   const handleRequestRegenerateFollowUps = useCallback(() => {
+    if (creditState !== 'ok') return;
     setFollowUpsConfirmOpen(true);
-  }, []);
+  }, [creditState]);
 
   const handleConfirmRegenerateFollowUps = useCallback(() => {
     setFollowUpsConfirmOpen(false);
@@ -1694,6 +1700,20 @@ export default function WritingDeskClient() {
     setShowSummaryDetails(false);
   }, [letterStatus, resetLetter]);
 
+  const handleRequestCreateLetter = useCallback(() => {
+    if (letterCreditState !== 'ok') return;
+    setCreateLetterConfirmOpen(true);
+  }, [letterCreditState]);
+
+  const handleConfirmCreateLetter = useCallback(() => {
+    setCreateLetterConfirmOpen(false);
+    handleShowToneSelection();
+  }, [handleShowToneSelection]);
+
+  const handleCancelCreateLetter = useCallback(() => {
+    setCreateLetterConfirmOpen(false);
+  }, []);
+
   const handleToneSelect = useCallback(
     (tone: WritingDeskLetterTone) => {
       void beginLetterComposition(tone);
@@ -1702,8 +1722,9 @@ export default function WritingDeskClient() {
   );
 
   const handleRequestRecompose = useCallback(() => {
+    if (letterCreditState !== 'ok') return;
     setRecomposeConfirmOpen(true);
-  }, []);
+  }, [letterCreditState]);
 
   const handleConfirmRecompose = useCallback(() => {
     setRecomposeConfirmOpen(false);
@@ -1807,6 +1828,12 @@ export default function WritingDeskClient() {
         onConfirm={handleConfirmRecompose}
         onCancel={handleCancelRecompose}
         letterIsSaved={letterIsSaved}
+      />
+      <CreateLetterConfirmModal
+        open={createLetterConfirmOpen}
+        creditCost={formatCredits(letterCreditCost)}
+        onConfirm={handleConfirmCreateLetter}
+        onCancel={handleCancelCreateLetter}
       />
       <EditIntakeConfirmModal
         open={editIntakeModalOpen}
@@ -1967,8 +1994,7 @@ export default function WritingDeskClient() {
                   ||
                   (stepIndex === steps.length - 1
                     && followUps.length === 0
-                    && availableCredits !== null
-                    && availableCredits < followUpCreditCost)
+                    && creditState !== 'ok')
                 }
               >
                 {loading
@@ -2248,16 +2274,28 @@ export default function WritingDeskClient() {
                         <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
                       )}
                       {followUps.length > 0 && (
-                        <div className="actions" style={{ marginTop: 12 }}>
-                          <button
-                            type="button"
-                            className="btn-link"
-                            onClick={handleRequestRegenerateFollowUps}
-                            disabled={loading}
-                          >
-                            Ask for new follow-up questions
-                          </button>
-                        </div>
+                        <>
+                          <div className="actions" style={{ marginTop: 12 }}>
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={handleRequestRegenerateFollowUps}
+                              disabled={loading || creditState !== 'ok'}
+                              style={{ opacity: loading || creditState !== 'ok' ? 0.5 : 1 }}
+                            >
+                              Ask for new follow-up questions
+                            </button>
+                          </div>
+                          {creditState === 'low' && (
+                            <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                              You need at least {formatCredits(followUpCreditCost)} credits to generate new follow-up
+                              questions.
+                            </p>
+                          )}
+                          {creditState === 'loading' && (
+                            <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
+                          )}
+                        </>
                       )}
                       {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
                       {responseId && (
@@ -2293,11 +2331,19 @@ export default function WritingDeskClient() {
                     <button
                       type="button"
                       className="btn-primary create-letter-button"
-                      onClick={handleShowToneSelection}
-                      disabled={loading}
+                      onClick={handleRequestCreateLetter}
+                      disabled={loading || letterCreditState !== 'ok'}
                     >
-                      Create my letter (costs {formatCredits(letterCreditCost)} credits)
+                      Create my letter
                     </button>
+                  )}
+                  {researchStatus === 'completed' && letterCreditState === 'low' && (
+                    <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                      You need at least {formatCredits(letterCreditCost)} credits to create your letter.
+                    </p>
+                  )}
+                  {researchStatus === 'completed' && letterCreditState === 'loading' && (
+                    <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
                   )}
                 </div>
               </>
@@ -2414,7 +2460,13 @@ export default function WritingDeskClient() {
                     }
                     trailingActions={
                       <>
-                        <button type="button" className="btn-secondary" onClick={handleRequestRecompose}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={handleRequestRecompose}
+                          disabled={letterCreditState !== 'ok'}
+                          style={{ opacity: letterCreditState !== 'ok' ? 0.6 : 1 }}
+                        >
                           Recompose this letter
                         </button>
                         <button
@@ -2650,6 +2702,12 @@ export default function WritingDeskClient() {
 
         .create-letter-button {
           animation: create-letter-jiggle 1.6s ease-in-out infinite;
+        }
+
+        .create-letter-button:disabled {
+          animation: none;
+          opacity: 0.6;
+          cursor: not-allowed;
         }
 
         .input-with-mic {

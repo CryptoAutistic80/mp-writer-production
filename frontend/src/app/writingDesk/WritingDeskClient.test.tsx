@@ -44,13 +44,14 @@ describe('WritingDeskClient', () => {
   const clearJobMock = jest.fn();
   const refetchMock = jest.fn(async () => null);
   const followUpQueue: FollowUpResponse[] = [];
+  let mockCredits = 1;
   let fetchMock: jest.Mock<Promise<ResponseLike>, FetchArgs>;
 
   const setupFetchMock = () => {
     fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/auth/me') {
-        return createJsonResponse({ credits: 1 });
+        return createJsonResponse({ credits: mockCredits });
       }
       if (url === '/api/ai/writing-desk/follow-up') {
         const response = followUpQueue.shift();
@@ -114,6 +115,7 @@ describe('WritingDeskClient', () => {
     saveJobMock.mockResolvedValue({ jobId: 'job-123' });
     clearJobMock.mockResolvedValue(undefined);
     followUpQueue.length = 0;
+    mockCredits = 1;
     setupFetchMock();
     refetchMock.mockClear();
     mockUseActiveWritingDeskJob.mockReturnValue({
@@ -219,5 +221,32 @@ describe('WritingDeskClient', () => {
       return requestUrl === '/api/ai/writing-desk/follow-up';
     }).length;
     expect(followUpCallsAfter).toBe(followUpCallsBefore + 1);
+  });
+
+  it('disables credit-consuming summary actions when credits are below the required amount', async () => {
+    mockCredits = 0.2;
+    followUpQueue.push({
+      followUpQuestions: ['First question?'],
+      notes: null,
+      responseId: 'resp-low',
+      remainingCredits: 0.05,
+    });
+
+    renderComponent();
+    await answerInitialQuestions();
+    mockCredits = 0.05;
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
+    await answerFollowUpQuestions(['Answer']);
+    await screen.findByText('Initial summary captured');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Show intake details' }));
+    });
+
+    const regenerateButton = await screen.findByRole('button', { name: 'Ask for new follow-up questions' });
+    expect(regenerateButton).toBeDisabled();
+    expect(
+      screen.getByText('You need at least 0.1 credits to generate new follow-up questions.'),
+    ).toBeInTheDocument();
   });
 });
