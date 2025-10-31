@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { transcribeAudio } from '../../features/writing-desk/api/transcription';
 import { WaveformVisualizer } from './WaveformVisualizer';
 
 interface MicButtonProps {
@@ -102,25 +103,12 @@ export function MicButton({
             reader.readAsDataURL(audioBlob);
           });
 
-          // Send to transcription API
-          const response = await fetch('/api/ai/transcription', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            credentials: 'include',
-            body: JSON.stringify({
-              audioData: base64Data,
-              model: 'gpt-4o-mini-transcribe',
-              responseFormat: 'text',
-            }),
+          // Send to transcription API via shared client (ensures CSRF headers)
+          const result = await transcribeAudio({
+            audioData: base64Data,
+            model: 'gpt-4o-mini-transcribe',
+            responseFormat: 'text',
           });
-
-          if (!response.ok) {
-            throw new Error(`Transcription failed: ${response.statusText}`);
-          }
-
-          const result = await response.json();
           setTranscriptionText(result.text);
           onTranscriptionComplete(result.text);
           

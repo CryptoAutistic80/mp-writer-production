@@ -10,7 +10,9 @@ import StartOverConfirmModal from '../../features/writing-desk/components/StartO
 import RecomposeConfirmModal from '../../features/writing-desk/components/RecomposeConfirmModal';
 import ResearchConfirmModal from '../../features/writing-desk/components/ResearchConfirmModal';
 import FollowUpsConfirmModal from '../../features/writing-desk/components/FollowUpsConfirmModal';
+import EditFollowUpsConfirmModal from '../../features/writing-desk/components/EditFollowUpsConfirmModal';
 import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
+import CreateLetterConfirmModal from '../../features/writing-desk/components/CreateLetterConfirmModal';
 import { LetterViewer } from '../../features/writing-desk/components/LetterViewer';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
 import {
@@ -38,11 +40,11 @@ const steps: Array<{
 }> = [
   {
     key: 'issueDescription',
-    title: 'Describe your issue in as much detail as you can',
+    title: 'Tell us everything — feel free to vent',
     description:
-      'Share the full story, including who is affected, what has happened so far, and what you hope your MP can help achieve.',
+      'This is your space to get it all out. Who is affected, what’s happened, why it matters, what you’ve tried, and what you want your MP to do. The more detail, the better.',
     placeholder:
-      'E.g. The heating in my flat has been broken since December. My children are getting sick, I have reported it twice, and I need the housing association to replace the boiler within two weeks…',
+      'Start from the beginning — what’s going on, how it’s affecting you or others, what you’ve already done, timelines, names or departments if relevant, and what outcome you need. If it’s easier, use the mic button to speak and we’ll transcribe…',
   },
 ];
 
@@ -292,8 +294,10 @@ export default function WritingDeskClient() {
   const [savedLetterResponseId, setSavedLetterResponseId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
+  const [createLetterConfirmOpen, setCreateLetterConfirmOpen] = useState(false);
   const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
   const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
+  const [editFollowUpsConfirmOpen, setEditFollowUpsConfirmOpen] = useState(false);
   const [initialFollowUpsConfirmOpen, setInitialFollowUpsConfirmOpen] = useState(false);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
@@ -302,6 +306,7 @@ export default function WritingDeskClient() {
   const lastLetterResumeAttemptRef = useRef<number>(0);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEditingFollowUpsFromSummary = useRef<boolean>(false);
+  const pendingEditFollowUpIndexRef = useRef<number | null>(null);
 
   const clearToast = useCallback(() => {
     if (toastTimeoutRef.current) {
@@ -506,9 +511,12 @@ export default function WritingDeskClient() {
     if (availableCredits === null) return 'loading';
     return availableCredits < deepResearchCreditCost ? 'low' : 'ok';
   }, [availableCredits, deepResearchCreditCost]);
+  const letterCreditState = useMemo<'loading' | 'low' | 'ok'>(() => {
+    if (availableCredits === null) return 'loading';
+    return availableCredits < letterCreditCost ? 'low' : 'ok';
+  }, [availableCredits, letterCreditCost]);
   const hasResearchContent = researchContent.trim().length > 0;
-  const researchButtonDisabled =
-    researchStatus === 'running' || researchCreditState === 'loading' || researchCreditState === 'low';
+  const researchButtonDisabled = researchStatus === 'running' || researchCreditState !== 'ok';
   const researchButtonLabel =
     researchStatus === 'running'
       ? 'Deep research in progress…'
@@ -607,38 +615,18 @@ export default function WritingDeskClient() {
         if (jobId) payload.jobId = jobId;
         if (resume) payload.resume = true;
 
-        const response = await fetch('/api/writing-desk/jobs/active/research/start', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const rawBody = await response.text();
-        if (!response.ok) {
-          let message = 'We could not start deep research. Please try again.';
-          if (rawBody) {
-            try {
-              const parsed = JSON.parse(rawBody) as { message?: string };
-              if (parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
-                message = parsed.message.trim();
-              }
-            } catch {
-              const trimmed = rawBody.trim();
-              if (trimmed.length > 0) {
-                message = trimmed;
-              }
-            }
-          }
-          throw new Error(message);
-        }
-
         let handshake: DeepResearchHandshakeResponse | null = null;
-        if (rawBody) {
-          try {
-            handshake = JSON.parse(rawBody) as DeepResearchHandshakeResponse;
-          } catch {
-            // If parsing fails, fall back to defaults below.
-          }
+        try {
+          handshake = await apiClient.post<DeepResearchHandshakeResponse | null>(
+            '/api/writing-desk/jobs/active/research/start',
+            payload,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error && typeof error.message === 'string' && error.message.trim().length > 0
+              ? error.message
+              : 'We could not start deep research. Please try again.';
+          throw new Error(message);
         }
 
         const streamPath =
@@ -683,6 +671,7 @@ export default function WritingDeskClient() {
               charged: 'Credits deducted. Research is starting…',
               queued: 'Deep research queued…',
               in_progress: 'Gathering evidence…',
+              background_polling: 'Research continuing in the background…',
             };
             const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
             if (descriptor) appendResearchActivity(descriptor);
@@ -1655,6 +1644,28 @@ export default function WritingDeskClient() {
     isEditingFollowUpsFromSummary.current = true;
   }, [followUps.length]);
 
+  const handleConfirmEditFollowUps = useCallback(() => {
+    const targetIndex = pendingEditFollowUpIndexRef.current ?? 0;
+    pendingEditFollowUpIndexRef.current = null;
+    setEditFollowUpsConfirmOpen(false);
+    resetResearch();
+    handleEditFollowUpQuestion(targetIndex);
+  }, [handleEditFollowUpQuestion, resetResearch]);
+
+  const handleCancelEditFollowUps = useCallback(() => {
+    setEditFollowUpsConfirmOpen(false);
+    pendingEditFollowUpIndexRef.current = null;
+  }, []);
+
+  const handleRequestEditFollowUps = useCallback((index: number) => {
+    if (researchStatus === 'completed') {
+      pendingEditFollowUpIndexRef.current = index;
+      setEditFollowUpsConfirmOpen(true);
+      return;
+    }
+    handleEditFollowUpQuestion(index);
+  }, [handleEditFollowUpQuestion, researchStatus]);
+
   const handleConfirmInitialFollowUps = useCallback(() => {
     setInitialFollowUpsConfirmOpen(false);
     void generateFollowUps('initial');
@@ -1665,8 +1676,9 @@ export default function WritingDeskClient() {
   }, []);
 
   const handleRequestRegenerateFollowUps = useCallback(() => {
+    if (creditState !== 'ok') return;
     setFollowUpsConfirmOpen(true);
-  }, []);
+  }, [creditState]);
 
   const handleConfirmRegenerateFollowUps = useCallback(() => {
     setFollowUpsConfirmOpen(false);
@@ -1688,6 +1700,20 @@ export default function WritingDeskClient() {
     setShowSummaryDetails(false);
   }, [letterStatus, resetLetter]);
 
+  const handleRequestCreateLetter = useCallback(() => {
+    if (letterCreditState !== 'ok') return;
+    setCreateLetterConfirmOpen(true);
+  }, [letterCreditState]);
+
+  const handleConfirmCreateLetter = useCallback(() => {
+    setCreateLetterConfirmOpen(false);
+    handleShowToneSelection();
+  }, [handleShowToneSelection]);
+
+  const handleCancelCreateLetter = useCallback(() => {
+    setCreateLetterConfirmOpen(false);
+  }, []);
+
   const handleToneSelect = useCallback(
     (tone: WritingDeskLetterTone) => {
       void beginLetterComposition(tone);
@@ -1696,8 +1722,9 @@ export default function WritingDeskClient() {
   );
 
   const handleRequestRecompose = useCallback(() => {
+    if (letterCreditState !== 'ok') return;
     setRecomposeConfirmOpen(true);
-  }, []);
+  }, [letterCreditState]);
 
   const handleConfirmRecompose = useCallback(() => {
     setRecomposeConfirmOpen(false);
@@ -1802,6 +1829,12 @@ export default function WritingDeskClient() {
         onCancel={handleCancelRecompose}
         letterIsSaved={letterIsSaved}
       />
+      <CreateLetterConfirmModal
+        open={createLetterConfirmOpen}
+        creditCost={formatCredits(letterCreditCost)}
+        onConfirm={handleConfirmCreateLetter}
+        onCancel={handleCancelCreateLetter}
+      />
       <EditIntakeConfirmModal
         open={editIntakeModalOpen}
         creditCost={formatCredits(followUpCreditCost)}
@@ -1814,6 +1847,12 @@ export default function WritingDeskClient() {
         isRerun={hasResearchContent}
         onConfirm={handleConfirmResearch}
         onCancel={handleCancelResearch}
+      />
+      <EditFollowUpsConfirmModal
+        open={editFollowUpsConfirmOpen}
+        creditCost={formatCredits(deepResearchCreditCost)}
+        onConfirm={handleConfirmEditFollowUps}
+        onCancel={handleCancelEditFollowUps}
       />
       <FollowUpsConfirmModal
         open={followUpsConfirmOpen}
@@ -1955,8 +1994,7 @@ export default function WritingDeskClient() {
                   ||
                   (stepIndex === steps.length - 1
                     && followUps.length === 0
-                    && availableCredits !== null
-                    && availableCredits < followUpCreditCost)
+                    && creditState !== 'ok')
                 }
               >
                 {loading
@@ -2119,7 +2157,7 @@ export default function WritingDeskClient() {
                     <div className="research-progress" role="status" aria-live="polite">
                       <span className="research-progress__spinner" aria-hidden="true" />
                       <div className="research-progress__content">
-                        <p>Gathering evidence — this can take a couple of minutes while we trace reliable sources.</p>
+                        <p>Gathering evidence — this can take approximately 15 minutes while we trace reliable sources.</p>
                         <p>We&apos;ll post updates in the activity feed below while the research continues.</p>
                       </div>
                     </div>
@@ -2220,7 +2258,7 @@ export default function WritingDeskClient() {
                                 <button
                                   type="button"
                                   className="btn-link"
-                                  onClick={() => handleEditFollowUpQuestion(idx)}
+                                  onClick={() => handleRequestEditFollowUps(idx)}
                                   aria-label={`Edit answer for follow-up question ${idx + 1}`}
                                   disabled={loading}
                                 >
@@ -2236,16 +2274,28 @@ export default function WritingDeskClient() {
                         <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
                       )}
                       {followUps.length > 0 && (
-                        <div className="actions" style={{ marginTop: 12 }}>
-                          <button
-                            type="button"
-                            className="btn-link"
-                            onClick={handleRequestRegenerateFollowUps}
-                            disabled={loading}
-                          >
-                            Ask for new follow-up questions
-                          </button>
-                        </div>
+                        <>
+                          <div className="actions" style={{ marginTop: 12 }}>
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={handleRequestRegenerateFollowUps}
+                              disabled={loading || creditState !== 'ok'}
+                              style={{ opacity: loading || creditState !== 'ok' ? 0.5 : 1 }}
+                            >
+                              Ask for new follow-up questions
+                            </button>
+                          </div>
+                          {creditState === 'low' && (
+                            <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                              You need at least {formatCredits(followUpCreditCost)} credits to generate new follow-up
+                              questions.
+                            </p>
+                          )}
+                          {creditState === 'loading' && (
+                            <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
+                          )}
+                        </>
                       )}
                       {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
                       {responseId && (
@@ -2267,33 +2317,33 @@ export default function WritingDeskClient() {
                   >
                     Start again
                   </button>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => setEditIntakeModalOpen(true)}
-                    disabled={loading || researchStatus === 'running'}
-                  >
-                    Edit intake answers
-                  </button>
                   {followUps.length > 0 && (
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => handleEditFollowUpQuestion(0)}
+                      onClick={() => handleRequestEditFollowUps(0)}
                       disabled={loading || researchStatus === 'running'}
                     >
-                      Review follow-up answers
+                      Review / Edit Follow up answers
                     </button>
                   )}
                   {researchStatus === 'completed' && (
                     <button
                       type="button"
                       className="btn-primary create-letter-button"
-                      onClick={handleShowToneSelection}
-                      disabled={loading}
+                      onClick={handleRequestCreateLetter}
+                      disabled={loading || letterCreditState !== 'ok'}
                     >
-                      Create my letter (costs {formatCredits(letterCreditCost)} credits)
+                      Create my letter
                     </button>
+                  )}
+                  {researchStatus === 'completed' && letterCreditState === 'low' && (
+                    <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                      You need at least {formatCredits(letterCreditCost)} credits to create your letter.
+                    </p>
+                  )}
+                  {researchStatus === 'completed' && letterCreditState === 'loading' && (
+                    <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
                   )}
                 </div>
               </>
@@ -2410,7 +2460,13 @@ export default function WritingDeskClient() {
                     }
                     trailingActions={
                       <>
-                        <button type="button" className="btn-secondary" onClick={handleRequestRecompose}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={handleRequestRecompose}
+                          disabled={letterCreditState !== 'ok'}
+                          style={{ opacity: letterCreditState !== 'ok' ? 0.6 : 1 }}
+                        >
                           Recompose this letter
                         </button>
                         <button
@@ -2646,6 +2702,12 @@ export default function WritingDeskClient() {
 
         .create-letter-button {
           animation: create-letter-jiggle 1.6s ease-in-out infinite;
+        }
+
+        .create-letter-button:disabled {
+          animation: none;
+          opacity: 0.6;
+          cursor: not-allowed;
         }
 
         .input-with-mic {

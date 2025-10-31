@@ -79,6 +79,7 @@ const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
 const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
 const BACKGROUND_POLL_INTERVAL_MS = 2000;
 const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
+const RESEARCH_MAX_RESUME_ATTEMPTS = 10;
 const LETTER_RUN_BUFFER_SIZE = 2000;
 const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
 const STREAMING_RUN_ORPHAN_THRESHOLD_MS = 2 * 60 * 1000;
@@ -1850,6 +1851,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     let openAiStream: ResponseStreamLike | null = null;
     let responseId: string | null = resumeFromState?.responseId ?? run.responseId ?? null;
     let quietPeriodTimer: NodeJS.Timeout | null = null;
+    let backgroundPollingNotified = false;
 
     const captureResponseId = async (candidate: unknown) => {
       if (!candidate || typeof candidate !== 'object') return;
@@ -2203,6 +2205,30 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           }`,
         );
 
+        if (resumeAttempts >= RESEARCH_MAX_RESUME_ATTEMPTS) {
+          this.logger.warn(
+            `[writing-desk research] resume attempt limit reached for response ${responseId}, switching to background polling`,
+          );
+          if (!backgroundPollingNotified) {
+            send({ type: 'status', status: 'background_polling', remainingCredits });
+            send({
+              type: 'event',
+              event: {
+                type: 'quiet_period',
+                message: 'The live stream hit a snag; continuing the research in the background…',
+              },
+            });
+            backgroundPollingNotified = true;
+          }
+          if (quietPeriodTimer) {
+            clearTimeout(quietPeriodTimer);
+            quietPeriodTimer = null;
+          }
+          currentStream = null;
+          openAiStream = null;
+          break;
+        }
+
         // Send a humorous status update to keep the user engaged during resume attempts
         const resumeStatusMessages = [
           'Consulting my medieval tomes for parliamentary precedents…',
@@ -2267,6 +2293,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         this.logger.warn(
           `[writing-desk research] stream ended early for response ${responseId}, polling for completion`,
         );
+
+        if (!backgroundPollingNotified) {
+          send({ type: 'status', status: 'background_polling', remainingCredits });
+          backgroundPollingNotified = true;
+        }
 
         const finalResponse = await this.waitForBackgroundResponseCompletion(client, responseId);
         const finalStatus = (finalResponse as any)?.status ?? 'completed';

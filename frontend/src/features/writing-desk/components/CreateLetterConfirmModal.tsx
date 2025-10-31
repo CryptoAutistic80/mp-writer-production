@@ -1,20 +1,23 @@
-interface StartOverConfirmModalProps {
+interface CreateLetterConfirmModalProps {
   open: boolean;
+  creditCost: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export default function StartOverConfirmModal({ open, onConfirm, onCancel }: StartOverConfirmModalProps) {
+export default function CreateLetterConfirmModal({
+  open,
+  creditCost,
+  onConfirm,
+  onCancel,
+}: CreateLetterConfirmModalProps) {
   if (!open) return null;
-
-  const accentColor = '#b91c1c';
-  const accentMutedColor = '#7f1d1d';
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="start-over-confirm-title"
+      aria-labelledby="create-letter-confirm-title"
       style={{
         position: 'fixed',
         inset: 0,
@@ -30,31 +33,26 @@ export default function StartOverConfirmModal({ open, onConfirm, onCancel }: Sta
         style={{
           maxWidth: 420,
           width: '100%',
-        background: 'white',
-        borderRadius: 16,
-        boxShadow: '0 20px 45px rgba(15, 23, 42, 0.25)',
-        padding: '24px 28px',
-        border: `2px solid ${accentColor}`,
-      }}
-    >
-      <h2
-        id="start-over-confirm-title"
-        style={{ fontSize: 24, lineHeight: 1.2, marginBottom: 12, color: accentColor }}
+          background: 'white',
+          borderRadius: 16,
+          boxShadow: '0 20px 45px rgba(15, 23, 42, 0.25)',
+          padding: '24px 28px',
+        }}
       >
-        Start over?
-      </h2>
-        <p style={{ marginBottom: 16, color: accentMutedColor, lineHeight: 1.6 }}>
-          <strong style={{ color: accentColor }}>Warning:</strong> Starting over will erase your current answers, follow-up
-          questions, and any saved progress for this letter. You will also forfeit any credits already spent on this
-          session.
+        <h2 id="create-letter-confirm-title" style={{ fontSize: 24, lineHeight: 1.2, marginBottom: 12 }}>
+          Draft your letter now?
+        </h2>
+        <p style={{ marginBottom: 16, color: '#334155', lineHeight: 1.6 }}>
+          Composing your letter will spend <strong>{creditCost} credits</strong>. We&apos;ll guide you through tone
+          selection next.
         </p>
-        <p style={{ marginBottom: 20, color: '#475569' }}>Do you want to begin again?</p>
+        <p style={{ marginBottom: 20, color: '#475569' }}>Do you want to continue?</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <button
             type="button"
             onClick={onConfirm}
             style={{
-              backgroundColor: accentColor,
+              backgroundColor: '#2563eb',
               color: 'white',
               border: 'none',
               borderRadius: 999,
@@ -64,7 +62,7 @@ export default function StartOverConfirmModal({ open, onConfirm, onCancel }: Sta
               cursor: 'pointer',
             }}
           >
-            Yes, start over
+            Yes, create my letter
           </button>
           <button
             type="button"
@@ -72,7 +70,7 @@ export default function StartOverConfirmModal({ open, onConfirm, onCancel }: Sta
             style={{
               backgroundColor: 'transparent',
               color: '#1f2937',
-              border: '1px solid #fca5a5',
+              border: '1px solid #cbd5f5',
               borderRadius: 999,
               padding: '12px 20px',
               fontSize: 16,
@@ -80,7 +78,7 @@ export default function StartOverConfirmModal({ open, onConfirm, onCancel }: Sta
               cursor: 'pointer',
             }}
           >
-            No, keep working
+            Not yet
           </button>
         </div>
       </div>
