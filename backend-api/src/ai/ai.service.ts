@@ -757,7 +757,7 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
 MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.
 
 From the provided description, identify the most important gaps that stop you fully understanding the situation and what outcome the constituent wants.
-Ask at most five concise follow-up questions. If everything is already clear, return an empty list.
+Provide THREE concise follow-up questions as a baseline and never return fewer than three. Use each question to surface a distinct, high-importance gap. Only add a fourth or fifth if they reveal genuinely critical context that the first three cannot cover. Redundancy is worse than leaving a minor detail for later.
 Prioritise clarifying the specific problem, how it affects people, what has already happened, and what the constituent hopes their MP will achieve.
 Do NOT ask for documents, permissions, names, addresses, or personal details. Only ask about the issue itself.`;
 
@@ -786,7 +786,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               properties: {
                 questions: {
                   type: 'array',
-                  description: 'Up to five clarifying follow-up questions for the user.',
+                  description: 'Between three and five clarifying follow-up questions for the user.',
+                  minItems: 3,
                   maxItems: 5,
                   items: {
                     type: 'string',
@@ -3085,9 +3086,80 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const sections: string[] = [
       'MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.',
       '',
-      'Research the issue described below and gather supporting facts, quotes, and statistics from credible, up-to-date sources.',
-      "Before analysing the constituent's issue, confirm today's date and the current political makeup of Parliament (which party is in government and how many seats each party holds).",
-      'Provide a structured evidence report with inline citations for every key fact. Cite URLs or publication titles for each data point.',
+      'Role & Objective:',
+      '- You are a UK parliamentary research assistant. Compile an evidence dossier that will later inform a persuasive, fact-checked constituent letter to their MP. Do not draft the letter.',
+      '',
+      'Research Discipline:',
+      '- Before gathering facts, produce a five-point search plan: list top queries, target UK sources, and anticipated evidence gaps.',
+      '- Execute the plan sequentially, revising it if a lead is empty, and record any adjustments.',
+      '',
+      'Source & Recency Policy:',
+      '- Default to UK primary / authoritative sources (GOV.UK, legislation.gov.uk, ONS, House of Commons Library, Hansard, NAO, OBR, NHS, devolved administrations, UK regulators).',
+      '- Capture constituency colour by consulting at least one credible local outlet (e.g. local authority press releases, BBC regional, well-established local newspapers).',
+      '- Balance perspective with reputable national journalism (BBC, Financial Times, Guardian, Times, Telegraph, ITV, Sky) and note when national coverage intersects with the constituency.',
+      '- Use a non-UK source only if no UK equivalent exists, and explain why that source was necessary.',
+      '- Every citation must include title, publisher, publication date, URL, and (when available) an archived link. Prefer publications ≤3 years old; explicitly justify older items.',
+      '',
+      'Verification Standards:',
+      '- Triangulate each material claim with at least two independent sources whenever possible. If triangulation is not feasible, flag the limitation and describe the best available evidence.',
+      '- Surface conflicting evidence, compare the sources, and explain how you resolved or weighted the conflict.',
+      '',
+      'Constituency Lens:',
+      '- Highlight constituency or local-authority level statistics and reporting. Explain the local impact succinctly and why it matters for this MP.',
+      '',
+      'MP Dossier:',
+      '- Summarise the MP’s recent votes, Hansard interventions, committee roles, APPG memberships, stated priorities, and relevant interests. Tie each to potential persuasion angles.',
+      '',
+      'Counterarguments:',
+      '- List likely counterarguments (government, opposition, third parties) and provide concise, evidence-backed rebuttals with citations.',
+      '',
+      'Policy Levers:',
+      '- Map findings to concrete levers: responsible departments or ministries, regulators, funding schemes, statutes (with section numbers), upcoming consultations, or oversight bodies.',
+      '',
+      'Evidence Quality:',
+      '- Assign a confidence rating to every key claim (High = multiple recent primary/authoritative sources; Medium = limited corroboration or older data; Low = single or lower-quality source) and justify the rating in one sentence.',
+      '',
+      'Handover Package for Letter Drafting (inputs only — do not draft prose):',
+      '- Problem framing (1–2 sentences)',
+      '- Three strongest evidence bullets (each with [#] citation tags)',
+      '- Specific ask(s) the MP should pursue',
+      '- MP-relevant angle (why this MP should care)',
+      '- Recommended tone for the eventual letter',
+      '',
+      'Output Structure (use numeric citations [1], [2], … consistently across all sections and the bibliography):',
+      '1) Executive snapshot (≤120 words)',
+      '2) Key findings (bulleted, each with [#])',
+      '3) Evidence table (Claim | Evidence summary | Citation [#] | Confidence)',
+      '4) MP profile & persuasive angles',
+      '5) Counterarguments & rebuttals',
+      '6) Policy levers & pathways',
+      '7) Evidence gaps & further research',
+      '8) Bibliography (numbered list aligned with citation tags, providing full citation details per the policy)',
+      '',
+      'Machine-Readable Summary (append verbatim):',
+      '- Emit a valid JSON object (double-quoted keys/strings) exactly once:',
+      '  {',
+      '    "summary": "...",',
+      '    "strongest_points": ["...", "...", "..."],',
+      '    "asks": ["..."],',
+      '    "mp_profile": "...",',
+      '    "angles": ["..."],',
+      '    "counterarguments": [',
+      '      {"claim": "...", "rebuttal": "...", "citations": [1,2]}',
+      '    ],',
+      '    "policy_levers": [',
+      '      {"lever": "...", "owner": "...", "citation": 3}',
+      '    ],',
+      '    "references": [',
+      '      {"id": 1, "title": "...", "publisher": "...", "date": "...", "url": "...", "archived_url": "..."}',
+      '    ]',
+      '  }',
+      '- Ensure citation numbers in the JSON align with the bibliography.',
+      '',
+      'Formatting Expectations:',
+      '- Use clear headings and bullet lists exactly where specified.',
+      '- Only the Evidence table may use pipe-format table syntax.',
+      '- Keep prose concise and avoid filler or hypothetical content.',
       '',
       `Constituent description: ${this.normalisePromptField(job.form?.issueDescription, 'Not provided.')}`,
     ];
@@ -4381,6 +4453,22 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     if (!/\b(since|for [0-9]+|weeks|months|years|when)\b/i.test(description)) {
       questions.push('How long has this been going on or when did it start?');
+    }
+
+    const fallbackQuestions = [
+      'Is there anything the MP should avoid doing when they intervene?',
+      'Have you already contacted anyone else about this? If so, what happened?',
+      'What would a successful MP response look like for you?',
+      'Are there key dates or deadlines the MP should be aware of?',
+    ];
+
+    for (const fallback of fallbackQuestions) {
+      if (questions.length >= 3) {
+        break;
+      }
+      if (!questions.includes(fallback)) {
+        questions.push(fallback);
+      }
     }
 
     return questions.slice(0, 5);
