@@ -1,3 +1,5 @@
+import { apiClient } from '../../../lib/api-client';
+
 export interface TranscriptionRequest {
   audioData: string; // Base64 encoded audio
   model?: 'whisper-1' | 'gpt-4o-mini-transcribe' | 'gpt-4o-transcribe';
@@ -27,21 +29,12 @@ export interface StreamingTranscriptionEvent {
 }
 
 export async function transcribeAudio(request: TranscriptionRequest): Promise<TranscriptionResponse> {
-  const response = await fetch('/api/ai/transcription', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`Transcription failed: ${errorText}`);
+  try {
+    return await apiClient.post<TranscriptionResponse>('/api/ai/transcription', request);
+  } catch (error) {
+    const message = error instanceof Error && error.message ? error.message : 'Unknown error';
+    throw new Error(`Transcription failed: ${message}`);
   }
-
-  return response.json();
 }
 
 export function streamTranscription(

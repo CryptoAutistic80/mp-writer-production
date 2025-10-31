@@ -166,30 +166,35 @@ const extractReasoningSummary = (value: unknown): string | null => {
   return null;
 };
 
-const describeResearchEvent = (event: { type?: string; [key: string]: any }): string | null => {
+const describeResearchEvent = (
+  event: { type?: string; [key: string]: any },
+): { text: string; kind: 'status' | 'reasoning' | 'filler' } | null => {
   if (!event || typeof event.type !== 'string') return null;
   switch (event.type) {
     case 'response.web_search_call.searching':
-      return 'Searching the web for relevant sources…';
+      return { text: 'Searching the web for relevant sources…', kind: 'status' };
     case 'response.web_search_call.in_progress':
-      return 'Reviewing a web result…';
+      return { text: 'Reviewing a web result…', kind: 'status' };
     case 'response.web_search_call.completed':
-      return 'Finished reviewing a web result.';
+      return { text: 'Finished reviewing a web result.', kind: 'status' };
     case 'response.file_search_call.searching':
-      return 'Searching private documents for supporting evidence…';
+      return { text: 'Searching private documents for supporting evidence…', kind: 'status' };
     case 'response.file_search_call.completed':
-      return 'Finished reviewing private documents.';
+      return { text: 'Finished reviewing private documents.', kind: 'status' };
     case 'response.code_interpreter_call.in_progress':
-      return 'Analysing data with the code interpreter…';
+      return { text: 'Analysing data with the code interpreter…', kind: 'status' };
     case 'response.code_interpreter_call.completed':
-      return 'Completed data analysis via code interpreter.';
+      return { text: 'Completed data analysis via code interpreter.', kind: 'status' };
     case 'response.reasoning.delta': {
       const summary = extractReasoningSummary(event.delta ?? event);
-      return summary ?? null;
+      return summary ? { text: summary, kind: 'reasoning' } : null;
     }
     case 'response.reasoning.done': {
       const summary = extractReasoningSummary(event.reasoning ?? event.delta ?? event);
-      return summary ?? 'Reasoning summary updated.';
+      if (summary) {
+        return { text: summary, kind: 'reasoning' };
+      }
+      return { text: 'Reasoning summary updated.', kind: 'reasoning' };
     }
     case 'response.reasoning_summary.delta':
     case 'response.reasoning_summary_text.delta':
@@ -200,19 +205,19 @@ const describeResearchEvent = (event: { type?: string; [key: string]: any }): st
       const summary = extractReasoningSummary(event.text ?? event.summary ?? event.delta ?? event);
       if (!summary) return null;
       const trimmed = summary.trim();
-      return trimmed.length > 3 ? trimmed : null;
+      return trimmed.length > 3 ? { text: trimmed, kind: 'reasoning' } : null;
     }
     case 'response.reasoning_summary_part.done': {
       const summary = extractReasoningSummary(event.part ?? event);
       if (!summary) return null;
       const trimmed = summary.trim();
-      return trimmed.length > 3 ? trimmed : null;
+      return trimmed.length > 3 ? { text: trimmed, kind: 'reasoning' } : null;
     }
     case 'resume_attempt': {
       // Handle our humorous resume attempt messages
       const message = event.message;
       if (typeof message === 'string' && message.trim().length > 0) {
-        return message.trim();
+        return { text: message.trim(), kind: 'filler' };
       }
       return null;
     }
@@ -220,7 +225,7 @@ const describeResearchEvent = (event: { type?: string; [key: string]: any }): st
       // Handle quiet period status messages
       const message = event.message;
       if (typeof message === 'string' && message.trim().length > 0) {
-        return message.trim();
+        return { text: message.trim(), kind: 'filler' };
       }
       return null;
     }
@@ -266,7 +271,9 @@ export default function WritingDeskClient() {
   const [researchContent, setResearchContent] = useState<string>('');
   const [researchResponseId, setResearchResponseId] = useState<string | null>(null);
   const [researchStatus, setResearchStatus] = useState<ResearchStatus>('idle');
-  const [researchActivities, setResearchActivities] = useState<Array<{ id: string; text: string }>>([]);
+  const [researchActivities, setResearchActivities] = useState<
+    Array<{ id: string; text: string; kind: 'status' | 'reasoning' | 'filler' }>
+  >([]);
   const [researchError, setResearchError] = useState<string | null>(null);
   const [pendingAutoResume, setPendingAutoResume] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
@@ -443,13 +450,16 @@ export default function WritingDeskClient() {
     setPendingAutoResume(false);
   }, [closeResearchStream]);
 
-  const appendResearchActivity = useCallback((text: string) => {
-    setResearchActivities((prev) => {
-      const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text };
-      const next = [entry, ...prev];
-      return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
-    });
-  }, []);
+  const appendResearchActivity = useCallback(
+    (text: string, kind: 'status' | 'reasoning' | 'filler' = 'status') => {
+      setResearchActivities((prev) => {
+        const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, kind };
+        const next = [entry, ...prev];
+        return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
+      });
+    },
+    [],
+  );
 
   const appendLetterEvent = useCallback((text: string) => {
     setLetterEvents((prev) => {
@@ -607,38 +617,18 @@ export default function WritingDeskClient() {
         if (jobId) payload.jobId = jobId;
         if (resume) payload.resume = true;
 
-        const response = await fetch('/api/writing-desk/jobs/active/research/start', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const rawBody = await response.text();
-        if (!response.ok) {
-          let message = 'We could not start deep research. Please try again.';
-          if (rawBody) {
-            try {
-              const parsed = JSON.parse(rawBody) as { message?: string };
-              if (parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
-                message = parsed.message.trim();
-              }
-            } catch {
-              const trimmed = rawBody.trim();
-              if (trimmed.length > 0) {
-                message = trimmed;
-              }
-            }
-          }
-          throw new Error(message);
-        }
-
         let handshake: DeepResearchHandshakeResponse | null = null;
-        if (rawBody) {
-          try {
-            handshake = JSON.parse(rawBody) as DeepResearchHandshakeResponse;
-          } catch {
-            // If parsing fails, fall back to defaults below.
-          }
+        try {
+          handshake = await apiClient.post<DeepResearchHandshakeResponse | null>(
+            '/api/writing-desk/jobs/active/research/start',
+            payload,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error && typeof error.message === 'string' && error.message.trim().length > 0
+              ? error.message
+              : 'We could not start deep research. Please try again.';
+          throw new Error(message);
         }
 
         const streamPath =
@@ -685,47 +675,47 @@ export default function WritingDeskClient() {
               in_progress: 'Gathering evidence…',
             };
             const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
-            if (descriptor) appendResearchActivity(descriptor);
+            if (descriptor) appendResearchActivity(descriptor, 'status');
           } else if (payload.type === 'delta') {
             if (typeof payload.text === 'string') {
               setResearchContent((prev) => {
-                // Clear activity feed when content starts streaming
+                // Preserve reasoning entries when content starts streaming, but drop earlier status/filler rows
                 if (prev.length === 0) {
-                  setResearchActivities([]);
+                  setResearchActivities((current) => current.filter((item) => item.kind === 'reasoning'));
                 }
                 return prev + payload.text;
               });
             }
           } else if (payload.type === 'event') {
             const descriptor = describeResearchEvent(payload.event);
-            if (descriptor) appendResearchActivity(descriptor);
+            if (descriptor) appendResearchActivity(descriptor.text, descriptor.kind);
           } else if (payload.type === 'complete') {
             closeResearchStream();
             setResearchStatus('completed');
             setResearchContent(payload.content ?? '');
             setResearchResponseId(payload.responseId ?? null);
             updateCreditsFromStream(payload.remainingCredits);
-            appendResearchActivity('Deep research completed.');
+            appendResearchActivity('Deep research completed.', 'status');
             setPendingAutoResume(false);
-        } else if (payload.type === 'error') {
+          } else if (payload.type === 'error') {
+            closeResearchStream();
+            setResearchStatus('error');
+            setResearchError(payload.message || 'Deep research failed. Please try again.');
+            updateCreditsFromStream(payload.remainingCredits);
+            appendResearchActivity('Deep research encountered an error.', 'status');
+            setPendingAutoResume(false);
+            void reportRefundedFailure('deep research ran into a problem');
+          }
+        };
+
+        source.onerror = () => {
           closeResearchStream();
           setResearchStatus('error');
-          setResearchError(payload.message || 'Deep research failed. Please try again.');
-          updateCreditsFromStream(payload.remainingCredits);
-          appendResearchActivity('Deep research encountered an error.');
+          setResearchError('The research stream was interrupted. Please try again.');
+          appendResearchActivity('Connection lost during deep research.', 'status');
           setPendingAutoResume(false);
-          void reportRefundedFailure('deep research ran into a problem');
-        }
-      };
-
-      source.onerror = () => {
-        closeResearchStream();
-        setResearchStatus('error');
-        setResearchError('The research stream was interrupted. Please try again.');
-        appendResearchActivity('Connection lost during deep research.');
-        setPendingAutoResume(false);
-        void reportRefundedFailure('deep research connection dropped');
-      };
+          void reportRefundedFailure('deep research connection dropped');
+        };
 
         lastResearchEventRef.current = Date.now();
       } catch (err) {
@@ -734,7 +724,7 @@ export default function WritingDeskClient() {
       const message =
         err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
       setResearchError(message);
-      appendResearchActivity('Unable to start deep research.');
+      appendResearchActivity('Unable to start deep research.', 'status');
       setPendingAutoResume(false);
       void reportRefundedFailure('deep research could not start');
     }
@@ -768,7 +758,7 @@ export default function WritingDeskClient() {
       if (now - lastAttemptAt < 15000) return;
 
       lastResearchResumeAttemptRef.current = now;
-      appendResearchActivity('Connection quiet — attempting to resume the research stream…');
+      appendResearchActivity('Connection quiet — attempting to resume the research stream…', 'status');
       closeResearchStream();
       void startDeepResearch({ resume: true });
     }, 10000);
@@ -2267,14 +2257,6 @@ export default function WritingDeskClient() {
                   >
                     Start again
                   </button>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => setEditIntakeModalOpen(true)}
-                    disabled={loading || researchStatus === 'running'}
-                  >
-                    Edit intake answers
-                  </button>
                   {followUps.length > 0 && (
                     <button
                       type="button"
@@ -2282,7 +2264,7 @@ export default function WritingDeskClient() {
                       onClick={() => handleEditFollowUpQuestion(0)}
                       disabled={loading || researchStatus === 'running'}
                     >
-                      Review follow-up answers
+                      Review / Edit Follow up answers
                     </button>
                   )}
                   {researchStatus === 'completed' && (
