@@ -10,6 +10,7 @@ import StartOverConfirmModal from '../../features/writing-desk/components/StartO
 import RecomposeConfirmModal from '../../features/writing-desk/components/RecomposeConfirmModal';
 import ResearchConfirmModal from '../../features/writing-desk/components/ResearchConfirmModal';
 import FollowUpsConfirmModal from '../../features/writing-desk/components/FollowUpsConfirmModal';
+import EditFollowUpsConfirmModal from '../../features/writing-desk/components/EditFollowUpsConfirmModal';
 import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
 import { LetterViewer } from '../../features/writing-desk/components/LetterViewer';
 import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
@@ -166,35 +167,30 @@ const extractReasoningSummary = (value: unknown): string | null => {
   return null;
 };
 
-const describeResearchEvent = (
-  event: { type?: string; [key: string]: any },
-): { text: string; kind: 'status' | 'reasoning' | 'filler' } | null => {
+const describeResearchEvent = (event: { type?: string; [key: string]: any }): string | null => {
   if (!event || typeof event.type !== 'string') return null;
   switch (event.type) {
     case 'response.web_search_call.searching':
-      return { text: 'Searching the web for relevant sources…', kind: 'status' };
+      return 'Searching the web for relevant sources…';
     case 'response.web_search_call.in_progress':
-      return { text: 'Reviewing a web result…', kind: 'status' };
+      return 'Reviewing a web result…';
     case 'response.web_search_call.completed':
-      return { text: 'Finished reviewing a web result.', kind: 'status' };
+      return 'Finished reviewing a web result.';
     case 'response.file_search_call.searching':
-      return { text: 'Searching private documents for supporting evidence…', kind: 'status' };
+      return 'Searching private documents for supporting evidence…';
     case 'response.file_search_call.completed':
-      return { text: 'Finished reviewing private documents.', kind: 'status' };
+      return 'Finished reviewing private documents.';
     case 'response.code_interpreter_call.in_progress':
-      return { text: 'Analysing data with the code interpreter…', kind: 'status' };
+      return 'Analysing data with the code interpreter…';
     case 'response.code_interpreter_call.completed':
-      return { text: 'Completed data analysis via code interpreter.', kind: 'status' };
+      return 'Completed data analysis via code interpreter.';
     case 'response.reasoning.delta': {
       const summary = extractReasoningSummary(event.delta ?? event);
-      return summary ? { text: summary, kind: 'reasoning' } : null;
+      return summary ?? null;
     }
     case 'response.reasoning.done': {
       const summary = extractReasoningSummary(event.reasoning ?? event.delta ?? event);
-      if (summary) {
-        return { text: summary, kind: 'reasoning' };
-      }
-      return { text: 'Reasoning summary updated.', kind: 'reasoning' };
+      return summary ?? 'Reasoning summary updated.';
     }
     case 'response.reasoning_summary.delta':
     case 'response.reasoning_summary_text.delta':
@@ -205,19 +201,19 @@ const describeResearchEvent = (
       const summary = extractReasoningSummary(event.text ?? event.summary ?? event.delta ?? event);
       if (!summary) return null;
       const trimmed = summary.trim();
-      return trimmed.length > 3 ? { text: trimmed, kind: 'reasoning' } : null;
+      return trimmed.length > 3 ? trimmed : null;
     }
     case 'response.reasoning_summary_part.done': {
       const summary = extractReasoningSummary(event.part ?? event);
       if (!summary) return null;
       const trimmed = summary.trim();
-      return trimmed.length > 3 ? { text: trimmed, kind: 'reasoning' } : null;
+      return trimmed.length > 3 ? trimmed : null;
     }
     case 'resume_attempt': {
       // Handle our humorous resume attempt messages
       const message = event.message;
       if (typeof message === 'string' && message.trim().length > 0) {
-        return { text: message.trim(), kind: 'filler' };
+        return message.trim();
       }
       return null;
     }
@@ -225,7 +221,7 @@ const describeResearchEvent = (
       // Handle quiet period status messages
       const message = event.message;
       if (typeof message === 'string' && message.trim().length > 0) {
-        return { text: message.trim(), kind: 'filler' };
+        return message.trim();
       }
       return null;
     }
@@ -271,9 +267,7 @@ export default function WritingDeskClient() {
   const [researchContent, setResearchContent] = useState<string>('');
   const [researchResponseId, setResearchResponseId] = useState<string | null>(null);
   const [researchStatus, setResearchStatus] = useState<ResearchStatus>('idle');
-  const [researchActivities, setResearchActivities] = useState<
-    Array<{ id: string; text: string; kind: 'status' | 'reasoning' | 'filler' }>
-  >([]);
+  const [researchActivities, setResearchActivities] = useState<Array<{ id: string; text: string }>>([]);
   const [researchError, setResearchError] = useState<string | null>(null);
   const [pendingAutoResume, setPendingAutoResume] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
@@ -301,6 +295,7 @@ export default function WritingDeskClient() {
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
   const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
   const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
+  const [editFollowUpsConfirmOpen, setEditFollowUpsConfirmOpen] = useState(false);
   const [initialFollowUpsConfirmOpen, setInitialFollowUpsConfirmOpen] = useState(false);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const letterSourceRef = useRef<EventSource | null>(null);
@@ -309,6 +304,7 @@ export default function WritingDeskClient() {
   const lastLetterResumeAttemptRef = useRef<number>(0);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEditingFollowUpsFromSummary = useRef<boolean>(false);
+  const pendingEditFollowUpIndexRef = useRef<number | null>(null);
 
   const clearToast = useCallback(() => {
     if (toastTimeoutRef.current) {
@@ -450,16 +446,13 @@ export default function WritingDeskClient() {
     setPendingAutoResume(false);
   }, [closeResearchStream]);
 
-  const appendResearchActivity = useCallback(
-    (text: string, kind: 'status' | 'reasoning' | 'filler' = 'status') => {
-      setResearchActivities((prev) => {
-        const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, kind };
-        const next = [entry, ...prev];
-        return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
-      });
-    },
-    [],
-  );
+  const appendResearchActivity = useCallback((text: string) => {
+    setResearchActivities((prev) => {
+      const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text };
+      const next = [entry, ...prev];
+      return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
+    });
+  }, []);
 
   const appendLetterEvent = useCallback((text: string) => {
     setLetterEvents((prev) => {
@@ -675,47 +668,47 @@ export default function WritingDeskClient() {
               in_progress: 'Gathering evidence…',
             };
             const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
-            if (descriptor) appendResearchActivity(descriptor, 'status');
+            if (descriptor) appendResearchActivity(descriptor);
           } else if (payload.type === 'delta') {
             if (typeof payload.text === 'string') {
               setResearchContent((prev) => {
-                // Preserve reasoning entries when content starts streaming, but drop earlier status/filler rows
+                // Clear activity feed when content starts streaming
                 if (prev.length === 0) {
-                  setResearchActivities((current) => current.filter((item) => item.kind === 'reasoning'));
+                  setResearchActivities([]);
                 }
                 return prev + payload.text;
               });
             }
           } else if (payload.type === 'event') {
             const descriptor = describeResearchEvent(payload.event);
-            if (descriptor) appendResearchActivity(descriptor.text, descriptor.kind);
+            if (descriptor) appendResearchActivity(descriptor);
           } else if (payload.type === 'complete') {
             closeResearchStream();
             setResearchStatus('completed');
             setResearchContent(payload.content ?? '');
             setResearchResponseId(payload.responseId ?? null);
             updateCreditsFromStream(payload.remainingCredits);
-            appendResearchActivity('Deep research completed.', 'status');
+            appendResearchActivity('Deep research completed.');
             setPendingAutoResume(false);
-          } else if (payload.type === 'error') {
-            closeResearchStream();
-            setResearchStatus('error');
-            setResearchError(payload.message || 'Deep research failed. Please try again.');
-            updateCreditsFromStream(payload.remainingCredits);
-            appendResearchActivity('Deep research encountered an error.', 'status');
-            setPendingAutoResume(false);
-            void reportRefundedFailure('deep research ran into a problem');
-          }
-        };
-
-        source.onerror = () => {
+        } else if (payload.type === 'error') {
           closeResearchStream();
           setResearchStatus('error');
-          setResearchError('The research stream was interrupted. Please try again.');
-          appendResearchActivity('Connection lost during deep research.', 'status');
+          setResearchError(payload.message || 'Deep research failed. Please try again.');
+          updateCreditsFromStream(payload.remainingCredits);
+          appendResearchActivity('Deep research encountered an error.');
           setPendingAutoResume(false);
-          void reportRefundedFailure('deep research connection dropped');
-        };
+          void reportRefundedFailure('deep research ran into a problem');
+        }
+      };
+
+      source.onerror = () => {
+        closeResearchStream();
+        setResearchStatus('error');
+        setResearchError('The research stream was interrupted. Please try again.');
+        appendResearchActivity('Connection lost during deep research.');
+        setPendingAutoResume(false);
+        void reportRefundedFailure('deep research connection dropped');
+      };
 
         lastResearchEventRef.current = Date.now();
       } catch (err) {
@@ -724,7 +717,7 @@ export default function WritingDeskClient() {
       const message =
         err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
       setResearchError(message);
-      appendResearchActivity('Unable to start deep research.', 'status');
+      appendResearchActivity('Unable to start deep research.');
       setPendingAutoResume(false);
       void reportRefundedFailure('deep research could not start');
     }
@@ -758,7 +751,7 @@ export default function WritingDeskClient() {
       if (now - lastAttemptAt < 15000) return;
 
       lastResearchResumeAttemptRef.current = now;
-      appendResearchActivity('Connection quiet — attempting to resume the research stream…', 'status');
+      appendResearchActivity('Connection quiet — attempting to resume the research stream…');
       closeResearchStream();
       void startDeepResearch({ resume: true });
     }, 10000);
@@ -1645,6 +1638,28 @@ export default function WritingDeskClient() {
     isEditingFollowUpsFromSummary.current = true;
   }, [followUps.length]);
 
+  const handleConfirmEditFollowUps = useCallback(() => {
+    const targetIndex = pendingEditFollowUpIndexRef.current ?? 0;
+    pendingEditFollowUpIndexRef.current = null;
+    setEditFollowUpsConfirmOpen(false);
+    resetResearch();
+    handleEditFollowUpQuestion(targetIndex);
+  }, [handleEditFollowUpQuestion, resetResearch]);
+
+  const handleCancelEditFollowUps = useCallback(() => {
+    setEditFollowUpsConfirmOpen(false);
+    pendingEditFollowUpIndexRef.current = null;
+  }, []);
+
+  const handleRequestEditFollowUps = useCallback((index: number) => {
+    if (researchStatus === 'completed') {
+      pendingEditFollowUpIndexRef.current = index;
+      setEditFollowUpsConfirmOpen(true);
+      return;
+    }
+    handleEditFollowUpQuestion(index);
+  }, [handleEditFollowUpQuestion, researchStatus]);
+
   const handleConfirmInitialFollowUps = useCallback(() => {
     setInitialFollowUpsConfirmOpen(false);
     void generateFollowUps('initial');
@@ -1804,6 +1819,12 @@ export default function WritingDeskClient() {
         isRerun={hasResearchContent}
         onConfirm={handleConfirmResearch}
         onCancel={handleCancelResearch}
+      />
+      <EditFollowUpsConfirmModal
+        open={editFollowUpsConfirmOpen}
+        creditCost={formatCredits(deepResearchCreditCost)}
+        onConfirm={handleConfirmEditFollowUps}
+        onCancel={handleCancelEditFollowUps}
       />
       <FollowUpsConfirmModal
         open={followUpsConfirmOpen}
@@ -2109,7 +2130,7 @@ export default function WritingDeskClient() {
                     <div className="research-progress" role="status" aria-live="polite">
                       <span className="research-progress__spinner" aria-hidden="true" />
                       <div className="research-progress__content">
-                        <p>Gathering evidence — this can take a couple of minutes while we trace reliable sources.</p>
+                        <p>Gathering evidence — this can take approximately 15 minutes while we trace reliable sources.</p>
                         <p>We&apos;ll post updates in the activity feed below while the research continues.</p>
                       </div>
                     </div>
@@ -2210,7 +2231,7 @@ export default function WritingDeskClient() {
                                 <button
                                   type="button"
                                   className="btn-link"
-                                  onClick={() => handleEditFollowUpQuestion(idx)}
+                                  onClick={() => handleRequestEditFollowUps(idx)}
                                   aria-label={`Edit answer for follow-up question ${idx + 1}`}
                                   disabled={loading}
                                 >
@@ -2261,7 +2282,7 @@ export default function WritingDeskClient() {
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => handleEditFollowUpQuestion(0)}
+                      onClick={() => handleRequestEditFollowUps(0)}
                       disabled={loading || researchStatus === 'running'}
                     >
                       Review / Edit Follow up answers

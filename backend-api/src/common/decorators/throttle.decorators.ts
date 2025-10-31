@@ -13,6 +13,11 @@ export const ThrottleAI = () => Throttle({
   ai: { limit: 5, ttl: 300000 } // 5 requests per 5 minutes
 });
 
+// Transcription operations - higher allowance to support follow-up questions
+export const ThrottleTranscription = () => Throttle({
+  transcription: { limit: 20, ttl: 300000 } // 20 requests per 5 minutes
+});
+
 // Credit operations - 10 requests per 10 minutes (medium strict)
 export const ThrottleCredit = () => Throttle({ 
   credit: { limit: 10, ttl: 600000 } // 10 requests per 10 minutes

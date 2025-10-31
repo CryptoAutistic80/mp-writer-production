@@ -136,6 +136,11 @@ function validateConfig(config: Record<string, unknown>) {
         name: 'webhook',
         ttl: 60, // 1 minute
         limit: 10
+      },
+      {
+        name: 'transcription',
+        ttl: 300, // 5 minutes
+        limit: 20
       }
     ]),
     MongooseModule.forRootAsync({
