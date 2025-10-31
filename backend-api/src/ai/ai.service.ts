@@ -628,6 +628,52 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
+  private isRecoverableTransportError(error: unknown): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const candidate = error as { message?: unknown; code?: unknown; name?: unknown };
+
+    if (candidate instanceof Error) {
+      if (candidate.name === 'AbortError' || candidate.name === 'TimeoutError') {
+        return true;
+      }
+    }
+
+    const message = typeof candidate?.message === 'string' ? candidate.message.toLowerCase() : '';
+    const code = typeof candidate?.code === 'string' ? candidate.code.toUpperCase() : '';
+
+    if (code) {
+      const recoverableCodes = ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND'];
+      if (recoverableCodes.includes(code)) {
+        return true;
+      }
+    }
+
+    if (message) {
+      const recoverablePhrases = [
+        'premature close',
+        'socket hang up',
+        'fetch failed',
+        'connection reset',
+        'connection closed',
+        'reset by peer',
+        'connection aborted',
+        'request aborted',
+        'http/2 stream closed',
+        'underlying socket was closed',
+        'server hung up',
+        'timed out',
+      ];
+      if (recoverablePhrases.some((phrase) => message.includes(phrase))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private resolveTranscriptionModel(modelFromRequest?: TranscriptionModel): TranscriptionModel {
     if (modelFromRequest) {
       return modelFromRequest;
@@ -1978,6 +2024,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       let lastSequenceNumber: number | null = null;
+      let lastCursor: string | null = null;
       let currentStream: ResponseStreamLike | null = openAiStream;
       let resumeAttempts = 0;
       let _lastActivityTime = Date.now();
@@ -2046,6 +2093,123 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       startQuietPeriodTimer();
 
+      const resumeStatusMessages = [
+        'Consulting my medieval tomes for parliamentary precedents…',
+        'Shuffling through my official Parliament issue tarot cards…',
+        'Processing some things I\'ve learned from the evidence…',
+        'Cross-referencing with the ancient scrolls of Westminster…',
+        'Having a quick chat with the parliamentary ghosts…',
+        'Double-checking my facts against the cosmic database…',
+        'Consulting the oracle of Hansard for wisdom…',
+        'Taking a moment to absorb the gravity of the situation…',
+        'Rummaging through my collection of parliamentary tea leaves…',
+        'Having a brief conference with the spirits of democracy…',
+        'Processing the evidence through my parliamentary crystal ball…',
+        'Taking a step back to see the bigger picture…',
+        'Consulting the ancient texts of parliamentary procedure…',
+        'Having a quick think about what I\'ve discovered…',
+        'Cross-checking my findings with the parliamentary archives…',
+        'Taking a moment to connect the dots…',
+        'Having a quiet word with the parliamentary librarians…',
+        'Processing the information through my democratic filters…',
+        'Taking a breather to let the evidence sink in…',
+        'Having a brief consultation with the wisdom of ages…'
+      ];
+
+      const notifyBackgroundPolling = () => {
+        if (!backgroundPollingNotified) {
+          send({ type: 'status', status: 'background_polling', remainingCredits });
+          send({
+            type: 'event',
+            event: {
+              type: 'quiet_period',
+              message: 'The live stream hit a snag; continuing the research in the background…',
+            },
+          });
+          backgroundPollingNotified = true;
+        }
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
+      };
+
+      const attemptStreamResume = async (
+        initialError: unknown,
+      ): Promise<ResponseStreamLike | null> => {
+        let latestError: unknown = initialError;
+
+        while (true) {
+          if (!this.isRecoverableTransportError(latestError)) {
+            throw latestError instanceof Error
+              ? latestError
+              : new Error('Deep research stream failed with an unknown error');
+          }
+
+          if (!responseId) {
+            this.logger.warn(
+              `[writing-desk research] transport failure before response id available: ${
+                latestError instanceof Error ? latestError.message : 'unknown error'
+              }`,
+            );
+            return null;
+          }
+
+          if (resumeAttempts >= RESEARCH_MAX_RESUME_ATTEMPTS) {
+            this.logger.warn(
+              `[writing-desk research] resume attempt limit reached for response ${responseId}, switching to background polling`,
+            );
+            notifyBackgroundPolling();
+            return null;
+          }
+
+          resumeAttempts += 1;
+          const resumeCursor = lastCursor ?? (lastSequenceNumber != null ? String(lastSequenceNumber) : null);
+          const resumeCursorLog = resumeCursor ?? (lastSequenceNumber ?? 'start');
+          this.logger.warn(
+            `[writing-desk research] resume attempt ${resumeAttempts} for response ${responseId} starting after ${resumeCursorLog}`,
+          );
+
+          const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
+          send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
+
+          const resumeParams: {
+            response_id: string;
+            after?: string;
+            event_id?: string;
+            tools?: Array<Record<string, unknown>>;
+          } = {
+            response_id: responseId,
+          };
+
+          if (resumeCursor) {
+            resumeParams.after = resumeCursor;
+            resumeParams.event_id = resumeCursor;
+          }
+
+          if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
+            resumeParams.tools = requestExtras.tools;
+          }
+
+          try {
+            const resumedStream = client.responses.stream(resumeParams) as ResponseStreamLike;
+            this.logger.log(
+              `[writing-desk research] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
+            );
+            return resumedStream;
+          } catch (resumeError) {
+            this.logger.error(
+              `[writing-desk research] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
+                resumeError instanceof Error ? resumeError.message : 'unknown error'
+              }`,
+            );
+            latestError = resumeError;
+            // Loop to evaluate whether the new error is recoverable and, if so, try again
+            continue;
+          }
+        }
+      };
+
       while (currentStream) {
         let streamError: unknown = null;
 
@@ -2073,6 +2237,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             const sequenceNumber = (event as any)?.sequence_number;
             if (Number.isFinite(sequenceNumber)) {
               lastSequenceNumber = Number(sequenceNumber);
+            }
+
+            const eventCursor =
+              typeof (event as any)?.id === 'string'
+                ? (event as any).id
+                : typeof (event as any)?.cursor === 'string'
+                  ? (event as any).cursor
+                  : null;
+            if (eventCursor) {
+              lastCursor = eventCursor;
             }
 
             if ((event as any)?.response) {
@@ -2179,109 +2353,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           break;
         }
 
-        const isTransportFailure =
-          streamError instanceof Error && /premature close/i.test(streamError.message);
-
-        if (!isTransportFailure) {
-          throw streamError instanceof Error
-            ? streamError
-            : new Error('Deep research stream failed with an unknown error');
-        }
-
-        if (!responseId) {
-          this.logger.warn(
-            `[writing-desk research] transport failure before response id available: ${
-              streamError instanceof Error ? streamError.message : 'unknown error'
-            }`,
-          );
-          break;
-        }
-
-        resumeAttempts += 1;
-        const resumeCursor = lastSequenceNumber ?? null;
-        this.logger.warn(
-          `[writing-desk research] resume attempt ${resumeAttempts} for response ${responseId} starting after ${
-            resumeCursor ?? 'start'
-          }`,
-        );
-
-        if (resumeAttempts >= RESEARCH_MAX_RESUME_ATTEMPTS) {
-          this.logger.warn(
-            `[writing-desk research] resume attempt limit reached for response ${responseId}, switching to background polling`,
-          );
-          if (!backgroundPollingNotified) {
-            send({ type: 'status', status: 'background_polling', remainingCredits });
-            send({
-              type: 'event',
-              event: {
-                type: 'quiet_period',
-                message: 'The live stream hit a snag; continuing the research in the background…',
-              },
-            });
-            backgroundPollingNotified = true;
-          }
-          if (quietPeriodTimer) {
-            clearTimeout(quietPeriodTimer);
-            quietPeriodTimer = null;
-          }
+        const resumedStream = await attemptStreamResume(streamError);
+        if (!resumedStream) {
           currentStream = null;
           openAiStream = null;
-          break;
-        }
-
-        // Send a humorous status update to keep the user engaged during resume attempts
-        const resumeStatusMessages = [
-          'Consulting my medieval tomes for parliamentary precedents…',
-          'Shuffling through my official Parliament issue tarot cards…',
-          'Processing some things I\'ve learned from the evidence…',
-          'Cross-referencing with the ancient scrolls of Westminster…',
-          'Having a quick chat with the parliamentary ghosts…',
-          'Double-checking my facts against the cosmic database…',
-          'Consulting the oracle of Hansard for wisdom…',
-          'Taking a moment to absorb the gravity of the situation…',
-          'Rummaging through my collection of parliamentary tea leaves…',
-          'Having a brief conference with the spirits of democracy…',
-          'Processing the evidence through my parliamentary crystal ball…',
-          'Taking a step back to see the bigger picture…',
-          'Consulting the ancient texts of parliamentary procedure…',
-          'Having a quick think about what I\'ve discovered…',
-          'Cross-checking my findings with the parliamentary archives…',
-          'Taking a moment to connect the dots…',
-          'Having a quiet word with the parliamentary librarians…',
-          'Processing the information through my democratic filters…',
-          'Taking a breather to let the evidence sink in…',
-          'Having a brief consultation with the wisdom of ages…'
-        ];
-        
-        const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
-        send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
-
-        try {
-          const resumeParams: {
-            response_id: string;
-            starting_after?: number;
-            tools?: Array<Record<string, unknown>>;
-          } = {
-            response_id: responseId,
-            starting_after: resumeCursor ?? undefined,
-          };
-
-          if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
-            resumeParams.tools = requestExtras.tools;
-          }
-
-          currentStream = client.responses.stream(resumeParams) as ResponseStreamLike;
-          openAiStream = currentStream;
-          this.logger.log(
-            `[writing-desk research] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
-          );
-        } catch (resumeError) {
-          this.logger.error(
-            `[writing-desk research] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
-              resumeError instanceof Error ? resumeError.message : 'unknown error'
-            }`,
-          );
-          break;
+        } else {
+          currentStream = resumedStream;
+          openAiStream = resumedStream;
         }
       }
 
