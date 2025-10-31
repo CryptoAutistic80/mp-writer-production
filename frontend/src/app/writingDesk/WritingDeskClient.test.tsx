@@ -105,8 +105,17 @@ describe('WritingDeskClient', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   };
 
-  const renderComponent = () => {
-    render(<WritingDeskClient />);
+  const renderComponent = async () => {
+    await act(async () => {
+      render(<WritingDeskClient />);
+    });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/auth/me',
+        expect.objectContaining({ cache: 'no-store' }),
+      ),
+    );
+    await screen.findByRole('status', { name: /You have .* credits available/i });
   };
 
   const answerInitialQuestions = async () => {
@@ -177,7 +186,7 @@ describe('WritingDeskClient', () => {
       remainingCredits: 0.8,
     });
 
-    renderComponent();
+    await renderComponent();
     await answerInitialQuestions();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
     await answerFollowUpQuestions(['First answer', 'Second answer']);
@@ -219,7 +228,7 @@ describe('WritingDeskClient', () => {
       remainingCredits: 0.7,
     });
 
-    renderComponent();
+    await renderComponent();
     await answerInitialQuestions();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
     await answerFollowUpQuestions(['First answer', 'Second answer']);
@@ -263,7 +272,7 @@ describe('WritingDeskClient', () => {
       remainingCredits: 0.05,
     });
 
-    renderComponent();
+    await renderComponent();
     await answerInitialQuestions();
     mockCredits = 0.05;
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
@@ -291,7 +300,7 @@ describe('WritingDeskClient', () => {
         remainingCredits: 0.8,
       });
 
-      renderComponent();
+      await renderComponent();
       await answerInitialQuestions();
       await waitFor(() =>
         expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)),

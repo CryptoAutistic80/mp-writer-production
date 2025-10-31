@@ -602,10 +602,14 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
       const elapsed = Date.now() - lastEventTime;
       if (elapsed >= timeoutMs && !timeoutTriggered) {
         timeoutTriggered = true;
+        timedOut = true;
         clearInterval(checkInterval);
         onTimeout();
       }
     }, 1000); // Check every second
+    if (typeof (checkInterval as any)?.unref === 'function') {
+      (checkInterval as any).unref();
+    }
 
     try {
       for await (const event of stream) {
@@ -1385,6 +1389,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
           send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
 
+          if (resumeAttempts > 1) {
+            const backoffMs = Math.min(1000 * 2 ** (resumeAttempts - 1), 5000);
+            const jitter = Math.floor(Math.random() * 300);
+            await this.delay(backoffMs + jitter);
+          }
+
           const resumeParams: { response_id: string; after?: string; event_id?: string } = {
             response_id: responseId,
           };
@@ -1445,8 +1455,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       const startQuietPeriodTimer = () => {
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
         }
-        quietPeriodTimer = setTimeout(() => {
+        const timer = setTimeout(() => {
           const quietStatusMessages = [
             'Drafting a persuasive opening…',
             'Cross-referencing your evidence with parliamentary procedures…',
@@ -1461,8 +1472,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           ];
           const randomMessage = quietStatusMessages[Math.floor(Math.random() * quietStatusMessages.length)];
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
+          quietPeriodTimer = null;
           startQuietPeriodTimer(); // Reset the timer
         }, 5000); // 5 seconds of inactivity
+        if (typeof (timer as any)?.unref === 'function') {
+          (timer as any).unref();
+        }
+        quietPeriodTimer = timer as NodeJS.Timeout;
       };
 
       startQuietPeriodTimer();
@@ -1487,8 +1503,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           for await (const event of timeoutWrappedStream) {
             if (quietPeriodTimer) {
               clearTimeout(quietPeriodTimer);
-              startQuietPeriodTimer();
+              quietPeriodTimer = null;
             }
+            startQuietPeriodTimer();
 
             const sequenceNumber = (event as any)?.sequence_number;
             if (Number.isFinite(sequenceNumber)) {
@@ -2301,10 +2318,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       );
 
       if (resumeFromState?.responseId) {
-        openAiStream = client.responses.stream({
+        const resumeParams: Record<string, unknown> = {
           response_id: resumeFromState.responseId,
-          tools: requestExtras.tools,
-        }) as ResponseStreamLike;
+        };
+        if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
+          resumeParams.tools = requestExtras.tools;
+        }
+        if (typeof requestExtras.max_tool_calls === 'number') {
+          resumeParams.max_tool_calls = requestExtras.max_tool_calls;
+        }
+        if (requestExtras.reasoning) {
+          resumeParams.reasoning = requestExtras.reasoning;
+        }
+        openAiStream = client.responses.stream(resumeParams) as ResponseStreamLike;
       } else {
         openAiStream = (await client.responses.create({
           model,
@@ -2327,8 +2353,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       const startQuietPeriodTimer = () => {
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
         }
-        quietPeriodTimer = setTimeout(() => {
+        const timer = setTimeout(() => {
           const quietStatusMessages = [
             'Taking a moment to absorb the evidence…',
             'Processing the information through my democratic filters…',
@@ -2380,8 +2407,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
           _lastActivityTime = Date.now();
+          quietPeriodTimer = null;
           startQuietPeriodTimer(); // Reset the timer
         }, 5000); // 5 seconds of inactivity
+        if (typeof (timer as any)?.unref === 'function') {
+          (timer as any).unref();
+        }
+        quietPeriodTimer = timer as NodeJS.Timeout;
       };
 
       startQuietPeriodTimer();
@@ -2466,11 +2498,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
           send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
 
+          if (resumeAttempts > 1) {
+            const backoffMs = Math.min(1000 * 2 ** (resumeAttempts - 1), 5000);
+            const jitter = Math.floor(Math.random() * 300);
+            await this.delay(backoffMs + jitter);
+          }
+
           const resumeParams: {
             response_id: string;
             after?: string;
             event_id?: string;
             tools?: Array<Record<string, unknown>>;
+            max_tool_calls?: number;
+            reasoning?: DeepResearchRequestExtras['reasoning'];
           } = {
             response_id: responseId,
           };
@@ -2482,6 +2522,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
           if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
             resumeParams.tools = requestExtras.tools;
+          }
+          if (typeof requestExtras.max_tool_calls === 'number') {
+            resumeParams.max_tool_calls = requestExtras.max_tool_calls;
+          }
+          if (requestExtras.reasoning) {
+            resumeParams.reasoning = requestExtras.reasoning;
           }
 
           try {
@@ -2524,8 +2570,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             _lastActivityTime = Date.now();
             if (quietPeriodTimer) {
               clearTimeout(quietPeriodTimer);
-              startQuietPeriodTimer();
+              quietPeriodTimer = null;
             }
+            startQuietPeriodTimer();
 
             const sequenceNumber = (event as any)?.sequence_number;
             if (Number.isFinite(sequenceNumber)) {
