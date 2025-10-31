@@ -2182,7 +2182,7 @@ export default function WritingDeskClient() {
                     <div className="research-progress" role="status" aria-live="polite">
                       <span className="research-progress__spinner" aria-hidden="true" />
                       <div className="research-progress__content">
-                        <p>Gathering evidence — this can take approximately 15 minutes while we trace reliable sources.</p>
+                        <p>Gathering evidence — this can take approximately 15-30 minutes while we trace reliable sources.</p>
                         <p>We&apos;ll post updates in the activity feed below while the research continues.</p>
                       </div>
                     </div>

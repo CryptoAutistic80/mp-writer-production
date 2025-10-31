@@ -78,7 +78,7 @@ type ResponseStreamLike = AsyncIterable<ResponseStreamEvent> & {
 const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
 const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
 const BACKGROUND_POLL_INTERVAL_MS = 2000;
-const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
+const BACKGROUND_POLL_TIMEOUT_MS = 40 * 60 * 1000;
 const RESEARCH_MAX_RESUME_ATTEMPTS = 10;
 const LETTER_RUN_BUFFER_SIZE = 2000;
 const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
@@ -483,8 +483,8 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // Every 10 minutes
     // Use longer threshold for letter runs (typically complete in < 5 min)
     const LETTER_STALE_THRESHOLD_MS = LETTER_RUN_TTL_MS + (2 * 60 * 1000); // 7 minutes
-    // Use much longer threshold for research runs (can take up to 20 min)
-    const RESEARCH_STALE_THRESHOLD_MS = BACKGROUND_POLL_TIMEOUT_MS + (5 * 60 * 1000); // 25 minutes
+    // Use much longer threshold for research runs (can take up to 40 min)
+    const RESEARCH_STALE_THRESHOLD_MS = BACKGROUND_POLL_TIMEOUT_MS + (5 * 60 * 1000); // 45 minutes
 
     this.cleanupSweepInterval = setInterval(() => {
       const now = Date.now();
@@ -506,7 +506,7 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
         }
       }
 
-      // Sweep deep research runs - longer threshold since they can run 20+ minutes
+      // Sweep deep research runs - longer threshold since they can run 30+ minutes
       for (const [key, run] of this.deepResearchRuns.entries()) {
         const age = now - run.startedAt;
         const isStale = age > RESEARCH_STALE_THRESHOLD_MS;
