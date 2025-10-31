@@ -666,6 +666,7 @@ export default function WritingDeskClient() {
               charged: 'Credits deducted. Research is starting…',
               queued: 'Deep research queued…',
               in_progress: 'Gathering evidence…',
+              background_polling: 'Research continuing in the background…',
             };
             const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
             if (descriptor) appendResearchActivity(descriptor);
