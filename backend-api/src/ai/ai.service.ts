@@ -82,6 +82,7 @@ const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 const RESEARCH_MAX_RESUME_ATTEMPTS = 10;
 const LETTER_RUN_BUFFER_SIZE = 2000;
 const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
+const LETTER_MAX_RESUME_ATTEMPTS = 10;
 const STREAMING_RUN_ORPHAN_THRESHOLD_MS = 2 * 60 * 1000;
 // Stream inactivity timeouts - max time between events before aborting
 const LETTER_STREAM_INACTIVITY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
@@ -1134,12 +1135,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const tone = run.tone;
     let deductionApplied = false;
     let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
-    let controller: { abort: () => void } | null = null;
     let jsonBuffer = '';
     let quietPeriodTimer: NodeJS.Timeout | null = null;
     let _settled = false;
     let lastPersistedContent: string | null = null;
     let lastPersistedAt = 0;
+    let responseId: string | null = resumeFromState?.responseId ?? run.responseId ?? null;
+    const trackedControllers: Array<{ abort: () => void }> = [];
 
     const send = (payload: LetterStreamPayload) => {
       subject.next(payload);
@@ -1168,6 +1170,36 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           );
         }
       }
+    };
+
+    const captureResponseId = async (candidate: unknown) => {
+      if (!candidate || typeof candidate !== 'object') {
+        return;
+      }
+
+      const id = (candidate as any)?.id;
+      if (typeof id !== 'string') {
+        return;
+      }
+
+      const trimmed = id.trim();
+      if (!trimmed || trimmed === responseId) {
+        return;
+      }
+
+      responseId = trimmed;
+      run.responseId = trimmed;
+      heartbeat({ responseId: trimmed });
+
+      try {
+        await this.persistLetterState(userId, baselineJob, { responseId: trimmed, tone });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to persist letter response id for user ${userId}: ${(error as Error)?.message ?? error}`,
+        );
+      }
+
+      await this.touchStreamingRun('letter', run.key, { responseId: trimmed });
     };
 
     try {
@@ -1267,10 +1299,121 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       const client = await this.getOpenAiClient(apiKey);
-      const stream = resumeFromState?.responseId
-        ? (client.responses.stream({
-            response_id: resumeFromState.responseId,
-          }) as ResponseStreamLike)
+      let openAiStream: ResponseStreamLike | null = null;
+      let currentStream: ResponseStreamLike | null = null;
+      let lastSequenceNumber: number | null = null;
+      let lastCursor: string | null = null;
+      let resumeAttempts = 0;
+      let backgroundPollingNotified = false;
+      if (responseId) {
+        run.responseId = responseId;
+      }
+
+      const registerController = (streamCandidate: ResponseStreamLike | null) => {
+        if (!streamCandidate) {
+          return;
+        }
+        const controllerCandidate = (streamCandidate as any)?.controller;
+        if (controllerCandidate && typeof controllerCandidate.abort === 'function') {
+          trackedControllers.push(controllerCandidate);
+        }
+      };
+
+      const resumeStatusMessages = [
+        'Reconnecting to the drafting desk…',
+        'Trying to resume the live letter feed…',
+        'Dusting off the backup quill…',
+        'Re-engaging the Westminster wordsmith…',
+        'Coaxing the letter stream back online…',
+        'Asking the parliamentary scribe to continue…',
+      ];
+
+      const notifyBackgroundPolling = () => {
+        if (!backgroundPollingNotified) {
+          send({ type: 'status', status: 'background_polling', remainingCredits });
+          send({
+            type: 'event',
+            event: {
+              type: 'quiet_period',
+              message: 'The live stream hit a snag; finishing your letter in the background…',
+            },
+          });
+          backgroundPollingNotified = true;
+        }
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
+      };
+
+      const attemptStreamResume = async (
+        initialError: unknown,
+      ): Promise<ResponseStreamLike | null> => {
+        let latestError: unknown = initialError;
+
+        while (true) {
+          if (!this.isRecoverableTransportError(latestError)) {
+            throw latestError instanceof Error
+              ? latestError
+              : new Error('Letter composition stream failed with an unknown error');
+          }
+
+          if (!responseId) {
+            this.logger.warn(
+              `[writing-desk letter] transport failure before response id available: ${
+                latestError instanceof Error ? latestError.message : 'unknown error'
+              }`,
+            );
+            return null;
+          }
+
+          if (resumeAttempts >= LETTER_MAX_RESUME_ATTEMPTS) {
+            this.logger.warn(
+              `[writing-desk letter] resume attempt limit reached for response ${responseId}, switching to background polling`,
+            );
+            notifyBackgroundPolling();
+            return null;
+          }
+
+          resumeAttempts += 1;
+          const resumeCursor = lastCursor ?? (lastSequenceNumber != null ? String(lastSequenceNumber) : null);
+          const resumeCursorLog = resumeCursor ?? (lastSequenceNumber ?? 'start');
+          this.logger.warn(
+            `[writing-desk letter] resume attempt ${resumeAttempts} for response ${responseId} starting after ${resumeCursorLog}`,
+          );
+
+          const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
+          send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
+
+          const resumeParams: { response_id: string; after?: string; event_id?: string } = {
+            response_id: responseId,
+          };
+
+          if (resumeCursor) {
+            resumeParams.after = resumeCursor;
+            resumeParams.event_id = resumeCursor;
+          }
+
+          try {
+            const resumed = client.responses.stream(resumeParams) as ResponseStreamLike;
+            this.logger.log(
+              `[writing-desk letter] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
+            );
+            return resumed;
+          } catch (resumeError) {
+            this.logger.error(
+              `[writing-desk letter] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
+                resumeError instanceof Error ? resumeError.message : 'unknown error'
+              }`,
+            );
+            latestError = resumeError;
+            continue;
+          }
+        }
+      };
+
+      openAiStream = resumeFromState?.responseId
+        ? (client.responses.stream({ response_id: resumeFromState.responseId }) as ResponseStreamLike)
         : (client.responses.stream({
             model,
             input: [
@@ -1295,7 +1438,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             include: ['reasoning.encrypted_content'],
           }) as ResponseStreamLike);
 
-      controller = stream.controller ?? null;
+      currentStream = openAiStream;
+      registerController(currentStream);
 
       // Set up periodic status updates during quiet periods
       const startQuietPeriodTimer = () => {
@@ -1313,7 +1457,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             'Tailoring the content to your MP\'s interests…',
             'Checking that the letter flows naturally…',
             'Fine-tuning the closing paragraph…',
-            'Ensuring all the key points are covered…'
+            'Ensuring all the key points are covered…',
           ];
           const randomMessage = quietStatusMessages[Math.floor(Math.random() * quietStatusMessages.length)];
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
@@ -1323,222 +1467,371 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       startQuietPeriodTimer();
 
-      // Wrap stream with inactivity timeout
-      const timeoutWrappedStream = this.createStreamWithTimeout(
-        stream,
-        LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
-        () => {
-          this.logger.warn(`[letter] Stream inactivity timeout for job ${baselineJob.jobId}`);
-          controller?.abort();
-        }
-      );
+      while (currentStream) {
+        let streamError: unknown = null;
+        const streamForIteration = currentStream;
 
-      for await (const event of timeoutWrappedStream) {
-        // Reset quiet period timer on any activity
-        if (quietPeriodTimer) {
-          clearTimeout(quietPeriodTimer);
-          startQuietPeriodTimer();
-        }
-        const normalised = this.normaliseStreamEvent(event);
-        const eventType = typeof normalised.type === 'string' ? normalised.type : null;
-
-        if (eventType?.startsWith('response.reasoning')) {
-          send({ type: 'event', event: normalised });
-          continue;
-        }
-
-        if (eventType === 'response.output_text.delta') {
-          const delta = this.extractOutputTextDelta(normalised);
-          if (delta) {
-            jsonBuffer += delta;
-            send({ type: 'delta', text: delta });
-            const preview = this.extractLetterPreview(jsonBuffer);
-            if (preview !== null) {
-              const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
-              const previewDocument = this.buildLetterDocumentHtml({
-                mpName: context.mpName,
-                mpAddress1: context.mpAddress1,
-                mpAddress2: context.mpAddress2,
-                mpCity: context.mpCity,
-                mpCounty: context.mpCounty,
-                mpPostcode: context.mpPostcode,
-                date: context.today,
-                subjectLineHtml: subjectPreview,
-                letterContentHtml: preview,
-                senderName: context.senderName,
-                senderAddress1: context.senderAddress1,
-              senderAddress2: context.senderAddress2,
-              senderAddress3: context.senderAddress3,
-              senderCity: context.senderCity,
-              senderCounty: context.senderCounty,
-              senderPostcode: context.senderPostcode,
-              senderTelephone: context.senderTelephone,
-              references: this.extractReferencesFromJson(jsonBuffer),
-            });
-              send({ type: 'letter_delta', html: previewDocument });
-              await persistProgressIfNeeded(previewDocument);
-            }
-          }
-          continue;
-        }
-
-        if (eventType === 'response.output_text.done') {
-          const preview = this.extractLetterPreview(jsonBuffer);
-          if (preview !== null) {
-            const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
-            const previewDocument = this.buildLetterDocumentHtml({
-              mpName: context.mpName,
-              mpAddress1: context.mpAddress1,
-              mpAddress2: context.mpAddress2,
-              mpCity: context.mpCity,
-              mpCounty: context.mpCounty,
-              mpPostcode: context.mpPostcode,
-              date: context.today,
-              subjectLineHtml: subjectPreview,
-              letterContentHtml: preview,
-              senderName: context.senderName,
-              senderAddress1: context.senderAddress1,
-              senderAddress2: context.senderAddress2,
-              senderAddress3: context.senderAddress3,
-              senderCity: context.senderCity,
-              senderCounty: context.senderCounty,
-              senderPostcode: context.senderPostcode,
-              senderTelephone: context.senderTelephone,
-              references: this.extractReferencesFromJson(jsonBuffer),
-            });
-            send({ type: 'letter_delta', html: previewDocument });
-            await persistProgressIfNeeded(previewDocument);
-          }
-          continue;
-        }
-
-        if (eventType === 'response.completed') {
-          const responseId = (normalised as any)?.response?.id ?? null;
-          run.responseId = typeof responseId === 'string' ? responseId : null;
-          await this.touchStreamingRun('letter', run.key, { responseId: run.responseId ?? null });
-          const usage = (normalised as any)?.response?.usage ?? null;
-          this.logger.log(
-            `[writing-desk letter-usage] ${JSON.stringify({
-              userId,
-              jobId: baselineJob.jobId,
-              model,
-              tone,
-              responseId: run.responseId,
-              usage,
-            })}`,
+        try {
+          const timeoutWrappedStream = this.createStreamWithTimeout(
+            streamForIteration,
+            LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
+            () => {
+              this.logger.warn(`[letter] Stream inactivity timeout for job ${baselineJob.jobId}`);
+              const ctrl = (streamForIteration as any)?.controller;
+              if (ctrl && typeof ctrl.abort === 'function') {
+                ctrl.abort();
+              }
+            },
           );
-          const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
-          const parsed = this.parseLetterResult(finalText);
-          const merged = this.mergeLetterResultWithContext(parsed, context);
-          const references = Array.isArray(merged.references) 
-            ? merged.references.map((ref) => {
-                try {
-                  return decodeURIComponent(ref);
-                } catch {
-                  return ref;
+
+          for await (const event of timeoutWrappedStream) {
+            if (quietPeriodTimer) {
+              clearTimeout(quietPeriodTimer);
+              startQuietPeriodTimer();
+            }
+
+            const sequenceNumber = (event as any)?.sequence_number;
+            if (Number.isFinite(sequenceNumber)) {
+              lastSequenceNumber = Number(sequenceNumber);
+            }
+
+            const eventCursor =
+              typeof (event as any)?.id === 'string'
+                ? (event as any).id
+                : typeof (event as any)?.cursor === 'string'
+                  ? (event as any).cursor
+                  : null;
+            if (eventCursor) {
+              lastCursor = eventCursor;
+            }
+
+            if (typeof (event as any)?.response_id === 'string') {
+              await captureResponseId({ id: (event as any).response_id });
+            }
+
+            if ((event as any)?.response) {
+              await captureResponseId((event as any).response);
+            }
+
+            const normalised = this.normaliseStreamEvent(event);
+            const eventType = typeof normalised.type === 'string' ? normalised.type : null;
+
+            if (eventType?.startsWith('response.reasoning')) {
+              send({ type: 'event', event: normalised });
+              continue;
+            }
+
+            if (eventType === 'response.output_text.delta') {
+              const delta = this.extractOutputTextDelta(normalised);
+              if (delta) {
+                jsonBuffer += delta;
+                send({ type: 'delta', text: delta });
+                const preview = this.extractLetterPreview(jsonBuffer);
+                if (preview !== null) {
+                  const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
+                  const previewDocument = this.buildLetterDocumentHtml({
+                    mpName: context.mpName,
+                    mpAddress1: context.mpAddress1,
+                    mpAddress2: context.mpAddress2,
+                    mpCity: context.mpCity,
+                    mpCounty: context.mpCounty,
+                    mpPostcode: context.mpPostcode,
+                    date: context.today,
+                    subjectLineHtml: subjectPreview,
+                    letterContentHtml: preview,
+                    senderName: context.senderName,
+                    senderAddress1: context.senderAddress1,
+                    senderAddress2: context.senderAddress2,
+                    senderAddress3: context.senderAddress3,
+                    senderCity: context.senderCity,
+                    senderCounty: context.senderCounty,
+                    senderPostcode: context.senderPostcode,
+                    senderTelephone: context.senderTelephone,
+                    references: this.extractReferencesFromJson(jsonBuffer),
+                  });
+                  send({ type: 'letter_delta', html: previewDocument });
+                  await persistProgressIfNeeded(previewDocument);
                 }
-              })
-            : [];
-          const finalDocument = this.buildLetterDocumentHtml({
-            mpName: merged.mp_name,
-            mpAddress1: merged.mp_address_1,
-            mpAddress2: merged.mp_address_2,
-            mpCity: merged.mp_city,
-            mpCounty: merged.mp_county,
-            mpPostcode: merged.mp_postcode,
-            date: merged.date,
-            subjectLineHtml: merged.subject_line_html,
-            letterContentHtml: merged.letter_content,
-            senderName: merged.sender_name,
-            senderAddress1: merged.sender_address_1,
-            senderAddress2: merged.sender_address_2,
-            senderAddress3: merged.sender_address_3,
-            senderCity: merged.sender_city,
-            senderCounty: merged.sender_county,
-            senderPostcode: merged.sender_postcode,
-            senderTelephone: merged.sender_phone,
-            references,
-          });
-
-          await this.persistLetterResult(userId, baselineJob, {
-            status: 'completed',
-            tone,
-            responseId,
-            content: finalDocument,
-            references,
-            json: finalText,
-          });
-
-          run.status = 'completed';
-          _settled = true;
-          send({ type: 'letter_delta', html: finalDocument });
-          send({
-            type: 'complete',
-            letter: this.toLetterCompletePayload(
-              { ...merged, letter_content: finalDocument },
-              { responseId, tone, rawJson: finalText },
-            ),
-            remainingCredits,
-          });
-          await this.touchStreamingRun('letter', run.key, {
-            status: 'completed',
-            responseId: responseId ?? run.responseId,
-          });
-          this.handleOpenAiSuccess();
-          subject.complete();
-          
-          // Clean up the quiet period timer
-          if (quietPeriodTimer) {
-            clearTimeout(quietPeriodTimer);
-            quietPeriodTimer = null;
-          }
-          return;
-        }
-
-        if (eventType === 'response.error' || eventType === 'response.failed') {
-          const message =
-            typeof (normalised as any)?.error?.message === 'string'
-              ? ((normalised as any).error.message as string)
-              : 'Letter composition failed. Please try again in a few moments.';
-          
-          // Log the specific response error with context
-          this.logger.error(
-            `LETTER_COMPOSITION_RESPONSE_ERROR: ${message}`,
-            {
-              errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
-              userId,
-              jobId: baselineJob.jobId,
-              tone,
-              responseId: run.responseId,
-              eventType,
-              errorDetails: (normalised as any)?.error || 'No error details available',
-              timestamp: new Date().toISOString(),
-              service: 'writing-desk-letter-composition'
+              }
+              continue;
             }
-          );
-          
-          throw new Error(message);
+
+            if (eventType === 'response.output_text.done') {
+              const preview = this.extractLetterPreview(jsonBuffer);
+              if (preview !== null) {
+                const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
+                const previewDocument = this.buildLetterDocumentHtml({
+                  mpName: context.mpName,
+                  mpAddress1: context.mpAddress1,
+                  mpAddress2: context.mpAddress2,
+                  mpCity: context.mpCity,
+                  mpCounty: context.mpCounty,
+                  mpPostcode: context.mpPostcode,
+                  date: context.today,
+                  subjectLineHtml: subjectPreview,
+                  letterContentHtml: preview,
+                  senderName: context.senderName,
+                  senderAddress1: context.senderAddress1,
+                  senderAddress2: context.senderAddress2,
+                  senderAddress3: context.senderAddress3,
+                  senderCity: context.senderCity,
+                  senderCounty: context.senderCounty,
+                  senderPostcode: context.senderPostcode,
+                  senderTelephone: context.senderTelephone,
+                  references: this.extractReferencesFromJson(jsonBuffer),
+                });
+                send({ type: 'letter_delta', html: previewDocument });
+                await persistProgressIfNeeded(previewDocument);
+              }
+              continue;
+            }
+
+            if (eventType === 'response.completed') {
+              await captureResponseId((normalised as any)?.response ?? null);
+              const resolvedResponseId =
+                typeof (normalised as any)?.response?.id === 'string'
+                  ? (normalised as any).response.id
+                  : responseId;
+              const usage = (normalised as any)?.response?.usage ?? null;
+              this.logger.log(
+                `[writing-desk letter-usage] ${JSON.stringify({
+                  userId,
+                  jobId: baselineJob.jobId,
+                  model,
+                  tone,
+                  responseId: resolvedResponseId ?? responseId ?? run.responseId,
+                  usage,
+                })}`,
+              );
+              const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
+              const parsed = this.parseLetterResult(finalText);
+              const merged = this.mergeLetterResultWithContext(parsed, context);
+              const references = Array.isArray(merged.references)
+                ? merged.references.map((ref) => {
+                    try {
+                      return decodeURIComponent(ref);
+                    } catch {
+                      return ref;
+                    }
+                  })
+                : [];
+              const finalDocument = this.buildLetterDocumentHtml({
+                mpName: merged.mp_name,
+                mpAddress1: merged.mp_address_1,
+                mpAddress2: merged.mp_address_2,
+                mpCity: merged.mp_city,
+                mpCounty: merged.mp_county,
+                mpPostcode: merged.mp_postcode,
+                date: merged.date,
+                subjectLineHtml: merged.subject_line_html,
+                letterContentHtml: merged.letter_content,
+                senderName: merged.sender_name,
+                senderAddress1: merged.sender_address_1,
+                senderAddress2: merged.sender_address_2,
+                senderAddress3: merged.sender_address_3,
+                senderCity: merged.sender_city,
+                senderCounty: merged.sender_county,
+                senderPostcode: merged.sender_postcode,
+                senderTelephone: merged.sender_phone,
+                references,
+              });
+
+              const resolvedId = resolvedResponseId ?? responseId ?? null;
+              await this.persistLetterResult(userId, baselineJob, {
+                status: 'completed',
+                tone,
+                responseId: resolvedId,
+                content: finalDocument,
+                references,
+                json: finalText,
+              });
+
+              run.status = 'completed';
+              _settled = true;
+              responseId = resolvedId;
+              send({ type: 'letter_delta', html: finalDocument });
+              send({
+                type: 'complete',
+                letter: this.toLetterCompletePayload(
+                  { ...merged, letter_content: finalDocument },
+                  { responseId: resolvedId, tone, rawJson: finalText },
+                ),
+                remainingCredits,
+              });
+              await this.touchStreamingRun('letter', run.key, {
+                status: 'completed',
+                responseId: resolvedId ?? run.responseId ?? null,
+              });
+              this.handleOpenAiSuccess();
+              subject.complete();
+
+              if (quietPeriodTimer) {
+                clearTimeout(quietPeriodTimer);
+                quietPeriodTimer = null;
+              }
+              return;
+            }
+
+            if (eventType === 'response.error' || eventType === 'response.failed') {
+              const message =
+                typeof (normalised as any)?.error?.message === 'string'
+                  ? ((normalised as any).error.message as string)
+                  : 'Letter composition failed. Please try again in a few moments.';
+
+              this.logger.error(
+                `LETTER_COMPOSITION_RESPONSE_ERROR: ${message}`,
+                {
+                  errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
+                  userId,
+                  jobId: baselineJob.jobId,
+                  tone,
+                  responseId: run.responseId,
+                  eventType,
+                  errorDetails: (normalised as any)?.error || 'No error details available',
+                  timestamp: new Date().toISOString(),
+                  service: 'writing-desk-letter-composition'
+                }
+              );
+
+              throw new Error(message);
+            }
+          }
+
+          break;
+        } catch (error) {
+          streamError = error;
         }
+
+        const resumedStream = await attemptStreamResume(streamError);
+        if (!resumedStream) {
+          currentStream = null;
+          break;
+        }
+        currentStream = resumedStream;
+        registerController(currentStream);
       }
 
-      // Log unexpected end of letter composition
-      this.logger.error(
-        `LETTER_COMPOSITION_UNEXPECTED_END: Letter composition ended unexpectedly`,
-        {
-          errorType: 'LETTER_COMPOSITION_UNEXPECTED_END',
-          userId,
-          jobId: baselineJob.jobId,
-          tone,
-          responseId: run.responseId,
-          timestamp: new Date().toISOString(),
-          service: 'writing-desk-letter-composition',
-          runDuration: Date.now() - run.startedAt,
-          jsonBufferLength: jsonBuffer?.length || 0,
-          lastPersistedContentLength: lastPersistedContent?.length || 0
-        }
+      if (_settled) {
+        return;
+      }
+
+      if (!responseId) {
+        this.logger.error(
+          `LETTER_COMPOSITION_UNEXPECTED_END: Letter composition ended unexpectedly`,
+          {
+            errorType: 'LETTER_COMPOSITION_UNEXPECTED_END',
+            userId,
+            jobId: baselineJob.jobId,
+            tone,
+            responseId: run.responseId,
+            timestamp: new Date().toISOString(),
+            service: 'writing-desk-letter-composition',
+            runDuration: Date.now() - run.startedAt,
+            jsonBufferLength: jsonBuffer?.length || 0,
+            lastPersistedContentLength: lastPersistedContent?.length || 0
+          }
+        );
+
+        throw new ServiceUnavailableException('Letter composition ended unexpectedly. Please try again in a few moments.');
+      }
+
+      this.logger.warn(
+        `[writing-desk letter] stream ended early for response ${responseId}, polling for completion`,
       );
-      
-      throw new ServiceUnavailableException('Letter composition ended unexpectedly. Please try again in a few moments.');
+
+      notifyBackgroundPolling();
+
+      const finalResponse = await this.waitForBackgroundResponseCompletion(client, responseId, {
+        taskName: 'Letter composition',
+        timeoutMessage: 'Letter composition timed out. Please try again in a few moments.',
+        logContext: 'letter',
+      });
+
+      await captureResponseId(finalResponse);
+
+      const finalStatus = (finalResponse as any)?.status ?? 'completed';
+
+      if (finalStatus === 'completed') {
+        const finalText = this.extractFirstText(finalResponse) ?? jsonBuffer;
+        const parsed = this.parseLetterResult(finalText);
+        const merged = this.mergeLetterResultWithContext(parsed, context);
+        const references = Array.isArray(merged.references)
+          ? merged.references.map((ref) => {
+              try {
+                return decodeURIComponent(ref);
+              } catch {
+                return ref;
+              }
+            })
+          : [];
+        const finalDocument = this.buildLetterDocumentHtml({
+          mpName: merged.mp_name,
+          mpAddress1: merged.mp_address_1,
+          mpAddress2: merged.mp_address_2,
+          mpCity: merged.mp_city,
+          mpCounty: merged.mp_county,
+          mpPostcode: merged.mp_postcode,
+          date: merged.date,
+          subjectLineHtml: merged.subject_line_html,
+          letterContentHtml: merged.letter_content,
+          senderName: merged.sender_name,
+          senderAddress1: merged.sender_address_1,
+          senderAddress2: merged.sender_address_2,
+          senderAddress3: merged.sender_address_3,
+          senderCity: merged.sender_city,
+          senderCounty: merged.sender_county,
+          senderPostcode: merged.sender_postcode,
+          senderTelephone: merged.sender_phone,
+          references,
+        });
+
+        await this.persistLetterResult(userId, baselineJob, {
+          status: 'completed',
+          tone,
+          responseId,
+          content: finalDocument,
+          references,
+          json: finalText,
+        });
+
+        run.status = 'completed';
+        _settled = true;
+        send({ type: 'letter_delta', html: finalDocument });
+        send({
+          type: 'complete',
+          letter: this.toLetterCompletePayload(
+            { ...merged, letter_content: finalDocument },
+            { responseId, tone, rawJson: finalText },
+          ),
+          remainingCredits,
+        });
+        await this.touchStreamingRun('letter', run.key, {
+          status: 'completed',
+          responseId,
+        });
+        this.handleOpenAiSuccess();
+        subject.complete();
+      } else {
+        const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus, {
+          taskName: 'Letter composition',
+        });
+        await this.persistLetterState(userId, baselineJob, { status: 'error', tone, responseId });
+        run.status = 'error';
+        _settled = true;
+        send({ type: 'error', message, remainingCredits });
+        await this.touchStreamingRun('letter', run.key, {
+          status: 'error',
+          responseId,
+        });
+        subject.complete();
+      }
+
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
+
+        return;
     } catch (error) {
       if (deductionApplied) {
         await this.refundCredits(userId, LETTER_CREDIT_COST);
@@ -1639,7 +1932,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         quietPeriodTimer = null;
       }
     } finally {
-      if (controller) {
+      for (const controller of trackedControllers) {
         try {
           controller.abort();
         } catch {
@@ -2536,8 +2829,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     run.cleanupTimer = timer as NodeJS.Timeout;
   }
 
-  private async waitForBackgroundResponseCompletion(client: any, responseId: string) {
+  private async waitForBackgroundResponseCompletion(
+    client: any,
+    responseId: string,
+    options?: { taskName?: string; timeoutMessage?: string; logContext?: string },
+  ) {
     const startedAt = Date.now();
+    const timeoutMessage = options?.timeoutMessage ?? 'Deep research timed out. Please try again.';
+    const logContext = options?.logContext ?? 'research';
 
     while (true) {
       try {
@@ -2549,17 +2848,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
 
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
+          throw new ServiceUnavailableException(timeoutMessage);
         }
       } catch (error) {
         if (error instanceof Error && error.message.includes('Timed out waiting')) {
           throw error;
         }
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
+          throw new ServiceUnavailableException(timeoutMessage);
         }
         this.logger.warn(
-          `[writing-desk research] failed to retrieve background response ${responseId}: ${
+          `[writing-desk ${logContext}] failed to retrieve background response ${responseId}: ${
             (error as Error)?.message ?? error
           }`,
         );
@@ -2569,7 +2868,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
   }
 
-  private buildBackgroundFailureMessage(response: any, status: string | null | undefined): string {
+  private buildBackgroundFailureMessage(
+    response: any,
+    status: string | null | undefined,
+    options?: { taskName?: string },
+  ): string {
     const errorMessage = response?.error?.message;
     if (typeof errorMessage === 'string' && errorMessage.trim().length > 0) {
       return errorMessage.trim();
@@ -2580,14 +2883,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       return incompleteReason.trim();
     }
 
+    const taskName = options?.taskName ?? 'Deep research';
+
     switch (status) {
       case 'cancelled':
-        return 'Deep research was cancelled.';
+        return `${taskName} was cancelled.`;
       case 'failed':
       case 'incomplete':
-        return 'Deep research failed. Please try again in a few moments.';
+        return `${taskName} failed. Please try again in a few moments.`;
       default:
-        return 'Deep research finished without a usable result. Please try again in a few moments.';
+        return `${taskName} finished without a usable result. Please try again in a few moments.`;
     }
   }
 
