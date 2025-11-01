@@ -27,6 +27,28 @@ type ResponseLike = {
   text: () => Promise<string>;
 };
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+
+  public onmessage: ((event: MessageEvent<string>) => void) | null = null;
+
+  public onerror: ((event: Event) => void) | null = null;
+
+  public close = jest.fn();
+
+  constructor(public url: string, _?: EventSourceInit) {
+    MockEventSource.instances.push(this);
+  }
+
+  emit(data: unknown) {
+    this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent<string>);
+  }
+
+  static reset() {
+    MockEventSource.instances = [];
+  }
+}
+
 const mockUseActiveWritingDeskJob = useActiveWritingDeskJob as jest.MockedFunction<
   typeof useActiveWritingDeskJob
 >;
@@ -40,6 +62,7 @@ const createJsonResponse = (payload: any): ResponseLike => ({
 
 describe('WritingDeskClient', () => {
   const originalFetch = global.fetch;
+  const originalEventSource = window.EventSource;
   const saveJobMock = jest.fn();
   const clearJobMock = jest.fn();
   const refetchMock = jest.fn(async () => null);
@@ -82,8 +105,17 @@ describe('WritingDeskClient', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   };
 
-  const renderComponent = () => {
-    render(<WritingDeskClient />);
+  const renderComponent = async () => {
+    await act(async () => {
+      render(<WritingDeskClient />);
+    });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/auth/me',
+        expect.objectContaining({ cache: 'no-store' }),
+      ),
+    );
+    await screen.findByRole('status', { name: /You have .* credits available/i });
   };
 
   const answerInitialQuestions = async () => {
@@ -118,6 +150,7 @@ describe('WritingDeskClient', () => {
     mockCredits = 1;
     setupFetchMock();
     refetchMock.mockClear();
+    MockEventSource.reset();
     mockUseActiveWritingDeskJob.mockReturnValue({
       activeJob: null,
       isLoading: false,
@@ -134,8 +167,15 @@ describe('WritingDeskClient', () => {
     jest.clearAllMocks();
   });
 
+  beforeAll(() => {
+    window.EventSource = MockEventSource as unknown as typeof EventSource;
+    (global as any).EventSource = MockEventSource as unknown as typeof EventSource;
+  });
+
   afterAll(() => {
     global.fetch = originalFetch;
+    window.EventSource = originalEventSource;
+    (global as any).EventSource = originalEventSource;
   });
 
   it('persists summary state after submitting follow-up answers', async () => {
@@ -146,7 +186,7 @@ describe('WritingDeskClient', () => {
       remainingCredits: 0.8,
     });
 
-    renderComponent();
+    await renderComponent();
     await answerInitialQuestions();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
     await answerFollowUpQuestions(['First answer', 'Second answer']);
@@ -188,7 +228,7 @@ describe('WritingDeskClient', () => {
       remainingCredits: 0.7,
     });
 
-    renderComponent();
+    await renderComponent();
     await answerInitialQuestions();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
     await answerFollowUpQuestions(['First answer', 'Second answer']);
@@ -232,7 +272,7 @@ describe('WritingDeskClient', () => {
       remainingCredits: 0.05,
     });
 
-    renderComponent();
+    await renderComponent();
     await answerInitialQuestions();
     mockCredits = 0.05;
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
@@ -248,5 +288,70 @@ describe('WritingDeskClient', () => {
     expect(
       screen.getByText('You need at least 0.1 credits to generate new follow-up questions.'),
     ).toBeInTheDocument();
+  });
+
+  it('does not auto-resume deep research while background polling is active', async () => {
+    jest.useFakeTimers();
+    try {
+      followUpQueue.push({
+        followUpQuestions: ['Question one?', 'Question two?'],
+        notes: 'Helpful note',
+        responseId: 'resp-1',
+        remainingCredits: 0.8,
+      });
+
+      await renderComponent();
+      await answerInitialQuestions();
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)),
+      );
+      await answerFollowUpQuestions(['First answer', 'Second answer']);
+      await screen.findByText('Initial summary captured');
+
+      const researchButton = await screen.findByRole('button', { name: 'Start deep research' });
+      await act(async () => {
+        fireEvent.click(researchButton);
+      });
+
+      const confirmDialog = await screen.findByRole('dialog', { name: 'Start deep research?' });
+      expect(confirmDialog).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Yes, start research' }));
+      });
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/writing-desk/jobs/active/research/start', expect.any(Object)),
+      );
+
+      expect(MockEventSource.instances).toHaveLength(1);
+      const [eventSource] = MockEventSource.instances;
+
+      act(() => {
+        eventSource.emit({ type: 'status', status: 'background_polling' });
+      });
+
+      const handshakeCallsBefore = fetchMock.mock.calls.filter(([url]) => {
+        const requestUrl = typeof url === 'string' ? url : url.toString();
+        return requestUrl === '/api/writing-desk/jobs/active/research/start';
+      }).length;
+
+      await act(async () => {
+        jest.advanceTimersByTime(60000);
+      });
+
+      // Allow any pending microtasks triggered by the interval to settle
+      await Promise.resolve();
+
+      const handshakeCallsAfter = fetchMock.mock.calls.filter(([url]) => {
+        const requestUrl = typeof url === 'string' ? url : url.toString();
+        return requestUrl === '/api/writing-desk/jobs/active/research/start';
+      }).length;
+
+      expect(handshakeCallsAfter).toBe(handshakeCallsBefore);
+      expect(eventSource.close).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

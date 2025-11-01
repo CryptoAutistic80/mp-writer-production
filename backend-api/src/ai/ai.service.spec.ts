@@ -322,6 +322,300 @@ describe('AiService', () => {
     });
   });
 
+  describe('executeLetterRun', () => {
+    const createActiveJob = (
+      overrides: Partial<ActiveWritingDeskJobResource> = {},
+    ): ActiveWritingDeskJobResource => ({
+      jobId: 'job-123',
+      phase: 'generating',
+      stepIndex: 0,
+      followUpIndex: 0,
+      form: { issueDescription: 'Issue details' },
+      followUpQuestions: [],
+      followUpAnswers: [],
+      notes: null,
+      responseId: null,
+      researchContent: 'Research summary',
+      researchResponseId: null,
+      researchStatus: 'completed',
+      letterStatus: 'idle',
+      letterTone: null,
+      letterResponseId: null,
+      letterContent: null,
+      letterReferences: [],
+      letterJson: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...overrides,
+    });
+
+    const setupLetterService = (activeJob: ActiveWritingDeskJobResource, context: Record<string, any>) => {
+      const { service } = createService({
+        configGet: (key) => {
+          switch (key) {
+            case 'OPENAI_API_KEY':
+              return 'test-key';
+            case 'OPENAI_LETTER_MODEL':
+              return 'gpt-5';
+            case 'OPENAI_LETTER_VERBOSITY':
+              return 'medium';
+            case 'OPENAI_LETTER_REASONING_EFFORT':
+              return 'low';
+            default:
+              return null;
+          }
+        },
+        userCredits: {
+          deductFromMine: jest.fn().mockResolvedValue({ credits: 9.8 }),
+        },
+        writingDeskJobs: {
+          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
+          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        },
+      });
+
+      jest.spyOn(service as any, 'persistLetterState').mockResolvedValue(undefined);
+      const persistResultSpy = jest
+        .spyOn(service as any, 'persistLetterResult')
+        .mockResolvedValue(undefined);
+      const touchSpy = jest.spyOn(service as any, 'touchStreamingRun').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'clearStreamingRun').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'createStreamingHeartbeat').mockReturnValue(jest.fn());
+      jest.spyOn(service as any, 'scheduleLetterRunCleanup').mockImplementation(() => undefined);
+      jest.spyOn(service as any, 'delay').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'resolveLetterContext').mockResolvedValue(context);
+      jest.spyOn(service as any, 'buildLetterPrompt').mockReturnValue('prompt');
+      jest.spyOn(service as any, 'buildLetterSystemPrompt').mockReturnValue('system');
+      jest.spyOn(service as any, 'extractLetterPreview').mockReturnValue(null);
+      jest.spyOn(service as any, 'extractSubjectLinePreview').mockReturnValue(null);
+      jest.spyOn(service as any, 'extractReferencesFromJson').mockReturnValue([]);
+      jest.spyOn(service as any, 'createStreamWithTimeout').mockImplementation((stream: any) => stream);
+
+      return { service, persistResultSpy, touchSpy };
+    };
+
+    const createContext = () => ({
+      mpName: 'Canonical MP',
+      mpAddress1: 'Line 1',
+      mpAddress2: 'Line 2',
+      mpCity: 'Town',
+      mpCounty: 'County',
+      mpPostcode: 'AB1 2CD',
+      constituency: 'Somewhere',
+      senderName: 'Constituent',
+      senderAddress1: 'Sender Line 1',
+      senderAddress2: 'Sender Line 2',
+      senderAddress3: 'Sender Line 3',
+      senderCity: 'Sender Town',
+      senderCounty: 'Sender County',
+      senderPostcode: 'ZX9 9XZ',
+      senderTelephone: '020 7946 0123',
+      today: '2025-01-15',
+    });
+
+    it('retries recoverable transport errors when composing letters', async () => {
+      const activeJob = createActiveJob();
+      const context = createContext();
+      const { service, persistResultSpy, touchSpy } = setupLetterService(activeJob, context);
+
+      const parsedResult = {
+        mp_name: 'Canonical MP',
+        mp_address_1: 'Line 1',
+        mp_address_2: 'Line 2',
+        mp_city: 'Town',
+        mp_county: 'County',
+        mp_postcode: 'AB1 2CD',
+        date: '2025-01-15',
+        subject_line_html: '<p>Subject</p>',
+        letter_content: '<p>Letter</p>',
+        sender_name: 'Constituent',
+        sender_address_1: 'Sender Line 1',
+        sender_address_2: 'Sender Line 2',
+        sender_address_3: 'Sender Line 3',
+        sender_city: 'Sender Town',
+        sender_county: 'Sender County',
+        sender_postcode: 'ZX9 9XZ',
+        sender_phone: '020 7946 0123',
+        references: ['https://example.com'],
+      };
+
+      jest.spyOn(service as any, 'parseLetterResult').mockReturnValue(parsedResult);
+      jest.spyOn(service as any, 'mergeLetterResultWithContext').mockReturnValue(parsedResult);
+      jest.spyOn(service as any, 'buildLetterDocumentHtml').mockReturnValue('LETTER_HTML');
+      jest.spyOn(service as any, 'toLetterCompletePayload').mockReturnValue({});
+
+      const subject = { next: jest.fn(), complete: jest.fn() };
+      const run: any = {
+        key: 'user-1::job-123',
+        userId: 'user-1',
+        jobId: activeJob.jobId,
+        tone: 'formal',
+        subject,
+        status: 'running',
+        startedAt: Date.now(),
+        cleanupTimer: null,
+        promise: null,
+        responseId: null,
+        remainingCredits: null,
+      };
+
+      const firstStream = (async function* () {
+        yield { type: 'response.created', id: 'evt-1', sequence_number: 1, response: { id: 'resp-123' } };
+        yield { type: 'response.output_text.delta', id: 'evt-2', sequence_number: 2, delta: 'partial' };
+        throw new Error('socket hang up');
+      })();
+      (firstStream as any).controller = { abort: jest.fn() };
+
+      const resumedStream = (async function* () {
+        yield { type: 'response.in_progress', id: 'evt-3', sequence_number: 3 };
+        yield {
+          type: 'response.completed',
+          id: 'evt-4',
+          sequence_number: 4,
+          response: { id: 'resp-123', output_text: 'final-json', usage: { total_tokens: 10 } },
+        };
+      })();
+      (resumedStream as any).controller = { abort: jest.fn() };
+
+      const streamMock = jest
+        .fn()
+        .mockImplementationOnce(() => firstStream)
+        .mockImplementationOnce(() => resumedStream);
+
+      const client = {
+        responses: {
+          stream: streamMock,
+        },
+      };
+
+      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+
+      await (service as any).executeLetterRun({
+        run,
+        userId: 'user-1',
+        baselineJob: activeJob,
+        subject,
+        researchContent: 'Research summary',
+      });
+
+      expect(streamMock).toHaveBeenCalledTimes(2);
+      expect(streamMock).toHaveBeenCalledWith(
+        expect.objectContaining({ response_id: 'resp-123', after: 'evt-2', event_id: 'evt-2' }),
+      );
+      expect(persistResultSpy).toHaveBeenCalledWith(
+        'user-1',
+        activeJob,
+        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
+      );
+      expect(touchSpy).toHaveBeenCalledWith(
+        'letter',
+        run.key,
+        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
+      );
+      expect(subject.complete).toHaveBeenCalled();
+      expect(run.status).toBe('completed');
+    });
+
+    it('falls back to background polling after exhausting resume attempts', async () => {
+      const activeJob = createActiveJob();
+      const context = createContext();
+      const { service, persistResultSpy, touchSpy } = setupLetterService(activeJob, context);
+
+      const parsedResult = {
+        mp_name: 'Canonical MP',
+        mp_address_1: 'Line 1',
+        mp_address_2: 'Line 2',
+        mp_city: 'Town',
+        mp_county: 'County',
+        mp_postcode: 'AB1 2CD',
+        date: '2025-01-15',
+        subject_line_html: '<p>Subject</p>',
+        letter_content: '<p>Letter</p>',
+        sender_name: 'Constituent',
+        sender_address_1: 'Sender Line 1',
+        sender_address_2: 'Sender Line 2',
+        sender_address_3: 'Sender Line 3',
+        sender_city: 'Sender Town',
+        sender_county: 'Sender County',
+        sender_postcode: 'ZX9 9XZ',
+        sender_phone: '020 7946 0123',
+        references: ['https://example.com'],
+      };
+
+      jest.spyOn(service as any, 'parseLetterResult').mockReturnValue(parsedResult);
+      jest.spyOn(service as any, 'mergeLetterResultWithContext').mockReturnValue(parsedResult);
+      jest.spyOn(service as any, 'buildLetterDocumentHtml').mockReturnValue('LETTER_HTML');
+      jest.spyOn(service as any, 'toLetterCompletePayload').mockReturnValue({});
+
+      const subject = { next: jest.fn(), complete: jest.fn() };
+      const run: any = {
+        key: 'user-1::job-123',
+        userId: 'user-1',
+        jobId: activeJob.jobId,
+        tone: 'formal',
+        subject,
+        status: 'running',
+        startedAt: Date.now(),
+        cleanupTimer: null,
+        promise: null,
+        responseId: null,
+        remainingCredits: null,
+      };
+
+      const firstStream = (async function* () {
+        yield { type: 'response.created', id: 'evt-1', sequence_number: 1, response: { id: 'resp-123' } };
+        yield { type: 'response.output_text.delta', id: 'evt-2', sequence_number: 2, delta: 'partial' };
+        throw new Error('socket hang up');
+      })();
+      (firstStream as any).controller = { abort: jest.fn() };
+
+      const streamMock = jest.fn().mockImplementationOnce(() => firstStream).mockImplementation(() => {
+        throw new Error('fetch failed');
+      });
+
+      const client = {
+        responses: {
+          stream: streamMock,
+        },
+      };
+
+      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+      const waitSpy = jest
+        .spyOn(service as any, 'waitForBackgroundResponseCompletion')
+        .mockResolvedValue({ status: 'completed', output_text: 'final-json', id: 'resp-123' });
+
+      await (service as any).executeLetterRun({
+        run,
+        userId: 'user-1',
+        baselineJob: activeJob,
+        subject,
+        researchContent: 'Research summary',
+      });
+
+      expect(streamMock).toHaveBeenCalledTimes(11);
+      expect(waitSpy).toHaveBeenCalledWith(
+        client,
+        'resp-123',
+        expect.objectContaining({ taskName: 'Letter composition', logContext: 'letter' }),
+      );
+      expect(
+        subject.next.mock.calls.some(([payload]) => payload.type === 'status' && payload.status === 'background_polling'),
+      ).toBe(true);
+      expect(persistResultSpy).toHaveBeenCalledWith(
+        'user-1',
+        activeJob,
+        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
+      );
+      expect(touchSpy).toHaveBeenCalledWith(
+        'letter',
+        run.key,
+        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
+      );
+      expect(subject.complete).toHaveBeenCalled();
+      expect(run.status).toBe('completed');
+    });
+  });
+
   describe('error logging', () => {
     const createActiveJob = (overrides: Partial<ActiveWritingDeskJobResource> = {}): ActiveWritingDeskJobResource => ({
       jobId: 'job-123',
@@ -545,6 +839,229 @@ describe('AiService', () => {
 
       expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-2', 0.2);
       expect(dependencies.streaming.removeRun).toHaveBeenCalledWith('letter', staleRun.runKey);
+    });
+  });
+
+  describe('executeDeepResearchRun', () => {
+    const createActiveJob = (
+      overrides: Partial<ActiveWritingDeskJobResource> = {},
+    ): ActiveWritingDeskJobResource => ({
+      jobId: 'job-123',
+      phase: 'researching',
+      stepIndex: 0,
+      followUpIndex: 0,
+      form: { issueDescription: 'Issue details' },
+      followUpQuestions: [],
+      followUpAnswers: [],
+      notes: null,
+      responseId: null,
+      researchContent: null,
+      researchResponseId: null,
+      researchStatus: 'idle',
+      letterStatus: 'idle',
+      letterTone: null,
+      letterResponseId: null,
+      letterContent: null,
+      letterReferences: [],
+      letterJson: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...overrides,
+    });
+
+    const setupDeepResearchService = (activeJob: ActiveWritingDeskJobResource) => {
+      const { service, dependencies } = createService({
+        configGet: (key) => {
+          switch (key) {
+            case 'OPENAI_API_KEY':
+              return 'test-key';
+            case 'OPENAI_DEEP_RESEARCH_MODEL':
+              return 'gpt-5-mini';
+            default:
+              return null;
+          }
+        },
+        userCredits: {
+          deductFromMine: jest.fn().mockResolvedValue({ credits: 9 }),
+        },
+        writingDeskJobs: {
+          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
+          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        },
+      });
+
+      jest.spyOn(service as any, 'persistDeepResearchStatus').mockResolvedValue(undefined);
+      const persistResultSpy = jest
+        .spyOn(service as any, 'persistDeepResearchResult')
+        .mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'touchStreamingRun').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'clearStreamingRun').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'createStreamingHeartbeat').mockReturnValue(jest.fn());
+      jest.spyOn(service as any, 'resolveUserMpName').mockResolvedValue('Test MP');
+      jest.spyOn(service as any, 'buildDeepResearchPrompt').mockReturnValue('prompt');
+      jest
+        .spyOn(service as any, 'buildDeepResearchRequestExtras')
+        .mockReturnValue({ tools: [] });
+      jest.spyOn(service as any, 'scheduleRunCleanup').mockImplementation(() => undefined);
+      jest.spyOn(service as any, 'delay').mockResolvedValue(undefined);
+
+      return { service, dependencies, persistResultSpy };
+    };
+
+    it('reuses the last cursor when resuming a deep research stream', async () => {
+      const activeJob = createActiveJob();
+      const { service, persistResultSpy } = setupDeepResearchService(activeJob);
+
+      const subject = { next: jest.fn(), complete: jest.fn() };
+      const run: any = {
+        key: 'user-1::job-123',
+        userId: 'user-1',
+        jobId: activeJob.jobId,
+        subject,
+        status: 'running',
+        startedAt: Date.now(),
+        cleanupTimer: null,
+        promise: null,
+        responseId: null,
+      };
+
+      const firstStream = (async function* () {
+        yield {
+          type: 'response.in_progress',
+          id: 'evt-1',
+          sequence_number: 1,
+          response: { id: 'resp-123' },
+        };
+        yield {
+          type: 'response.output_text.delta',
+          id: 'evt-2',
+          sequence_number: 2,
+          delta: 'Hello',
+        };
+        throw new Error('socket hang up');
+      })();
+      (firstStream as any).controller = { abort: jest.fn() };
+
+      const resumedStream = (async function* () {
+        yield { type: 'response.in_progress', id: 'evt-3', sequence_number: 3 };
+        yield {
+          type: 'response.completed',
+          id: 'evt-4',
+          sequence_number: 4,
+          response: {
+            id: 'resp-123',
+            output_text: 'Hello world',
+          },
+        };
+      })();
+      (resumedStream as any).controller = { abort: jest.fn() };
+
+      const streamMock = jest.fn().mockReturnValue(resumedStream);
+      const client = {
+        responses: {
+          create: jest.fn().mockResolvedValue(firstStream),
+          stream: streamMock,
+        },
+      };
+
+      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+      await (service as any).executeDeepResearchRun({
+        run,
+        userId: 'user-1',
+        baselineJob: activeJob,
+        subject,
+      });
+
+      expect(streamMock).toHaveBeenCalledTimes(1);
+      expect(streamMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_id: 'resp-123',
+          after: 'evt-2',
+          event_id: 'evt-2',
+        }),
+      );
+      expect(subject.complete).toHaveBeenCalled();
+      expect(run.status).toBe('completed');
+      expect(persistResultSpy).toHaveBeenCalledWith(
+        'user-1',
+        activeJob,
+        expect.objectContaining({ content: 'Hello world', responseId: 'resp-123', status: 'completed' }),
+      );
+    });
+
+    it('falls back to background polling after exhausting resume attempts', async () => {
+      const activeJob = createActiveJob();
+      const { service } = setupDeepResearchService(activeJob);
+
+      const subject = { next: jest.fn(), complete: jest.fn() };
+      const run: any = {
+        key: 'user-1::job-123',
+        userId: 'user-1',
+        jobId: activeJob.jobId,
+        subject,
+        status: 'running',
+        startedAt: Date.now(),
+        cleanupTimer: null,
+        promise: null,
+        responseId: null,
+      };
+
+      const firstStreamError = new Error('socket hang up');
+      const firstStream = (async function* () {
+        yield {
+          type: 'response.in_progress',
+          id: 'evt-1',
+          sequence_number: 1,
+          response: { id: 'resp-123' },
+        };
+        yield {
+          type: 'response.output_text.delta',
+          id: 'evt-2',
+          sequence_number: 2,
+          delta: 'Hello',
+        };
+        throw firstStreamError;
+      })();
+      (firstStream as any).controller = { abort: jest.fn() };
+
+      const streamMock = jest.fn().mockImplementation(() => {
+        throw new Error('fetch failed');
+      });
+      const client = {
+        responses: {
+          create: jest.fn().mockResolvedValue(firstStream),
+          stream: streamMock,
+          retrieve: jest.fn(),
+        },
+      };
+
+      const waitSpy = jest
+        .spyOn(service as any, 'waitForBackgroundResponseCompletion')
+        .mockResolvedValue({ status: 'completed', output_text: 'Hello world' });
+
+      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+
+      await (service as any).executeDeepResearchRun({
+        run,
+        userId: 'user-1',
+        baselineJob: activeJob,
+        subject,
+      });
+
+      expect(streamMock).toHaveBeenCalledTimes(10);
+      expect(streamMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          response_id: 'resp-123',
+          after: 'evt-2',
+          event_id: 'evt-2',
+        }),
+      );
+      expect(waitSpy).toHaveBeenCalledWith(client, 'resp-123');
+      expect(
+        subject.next.mock.calls.some(([payload]) => payload.type === 'status' && payload.status === 'background_polling'),
+      ).toBe(true);
+      expect(subject.complete).toHaveBeenCalled();
+      expect(run.status).toBe('completed');
     });
   });
 

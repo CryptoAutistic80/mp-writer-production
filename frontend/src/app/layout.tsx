@@ -2,6 +2,7 @@ import './global.css';
 import SiteHeader from '../components/SiteHeader';
 import SiteFooter from '../components/SiteFooter';
 import AnimatedBackground from '../components/AnimatedBackground';
+import CookieConsent from '../components/CookieConsent';
 import Providers from './providers';
 
 export const metadata = {
@@ -40,6 +41,7 @@ export default function RootLayout({
             {children}
             <SiteFooter />
           </div>
+          <CookieConsent />
         </Providers>
       </body>
     </html>

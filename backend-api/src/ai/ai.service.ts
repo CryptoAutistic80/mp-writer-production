@@ -78,10 +78,11 @@ type ResponseStreamLike = AsyncIterable<ResponseStreamEvent> & {
 const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
 const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
 const BACKGROUND_POLL_INTERVAL_MS = 2000;
-const BACKGROUND_POLL_TIMEOUT_MS = 20 * 60 * 1000;
+const BACKGROUND_POLL_TIMEOUT_MS = 40 * 60 * 1000;
 const RESEARCH_MAX_RESUME_ATTEMPTS = 10;
 const LETTER_RUN_BUFFER_SIZE = 2000;
 const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
+const LETTER_MAX_RESUME_ATTEMPTS = 10;
 const STREAMING_RUN_ORPHAN_THRESHOLD_MS = 2 * 60 * 1000;
 // Stream inactivity timeouts - max time between events before aborting
 const LETTER_STREAM_INACTIVITY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
@@ -482,8 +483,8 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // Every 10 minutes
     // Use longer threshold for letter runs (typically complete in < 5 min)
     const LETTER_STALE_THRESHOLD_MS = LETTER_RUN_TTL_MS + (2 * 60 * 1000); // 7 minutes
-    // Use much longer threshold for research runs (can take up to 20 min)
-    const RESEARCH_STALE_THRESHOLD_MS = BACKGROUND_POLL_TIMEOUT_MS + (5 * 60 * 1000); // 25 minutes
+    // Use much longer threshold for research runs (can take up to 40 min)
+    const RESEARCH_STALE_THRESHOLD_MS = BACKGROUND_POLL_TIMEOUT_MS + (5 * 60 * 1000); // 45 minutes
 
     this.cleanupSweepInterval = setInterval(() => {
       const now = Date.now();
@@ -505,7 +506,7 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
         }
       }
 
-      // Sweep deep research runs - longer threshold since they can run 20+ minutes
+      // Sweep deep research runs - longer threshold since they can run 30+ minutes
       for (const [key, run] of this.deepResearchRuns.entries()) {
         const age = now - run.startedAt;
         const isStale = age > RESEARCH_STALE_THRESHOLD_MS;
@@ -601,10 +602,14 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
       const elapsed = Date.now() - lastEventTime;
       if (elapsed >= timeoutMs && !timeoutTriggered) {
         timeoutTriggered = true;
+        timedOut = true;
         clearInterval(checkInterval);
         onTimeout();
       }
     }, 1000); // Check every second
+    if (typeof (checkInterval as any)?.unref === 'function') {
+      (checkInterval as any).unref();
+    }
 
     try {
       for await (const event of stream) {
@@ -626,6 +631,90 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     } finally {
       clearInterval(checkInterval);
     }
+  }
+
+  private isRecoverableTransportError(error: unknown): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const candidate = error as { message?: unknown; code?: unknown; name?: unknown };
+
+    if (candidate instanceof Error) {
+      if (candidate.name === 'AbortError' || candidate.name === 'TimeoutError') {
+        return true;
+      }
+    }
+
+    const message = typeof candidate?.message === 'string' ? candidate.message.toLowerCase() : '';
+    const code = typeof candidate?.code === 'string' ? candidate.code.toUpperCase() : '';
+
+    if (code) {
+      const recoverableCodes = ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND'];
+      if (recoverableCodes.includes(code)) {
+        return true;
+      }
+    }
+
+    if (message) {
+      const recoverablePhrases = [
+        'premature close',
+        'socket hang up',
+        'fetch failed',
+        'connection reset',
+        'connection closed',
+        'reset by peer',
+        'connection aborted',
+        'request aborted',
+        'http/2 stream closed',
+        'underlying socket was closed',
+        'server hung up',
+        'timed out',
+      ];
+      if (recoverablePhrases.some((phrase) => message.includes(phrase))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private isOpenAiResponseMissingError(error: unknown, responseId?: string | null): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const candidate = error as { status?: unknown; message?: unknown; error?: { message?: unknown } };
+    const status =
+      typeof candidate?.status === 'number'
+        ? candidate.status
+        : typeof candidate?.status === 'string'
+          ? Number(candidate.status)
+          : null;
+    const message =
+      typeof candidate?.message === 'string'
+        ? candidate.message
+        : typeof candidate?.error?.message === 'string'
+          ? candidate.error.message
+          : '';
+
+    if (status !== 404) {
+      return false;
+    }
+
+    if (!message) {
+      return false;
+    }
+
+    if (!message.toLowerCase().includes('response') || !message.toLowerCase().includes('not found')) {
+      return false;
+    }
+
+    if (responseId && !message.includes(responseId)) {
+      return false;
+    }
+
+    return true;
   }
 
   private resolveTranscriptionModel(modelFromRequest?: TranscriptionModel): TranscriptionModel {
@@ -706,7 +795,7 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
 MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.
 
 From the provided description, identify the most important gaps that stop you fully understanding the situation and what outcome the constituent wants.
-Ask at most five concise follow-up questions. If everything is already clear, return an empty list.
+Provide THREE concise follow-up questions as a baseline and never return fewer than three. Use each question to surface a distinct, high-importance gap. Only add a fourth or fifth if they reveal genuinely critical context that the first three cannot cover. Redundancy is worse than leaving a minor detail for later.
 Prioritise clarifying the specific problem, how it affects people, what has already happened, and what the constituent hopes their MP will achieve.
 Do NOT ask for documents, permissions, names, addresses, or personal details. Only ask about the issue itself.`;
 
@@ -735,7 +824,8 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               properties: {
                 questions: {
                   type: 'array',
-                  description: 'Up to five clarifying follow-up questions for the user.',
+                  description: 'Between three and five clarifying follow-up questions for the user.',
+                  minItems: 3,
                   maxItems: 5,
                   items: {
                     type: 'string',
@@ -1088,12 +1178,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const tone = run.tone;
     let deductionApplied = false;
     let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
-    let controller: { abort: () => void } | null = null;
     let jsonBuffer = '';
     let quietPeriodTimer: NodeJS.Timeout | null = null;
     let _settled = false;
     let lastPersistedContent: string | null = null;
     let lastPersistedAt = 0;
+    let responseId: string | null = resumeFromState?.responseId ?? run.responseId ?? null;
+    const trackedControllers: Array<{ abort: () => void }> = [];
 
     const send = (payload: LetterStreamPayload) => {
       subject.next(payload);
@@ -1122,6 +1213,36 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           );
         }
       }
+    };
+
+    const captureResponseId = async (candidate: unknown) => {
+      if (!candidate || typeof candidate !== 'object') {
+        return;
+      }
+
+      const id = (candidate as any)?.id;
+      if (typeof id !== 'string') {
+        return;
+      }
+
+      const trimmed = id.trim();
+      if (!trimmed || trimmed === responseId) {
+        return;
+      }
+
+      responseId = trimmed;
+      run.responseId = trimmed;
+      heartbeat({ responseId: trimmed });
+
+      try {
+        await this.persistLetterState(userId, baselineJob, { responseId: trimmed, tone });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to persist letter response id for user ${userId}: ${(error as Error)?.message ?? error}`,
+        );
+      }
+
+      await this.touchStreamingRun('letter', run.key, { responseId: trimmed });
     };
 
     try {
@@ -1221,42 +1342,205 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       const client = await this.getOpenAiClient(apiKey);
-      const stream = resumeFromState?.responseId
-        ? (client.responses.stream({
-            response_id: resumeFromState.responseId,
-          }) as ResponseStreamLike)
-        : (client.responses.stream({
-            model,
-            input: [
-              { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
-              { role: 'user', content: [{ type: 'input_text', text: prompt }] },
-            ],
-            text: {
-              format: {
-                type: 'json_schema',
-                name: 'mp_letter',
-                strict: true,
-                schema: this.buildLetterResponseSchema(context),
-              },
-              verbosity,
+      const createLetterStreamFromPrompt = () =>
+        client.responses.stream({
+          model,
+          input: [
+            { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
+            { role: 'user', content: [{ type: 'input_text', text: prompt }] },
+          ],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'mp_letter',
+              strict: true,
+              schema: this.buildLetterResponseSchema(context),
             },
-            reasoning: {
-              effort: reasoningEffort,
-              summary: 'auto',
-            },
-            tools: [],
-            store: true,
-            include: ['reasoning.encrypted_content'],
-          }) as ResponseStreamLike);
+            verbosity,
+          },
+          reasoning: {
+            effort: reasoningEffort,
+            summary: 'auto',
+          },
+          tools: [],
+          store: true,
+          include: ['reasoning.encrypted_content'],
+        }) as ResponseStreamLike;
 
-      controller = stream.controller ?? null;
+      let openAiStream: ResponseStreamLike | null = null;
+      let currentStream: ResponseStreamLike | null = null;
+      let lastSequenceNumber: number | null = null;
+      let lastCursor: string | null = null;
+      let resumeAttempts = 0;
+      let backgroundPollingNotified = false;
+      if (responseId) {
+        run.responseId = responseId;
+      }
+
+      const registerController = (streamCandidate: ResponseStreamLike | null) => {
+        if (!streamCandidate) {
+          return;
+        }
+        const controllerCandidate = (streamCandidate as any)?.controller;
+        if (controllerCandidate && typeof controllerCandidate.abort === 'function') {
+          trackedControllers.push(controllerCandidate);
+        }
+      };
+
+      const resumeStatusMessages = [
+        'Reconnecting to the drafting desk…',
+        'Trying to resume the live letter feed…',
+        'Dusting off the backup quill…',
+        'Re-engaging the Westminster wordsmith…',
+        'Coaxing the letter stream back online…',
+        'Asking the parliamentary scribe to continue…',
+      ];
+
+      const notifyBackgroundPolling = () => {
+        if (!backgroundPollingNotified) {
+          send({ type: 'status', status: 'background_polling', remainingCredits });
+          send({
+            type: 'event',
+            event: {
+              type: 'quiet_period',
+              message: 'The live stream hit a snag; finishing your letter in the background…',
+            },
+          });
+          backgroundPollingNotified = true;
+        }
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
+      };
+
+      const attemptStreamResume = async (
+        initialError: unknown,
+      ): Promise<ResponseStreamLike | null> => {
+        let latestError: unknown = initialError;
+
+        while (true) {
+          if (this.isOpenAiResponseMissingError(latestError, responseId)) {
+            this.logger.warn(
+              `[writing-desk letter] response ${responseId ?? 'unknown'} missing; starting a new streamed response`,
+            );
+            send({
+              type: 'event',
+              event: {
+                type: 'resume_attempt',
+                message: 'Recreating your live draft after the previous stream expired…',
+                attempt: resumeAttempts + 1,
+              },
+            });
+            responseId = null;
+            run.responseId = null;
+            lastSequenceNumber = null;
+            lastCursor = null;
+            resumeAttempts = 0;
+            backgroundPollingNotified = false;
+            return createLetterStreamFromPrompt();
+          }
+
+          if (!this.isRecoverableTransportError(latestError)) {
+            throw latestError instanceof Error
+              ? latestError
+              : new Error('Letter composition stream failed with an unknown error');
+          }
+
+          if (!responseId) {
+            this.logger.warn(
+              `[writing-desk letter] transport failure before response id available: ${
+                latestError instanceof Error ? latestError.message : 'unknown error'
+              }`,
+            );
+            return null;
+          }
+
+          if (resumeAttempts >= LETTER_MAX_RESUME_ATTEMPTS) {
+            this.logger.warn(
+              `[writing-desk letter] resume attempt limit reached for response ${responseId}, switching to background polling`,
+            );
+            notifyBackgroundPolling();
+            return null;
+          }
+
+          resumeAttempts += 1;
+          const resumeCursor = lastCursor ?? (lastSequenceNumber != null ? String(lastSequenceNumber) : null);
+          const resumeCursorLog = resumeCursor ?? (lastSequenceNumber ?? 'start');
+          this.logger.warn(
+            `[writing-desk letter] resume attempt ${resumeAttempts} for response ${responseId} starting after ${resumeCursorLog}`,
+          );
+
+          const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
+          send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
+
+          if (resumeAttempts > 1) {
+            const backoffMs = Math.min(1000 * 2 ** (resumeAttempts - 1), 5000);
+            const jitter = Math.floor(Math.random() * 300);
+            await this.delay(backoffMs + jitter);
+          }
+
+          const resumeParams: { response_id: string; after?: string; event_id?: string } = {
+            response_id: responseId,
+          };
+
+          if (resumeCursor) {
+            resumeParams.after = resumeCursor;
+            resumeParams.event_id = resumeCursor;
+          }
+
+          try {
+            const resumed = client.responses.stream(resumeParams) as ResponseStreamLike;
+            this.logger.log(
+              `[writing-desk letter] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
+            );
+            return resumed;
+          } catch (resumeError) {
+            if (this.isOpenAiResponseMissingError(resumeError, responseId)) {
+              this.logger.warn(
+                `[writing-desk letter] response ${responseId ?? 'unknown'} missing on resume; starting a fresh letter stream`,
+              );
+              send({
+                type: 'event',
+                event: {
+                  type: 'resume_attempt',
+                  message: 'The live draft expired, starting a fresh stream with your latest details…',
+                  attempt: resumeAttempts,
+                },
+              });
+              responseId = null;
+              run.responseId = null;
+              lastSequenceNumber = null;
+              lastCursor = null;
+              resumeAttempts = 0;
+              backgroundPollingNotified = false;
+              return createLetterStreamFromPrompt();
+            }
+            this.logger.error(
+              `[writing-desk letter] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
+                resumeError instanceof Error ? resumeError.message : 'unknown error'
+              }`,
+            );
+            latestError = resumeError;
+            continue;
+          }
+        }
+      };
+
+      openAiStream = resumeFromState?.responseId
+        ? (client.responses.stream({ response_id: resumeFromState.responseId }) as ResponseStreamLike)
+        : createLetterStreamFromPrompt();
+
+      currentStream = openAiStream;
+      registerController(currentStream);
 
       // Set up periodic status updates during quiet periods
       const startQuietPeriodTimer = () => {
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
         }
-        quietPeriodTimer = setTimeout(() => {
+        const timer = setTimeout(() => {
           const quietStatusMessages = [
             'Drafting a persuasive opening…',
             'Cross-referencing your evidence with parliamentary procedures…',
@@ -1267,232 +1551,393 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             'Tailoring the content to your MP\'s interests…',
             'Checking that the letter flows naturally…',
             'Fine-tuning the closing paragraph…',
-            'Ensuring all the key points are covered…'
+            'Ensuring all the key points are covered…',
           ];
           const randomMessage = quietStatusMessages[Math.floor(Math.random() * quietStatusMessages.length)];
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
+          quietPeriodTimer = null;
           startQuietPeriodTimer(); // Reset the timer
         }, 5000); // 5 seconds of inactivity
+        if (typeof (timer as any)?.unref === 'function') {
+          (timer as any).unref();
+        }
+        quietPeriodTimer = timer as NodeJS.Timeout;
       };
 
       startQuietPeriodTimer();
 
-      // Wrap stream with inactivity timeout
-      const timeoutWrappedStream = this.createStreamWithTimeout(
-        stream,
-        LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
-        () => {
-          this.logger.warn(`[letter] Stream inactivity timeout for job ${baselineJob.jobId}`);
-          controller?.abort();
-        }
-      );
+      while (currentStream) {
+        let streamError: unknown = null;
+        const streamForIteration = currentStream;
 
-      for await (const event of timeoutWrappedStream) {
-        // Reset quiet period timer on any activity
+        try {
+          const timeoutWrappedStream = this.createStreamWithTimeout(
+            streamForIteration,
+            LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
+            () => {
+              this.logger.warn(`[letter] Stream inactivity timeout for job ${baselineJob.jobId}`);
+              const ctrl = (streamForIteration as any)?.controller;
+              if (ctrl && typeof ctrl.abort === 'function') {
+                ctrl.abort();
+              }
+            },
+          );
+
+          for await (const event of timeoutWrappedStream) {
+            if (quietPeriodTimer) {
+              clearTimeout(quietPeriodTimer);
+              quietPeriodTimer = null;
+            }
+            startQuietPeriodTimer();
+
+            const sequenceNumber = (event as any)?.sequence_number;
+            if (Number.isFinite(sequenceNumber)) {
+              lastSequenceNumber = Number(sequenceNumber);
+            }
+
+            const eventCursor =
+              typeof (event as any)?.id === 'string'
+                ? (event as any).id
+                : typeof (event as any)?.cursor === 'string'
+                  ? (event as any).cursor
+                  : null;
+            if (eventCursor) {
+              lastCursor = eventCursor;
+            }
+
+            if (typeof (event as any)?.response_id === 'string') {
+              await captureResponseId({ id: (event as any).response_id });
+            }
+
+            if ((event as any)?.response) {
+              await captureResponseId((event as any).response);
+            }
+
+            const normalised = this.normaliseStreamEvent(event);
+            const eventType = typeof normalised.type === 'string' ? normalised.type : null;
+
+            if (eventType?.startsWith('response.reasoning')) {
+              send({ type: 'event', event: normalised });
+              continue;
+            }
+
+            if (eventType === 'response.output_text.delta') {
+              const delta = this.extractOutputTextDelta(normalised);
+              if (delta) {
+                jsonBuffer += delta;
+                send({ type: 'delta', text: delta });
+                const preview = this.extractLetterPreview(jsonBuffer);
+                if (preview !== null) {
+                  const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
+                  const previewDocument = this.buildLetterDocumentHtml({
+                    mpName: context.mpName,
+                    mpAddress1: context.mpAddress1,
+                    mpAddress2: context.mpAddress2,
+                    mpCity: context.mpCity,
+                    mpCounty: context.mpCounty,
+                    mpPostcode: context.mpPostcode,
+                    date: context.today,
+                    subjectLineHtml: subjectPreview,
+                    letterContentHtml: preview,
+                    senderName: context.senderName,
+                    senderAddress1: context.senderAddress1,
+                    senderAddress2: context.senderAddress2,
+                    senderAddress3: context.senderAddress3,
+                    senderCity: context.senderCity,
+                    senderCounty: context.senderCounty,
+                    senderPostcode: context.senderPostcode,
+                    senderTelephone: context.senderTelephone,
+                    references: this.extractReferencesFromJson(jsonBuffer),
+                  });
+                  send({ type: 'letter_delta', html: previewDocument });
+                  await persistProgressIfNeeded(previewDocument);
+                }
+              }
+              continue;
+            }
+
+            if (eventType === 'response.output_text.done') {
+              const preview = this.extractLetterPreview(jsonBuffer);
+              if (preview !== null) {
+                const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
+                const previewDocument = this.buildLetterDocumentHtml({
+                  mpName: context.mpName,
+                  mpAddress1: context.mpAddress1,
+                  mpAddress2: context.mpAddress2,
+                  mpCity: context.mpCity,
+                  mpCounty: context.mpCounty,
+                  mpPostcode: context.mpPostcode,
+                  date: context.today,
+                  subjectLineHtml: subjectPreview,
+                  letterContentHtml: preview,
+                  senderName: context.senderName,
+                  senderAddress1: context.senderAddress1,
+                  senderAddress2: context.senderAddress2,
+                  senderAddress3: context.senderAddress3,
+                  senderCity: context.senderCity,
+                  senderCounty: context.senderCounty,
+                  senderPostcode: context.senderPostcode,
+                  senderTelephone: context.senderTelephone,
+                  references: this.extractReferencesFromJson(jsonBuffer),
+                });
+                send({ type: 'letter_delta', html: previewDocument });
+                await persistProgressIfNeeded(previewDocument);
+              }
+              continue;
+            }
+
+            if (eventType === 'response.completed') {
+              await captureResponseId((normalised as any)?.response ?? null);
+              const resolvedResponseId =
+                typeof (normalised as any)?.response?.id === 'string'
+                  ? (normalised as any).response.id
+                  : responseId;
+              const usage = (normalised as any)?.response?.usage ?? null;
+              this.logger.log(
+                `[writing-desk letter-usage] ${JSON.stringify({
+                  userId,
+                  jobId: baselineJob.jobId,
+                  model,
+                  tone,
+                  responseId: resolvedResponseId ?? responseId ?? run.responseId,
+                  usage,
+                })}`,
+              );
+              const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
+              const parsed = this.parseLetterResult(finalText);
+              const merged = this.mergeLetterResultWithContext(parsed, context);
+              const references = Array.isArray(merged.references)
+                ? merged.references.map((ref) => {
+                    try {
+                      return decodeURIComponent(ref);
+                    } catch {
+                      return ref;
+                    }
+                  })
+                : [];
+              const finalDocument = this.buildLetterDocumentHtml({
+                mpName: merged.mp_name,
+                mpAddress1: merged.mp_address_1,
+                mpAddress2: merged.mp_address_2,
+                mpCity: merged.mp_city,
+                mpCounty: merged.mp_county,
+                mpPostcode: merged.mp_postcode,
+                date: merged.date,
+                subjectLineHtml: merged.subject_line_html,
+                letterContentHtml: merged.letter_content,
+                senderName: merged.sender_name,
+                senderAddress1: merged.sender_address_1,
+                senderAddress2: merged.sender_address_2,
+                senderAddress3: merged.sender_address_3,
+                senderCity: merged.sender_city,
+                senderCounty: merged.sender_county,
+                senderPostcode: merged.sender_postcode,
+                senderTelephone: merged.sender_phone,
+                references,
+              });
+
+              const resolvedId = resolvedResponseId ?? responseId ?? null;
+              await this.persistLetterResult(userId, baselineJob, {
+                status: 'completed',
+                tone,
+                responseId: resolvedId,
+                content: finalDocument,
+                references,
+                json: finalText,
+              });
+
+              run.status = 'completed';
+              _settled = true;
+              responseId = resolvedId;
+              send({ type: 'letter_delta', html: finalDocument });
+              send({
+                type: 'complete',
+                letter: this.toLetterCompletePayload(
+                  { ...merged, letter_content: finalDocument },
+                  { responseId: resolvedId, tone, rawJson: finalText },
+                ),
+                remainingCredits,
+              });
+              await this.touchStreamingRun('letter', run.key, {
+                status: 'completed',
+                responseId: resolvedId ?? run.responseId ?? null,
+              });
+              this.handleOpenAiSuccess();
+              subject.complete();
+
+              if (quietPeriodTimer) {
+                clearTimeout(quietPeriodTimer);
+                quietPeriodTimer = null;
+              }
+              return;
+            }
+
+            if (eventType === 'response.error' || eventType === 'response.failed') {
+              const message =
+                typeof (normalised as any)?.error?.message === 'string'
+                  ? ((normalised as any).error.message as string)
+                  : 'Letter composition failed. Please try again in a few moments.';
+
+              this.logger.error(
+                `LETTER_COMPOSITION_RESPONSE_ERROR: ${message}`,
+                {
+                  errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
+                  userId,
+                  jobId: baselineJob.jobId,
+                  tone,
+                  responseId: run.responseId,
+                  eventType,
+                  errorDetails: (normalised as any)?.error || 'No error details available',
+                  timestamp: new Date().toISOString(),
+                  service: 'writing-desk-letter-composition'
+                }
+              );
+
+              throw new Error(message);
+            }
+          }
+
+          break;
+        } catch (error) {
+          streamError = error;
+        }
+
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
-          startQuietPeriodTimer();
-        }
-        const normalised = this.normaliseStreamEvent(event);
-        const eventType = typeof normalised.type === 'string' ? normalised.type : null;
-
-        if (eventType?.startsWith('response.reasoning')) {
-          send({ type: 'event', event: normalised });
-          continue;
+          quietPeriodTimer = null;
         }
 
-        if (eventType === 'response.output_text.delta') {
-          const delta = this.extractOutputTextDelta(normalised);
-          if (delta) {
-            jsonBuffer += delta;
-            send({ type: 'delta', text: delta });
-            const preview = this.extractLetterPreview(jsonBuffer);
-            if (preview !== null) {
-              const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
-              const previewDocument = this.buildLetterDocumentHtml({
-                mpName: context.mpName,
-                mpAddress1: context.mpAddress1,
-                mpAddress2: context.mpAddress2,
-                mpCity: context.mpCity,
-                mpCounty: context.mpCounty,
-                mpPostcode: context.mpPostcode,
-                date: context.today,
-                subjectLineHtml: subjectPreview,
-                letterContentHtml: preview,
-                senderName: context.senderName,
-                senderAddress1: context.senderAddress1,
-              senderAddress2: context.senderAddress2,
-              senderAddress3: context.senderAddress3,
-              senderCity: context.senderCity,
-              senderCounty: context.senderCounty,
-              senderPostcode: context.senderPostcode,
-              senderTelephone: context.senderTelephone,
-              references: this.extractReferencesFromJson(jsonBuffer),
-            });
-              send({ type: 'letter_delta', html: previewDocument });
-              await persistProgressIfNeeded(previewDocument);
-            }
-          }
-          continue;
+        const resumedStream = await attemptStreamResume(streamError);
+        if (!resumedStream) {
+          currentStream = null;
+          break;
         }
-
-        if (eventType === 'response.output_text.done') {
-          const preview = this.extractLetterPreview(jsonBuffer);
-          if (preview !== null) {
-            const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
-            const previewDocument = this.buildLetterDocumentHtml({
-              mpName: context.mpName,
-              mpAddress1: context.mpAddress1,
-              mpAddress2: context.mpAddress2,
-              mpCity: context.mpCity,
-              mpCounty: context.mpCounty,
-              mpPostcode: context.mpPostcode,
-              date: context.today,
-              subjectLineHtml: subjectPreview,
-              letterContentHtml: preview,
-              senderName: context.senderName,
-              senderAddress1: context.senderAddress1,
-              senderAddress2: context.senderAddress2,
-              senderAddress3: context.senderAddress3,
-              senderCity: context.senderCity,
-              senderCounty: context.senderCounty,
-              senderPostcode: context.senderPostcode,
-              senderTelephone: context.senderTelephone,
-              references: this.extractReferencesFromJson(jsonBuffer),
-            });
-            send({ type: 'letter_delta', html: previewDocument });
-            await persistProgressIfNeeded(previewDocument);
-          }
-          continue;
-        }
-
-        if (eventType === 'response.completed') {
-          const responseId = (normalised as any)?.response?.id ?? null;
-          run.responseId = typeof responseId === 'string' ? responseId : null;
-          await this.touchStreamingRun('letter', run.key, { responseId: run.responseId ?? null });
-          const usage = (normalised as any)?.response?.usage ?? null;
-          this.logger.log(
-            `[writing-desk letter-usage] ${JSON.stringify({
-              userId,
-              jobId: baselineJob.jobId,
-              model,
-              tone,
-              responseId: run.responseId,
-              usage,
-            })}`,
-          );
-          const finalText = this.extractFirstText((normalised as any)?.response) ?? jsonBuffer;
-          const parsed = this.parseLetterResult(finalText);
-          const merged = this.mergeLetterResultWithContext(parsed, context);
-          const references = Array.isArray(merged.references) 
-            ? merged.references.map((ref) => {
-                try {
-                  return decodeURIComponent(ref);
-                } catch {
-                  return ref;
-                }
-              })
-            : [];
-          const finalDocument = this.buildLetterDocumentHtml({
-            mpName: merged.mp_name,
-            mpAddress1: merged.mp_address_1,
-            mpAddress2: merged.mp_address_2,
-            mpCity: merged.mp_city,
-            mpCounty: merged.mp_county,
-            mpPostcode: merged.mp_postcode,
-            date: merged.date,
-            subjectLineHtml: merged.subject_line_html,
-            letterContentHtml: merged.letter_content,
-            senderName: merged.sender_name,
-            senderAddress1: merged.sender_address_1,
-            senderAddress2: merged.sender_address_2,
-            senderAddress3: merged.sender_address_3,
-            senderCity: merged.sender_city,
-            senderCounty: merged.sender_county,
-            senderPostcode: merged.sender_postcode,
-            senderTelephone: merged.sender_phone,
-            references,
-          });
-
-          await this.persistLetterResult(userId, baselineJob, {
-            status: 'completed',
-            tone,
-            responseId,
-            content: finalDocument,
-            references,
-            json: finalText,
-          });
-
-          run.status = 'completed';
-          _settled = true;
-          send({ type: 'letter_delta', html: finalDocument });
-          send({
-            type: 'complete',
-            letter: this.toLetterCompletePayload(
-              { ...merged, letter_content: finalDocument },
-              { responseId, tone, rawJson: finalText },
-            ),
-            remainingCredits,
-          });
-          await this.touchStreamingRun('letter', run.key, {
-            status: 'completed',
-            responseId: responseId ?? run.responseId,
-          });
-          this.handleOpenAiSuccess();
-          subject.complete();
-          
-          // Clean up the quiet period timer
-          if (quietPeriodTimer) {
-            clearTimeout(quietPeriodTimer);
-            quietPeriodTimer = null;
-          }
-          return;
-        }
-
-        if (eventType === 'response.error' || eventType === 'response.failed') {
-          const message =
-            typeof (normalised as any)?.error?.message === 'string'
-              ? ((normalised as any).error.message as string)
-              : 'Letter composition failed. Please try again in a few moments.';
-          
-          // Log the specific response error with context
-          this.logger.error(
-            `LETTER_COMPOSITION_RESPONSE_ERROR: ${message}`,
-            {
-              errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
-              userId,
-              jobId: baselineJob.jobId,
-              tone,
-              responseId: run.responseId,
-              eventType,
-              errorDetails: (normalised as any)?.error || 'No error details available',
-              timestamp: new Date().toISOString(),
-              service: 'writing-desk-letter-composition'
-            }
-          );
-          
-          throw new Error(message);
-        }
+        currentStream = resumedStream;
+        registerController(currentStream);
+        startQuietPeriodTimer();
       }
 
-      // Log unexpected end of letter composition
-      this.logger.error(
-        `LETTER_COMPOSITION_UNEXPECTED_END: Letter composition ended unexpectedly`,
-        {
-          errorType: 'LETTER_COMPOSITION_UNEXPECTED_END',
-          userId,
-          jobId: baselineJob.jobId,
-          tone,
-          responseId: run.responseId,
-          timestamp: new Date().toISOString(),
-          service: 'writing-desk-letter-composition',
-          runDuration: Date.now() - run.startedAt,
-          jsonBufferLength: jsonBuffer?.length || 0,
-          lastPersistedContentLength: lastPersistedContent?.length || 0
-        }
+      if (_settled) {
+        return;
+      }
+
+      if (!responseId) {
+        this.logger.error(
+          `LETTER_COMPOSITION_UNEXPECTED_END: Letter composition ended unexpectedly`,
+          {
+            errorType: 'LETTER_COMPOSITION_UNEXPECTED_END',
+            userId,
+            jobId: baselineJob.jobId,
+            tone,
+            responseId: run.responseId,
+            timestamp: new Date().toISOString(),
+            service: 'writing-desk-letter-composition',
+            runDuration: Date.now() - run.startedAt,
+            jsonBufferLength: jsonBuffer?.length || 0,
+            lastPersistedContentLength: lastPersistedContent?.length || 0
+          }
+        );
+
+        throw new ServiceUnavailableException('Letter composition ended unexpectedly. Please try again in a few moments.');
+      }
+
+      this.logger.warn(
+        `[writing-desk letter] stream ended early for response ${responseId}, polling for completion`,
       );
-      
-      throw new ServiceUnavailableException('Letter composition ended unexpectedly. Please try again in a few moments.');
+
+      notifyBackgroundPolling();
+
+      const finalResponse = await this.waitForBackgroundResponseCompletion(client, responseId, {
+        taskName: 'Letter composition',
+        timeoutMessage: 'Letter composition timed out. Please try again in a few moments.',
+        logContext: 'letter',
+      });
+
+      await captureResponseId(finalResponse);
+
+      const finalStatus = (finalResponse as any)?.status ?? 'completed';
+
+      if (finalStatus === 'completed') {
+        const finalText = this.extractFirstText(finalResponse) ?? jsonBuffer;
+        const parsed = this.parseLetterResult(finalText);
+        const merged = this.mergeLetterResultWithContext(parsed, context);
+        const references = Array.isArray(merged.references)
+          ? merged.references.map((ref) => {
+              try {
+                return decodeURIComponent(ref);
+              } catch {
+                return ref;
+              }
+            })
+          : [];
+        const finalDocument = this.buildLetterDocumentHtml({
+          mpName: merged.mp_name,
+          mpAddress1: merged.mp_address_1,
+          mpAddress2: merged.mp_address_2,
+          mpCity: merged.mp_city,
+          mpCounty: merged.mp_county,
+          mpPostcode: merged.mp_postcode,
+          date: merged.date,
+          subjectLineHtml: merged.subject_line_html,
+          letterContentHtml: merged.letter_content,
+          senderName: merged.sender_name,
+          senderAddress1: merged.sender_address_1,
+          senderAddress2: merged.sender_address_2,
+          senderAddress3: merged.sender_address_3,
+          senderCity: merged.sender_city,
+          senderCounty: merged.sender_county,
+          senderPostcode: merged.sender_postcode,
+          senderTelephone: merged.sender_phone,
+          references,
+        });
+
+        await this.persistLetterResult(userId, baselineJob, {
+          status: 'completed',
+          tone,
+          responseId,
+          content: finalDocument,
+          references,
+          json: finalText,
+        });
+
+        run.status = 'completed';
+        _settled = true;
+        send({ type: 'letter_delta', html: finalDocument });
+        send({
+          type: 'complete',
+          letter: this.toLetterCompletePayload(
+            { ...merged, letter_content: finalDocument },
+            { responseId, tone, rawJson: finalText },
+          ),
+          remainingCredits,
+        });
+        await this.touchStreamingRun('letter', run.key, {
+          status: 'completed',
+          responseId,
+        });
+        this.handleOpenAiSuccess();
+        subject.complete();
+      } else {
+        const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus, {
+          taskName: 'Letter composition',
+        });
+        await this.persistLetterState(userId, baselineJob, { status: 'error', tone, responseId });
+        run.status = 'error';
+        _settled = true;
+        send({ type: 'error', message, remainingCredits });
+        await this.touchStreamingRun('letter', run.key, {
+          status: 'error',
+          responseId,
+        });
+        subject.complete();
+      }
+
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
+
+        return;
     } catch (error) {
       if (deductionApplied) {
         await this.refundCredits(userId, LETTER_CREDIT_COST);
@@ -1593,7 +2038,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         quietPeriodTimer = null;
       }
     } finally {
-      if (controller) {
+      for (const controller of trackedControllers) {
         try {
           controller.abort();
         } catch {
@@ -1962,10 +2407,19 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       );
 
       if (resumeFromState?.responseId) {
-        openAiStream = client.responses.stream({
+        const resumeParams: Record<string, unknown> = {
           response_id: resumeFromState.responseId,
-          tools: requestExtras.tools,
-        }) as ResponseStreamLike;
+        };
+        if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
+          resumeParams.tools = requestExtras.tools;
+        }
+        if (typeof requestExtras.max_tool_calls === 'number') {
+          resumeParams.max_tool_calls = requestExtras.max_tool_calls;
+        }
+        if (requestExtras.reasoning) {
+          resumeParams.reasoning = requestExtras.reasoning;
+        }
+        openAiStream = client.responses.stream(resumeParams) as ResponseStreamLike;
       } else {
         openAiStream = (await client.responses.create({
           model,
@@ -1978,6 +2432,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       let lastSequenceNumber: number | null = null;
+      let lastCursor: string | null = null;
       let currentStream: ResponseStreamLike | null = openAiStream;
       let resumeAttempts = 0;
       let _lastActivityTime = Date.now();
@@ -1987,8 +2442,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       const startQuietPeriodTimer = () => {
         if (quietPeriodTimer) {
           clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
         }
-        quietPeriodTimer = setTimeout(() => {
+        const timer = setTimeout(() => {
           const quietStatusMessages = [
             'Taking a moment to absorb the evidence…',
             'Processing the information through my democratic filters…',
@@ -2040,11 +2496,147 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           
           send({ type: 'event', event: { type: 'quiet_period', message: randomMessage } });
           _lastActivityTime = Date.now();
+          quietPeriodTimer = null;
           startQuietPeriodTimer(); // Reset the timer
         }, 5000); // 5 seconds of inactivity
+        if (typeof (timer as any)?.unref === 'function') {
+          (timer as any).unref();
+        }
+        quietPeriodTimer = timer as NodeJS.Timeout;
       };
 
       startQuietPeriodTimer();
+
+      const resumeStatusMessages = [
+        'Consulting my medieval tomes for parliamentary precedents…',
+        'Shuffling through my official Parliament issue tarot cards…',
+        'Processing some things I\'ve learned from the evidence…',
+        'Cross-referencing with the ancient scrolls of Westminster…',
+        'Having a quick chat with the parliamentary ghosts…',
+        'Double-checking my facts against the cosmic database…',
+        'Consulting the oracle of Hansard for wisdom…',
+        'Taking a moment to absorb the gravity of the situation…',
+        'Rummaging through my collection of parliamentary tea leaves…',
+        'Having a brief conference with the spirits of democracy…',
+        'Processing the evidence through my parliamentary crystal ball…',
+        'Taking a step back to see the bigger picture…',
+        'Consulting the ancient texts of parliamentary procedure…',
+        'Having a quick think about what I\'ve discovered…',
+        'Cross-checking my findings with the parliamentary archives…',
+        'Taking a moment to connect the dots…',
+        'Having a quiet word with the parliamentary librarians…',
+        'Processing the information through my democratic filters…',
+        'Taking a breather to let the evidence sink in…',
+        'Having a brief consultation with the wisdom of ages…'
+      ];
+
+      const notifyBackgroundPolling = () => {
+        if (!backgroundPollingNotified) {
+          send({ type: 'status', status: 'background_polling', remainingCredits });
+          send({
+            type: 'event',
+            event: {
+              type: 'quiet_period',
+              message: 'The live stream hit a snag; continuing the research in the background…',
+            },
+          });
+          backgroundPollingNotified = true;
+        }
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
+      };
+
+      const attemptStreamResume = async (
+        initialError: unknown,
+      ): Promise<ResponseStreamLike | null> => {
+        let latestError: unknown = initialError;
+
+        while (true) {
+          if (!this.isRecoverableTransportError(latestError)) {
+            throw latestError instanceof Error
+              ? latestError
+              : new Error('Deep research stream failed with an unknown error');
+          }
+
+          if (!responseId) {
+            this.logger.warn(
+              `[writing-desk research] transport failure before response id available: ${
+                latestError instanceof Error ? latestError.message : 'unknown error'
+              }`,
+            );
+            return null;
+          }
+
+          if (resumeAttempts >= RESEARCH_MAX_RESUME_ATTEMPTS) {
+            this.logger.warn(
+              `[writing-desk research] resume attempt limit reached for response ${responseId}, switching to background polling`,
+            );
+            notifyBackgroundPolling();
+            return null;
+          }
+
+          resumeAttempts += 1;
+          const resumeCursor = lastCursor ?? (lastSequenceNumber != null ? String(lastSequenceNumber) : null);
+          const resumeCursorLog = resumeCursor ?? (lastSequenceNumber ?? 'start');
+          this.logger.warn(
+            `[writing-desk research] resume attempt ${resumeAttempts} for response ${responseId} starting after ${resumeCursorLog}`,
+          );
+
+          const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
+          send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
+
+          if (resumeAttempts > 1) {
+            const backoffMs = Math.min(1000 * 2 ** (resumeAttempts - 1), 5000);
+            const jitter = Math.floor(Math.random() * 300);
+            await this.delay(backoffMs + jitter);
+          }
+
+          const resumeParams: {
+            response_id: string;
+            after?: string;
+            event_id?: string;
+            tools?: Array<Record<string, unknown>>;
+            max_tool_calls?: number;
+            reasoning?: DeepResearchRequestExtras['reasoning'];
+          } = {
+            response_id: responseId,
+          };
+
+          if (resumeCursor) {
+            resumeParams.after = resumeCursor;
+            resumeParams.event_id = resumeCursor;
+          }
+
+          if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
+            resumeParams.tools = requestExtras.tools;
+          }
+          if (typeof requestExtras.max_tool_calls === 'number') {
+            resumeParams.max_tool_calls = requestExtras.max_tool_calls;
+          }
+          if (requestExtras.reasoning) {
+            resumeParams.reasoning = requestExtras.reasoning;
+          }
+
+          try {
+            const resumedStream = client.responses.stream(resumeParams) as ResponseStreamLike;
+            this.logger.log(
+              `[writing-desk research] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
+            );
+            return resumedStream;
+          } catch (resumeError) {
+            this.logger.error(
+              `[writing-desk research] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
+                resumeError instanceof Error ? resumeError.message : 'unknown error'
+              }`,
+            );
+            latestError = resumeError;
+            // Loop to evaluate whether the new error is recoverable and, if so, try again
+            continue;
+          }
+        }
+      };
 
       while (currentStream) {
         let streamError: unknown = null;
@@ -2067,12 +2659,23 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             _lastActivityTime = Date.now();
             if (quietPeriodTimer) {
               clearTimeout(quietPeriodTimer);
-              startQuietPeriodTimer();
+              quietPeriodTimer = null;
             }
+            startQuietPeriodTimer();
 
             const sequenceNumber = (event as any)?.sequence_number;
             if (Number.isFinite(sequenceNumber)) {
               lastSequenceNumber = Number(sequenceNumber);
+            }
+
+            const eventCursor =
+              typeof (event as any)?.id === 'string'
+                ? (event as any).id
+                : typeof (event as any)?.cursor === 'string'
+                  ? (event as any).cursor
+                  : null;
+            if (eventCursor) {
+              lastCursor = eventCursor;
             }
 
             if ((event as any)?.response) {
@@ -2179,109 +2782,13 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           break;
         }
 
-        const isTransportFailure =
-          streamError instanceof Error && /premature close/i.test(streamError.message);
-
-        if (!isTransportFailure) {
-          throw streamError instanceof Error
-            ? streamError
-            : new Error('Deep research stream failed with an unknown error');
-        }
-
-        if (!responseId) {
-          this.logger.warn(
-            `[writing-desk research] transport failure before response id available: ${
-              streamError instanceof Error ? streamError.message : 'unknown error'
-            }`,
-          );
-          break;
-        }
-
-        resumeAttempts += 1;
-        const resumeCursor = lastSequenceNumber ?? null;
-        this.logger.warn(
-          `[writing-desk research] resume attempt ${resumeAttempts} for response ${responseId} starting after ${
-            resumeCursor ?? 'start'
-          }`,
-        );
-
-        if (resumeAttempts >= RESEARCH_MAX_RESUME_ATTEMPTS) {
-          this.logger.warn(
-            `[writing-desk research] resume attempt limit reached for response ${responseId}, switching to background polling`,
-          );
-          if (!backgroundPollingNotified) {
-            send({ type: 'status', status: 'background_polling', remainingCredits });
-            send({
-              type: 'event',
-              event: {
-                type: 'quiet_period',
-                message: 'The live stream hit a snag; continuing the research in the background…',
-              },
-            });
-            backgroundPollingNotified = true;
-          }
-          if (quietPeriodTimer) {
-            clearTimeout(quietPeriodTimer);
-            quietPeriodTimer = null;
-          }
+        const resumedStream = await attemptStreamResume(streamError);
+        if (!resumedStream) {
           currentStream = null;
           openAiStream = null;
-          break;
-        }
-
-        // Send a humorous status update to keep the user engaged during resume attempts
-        const resumeStatusMessages = [
-          'Consulting my medieval tomes for parliamentary precedents…',
-          'Shuffling through my official Parliament issue tarot cards…',
-          'Processing some things I\'ve learned from the evidence…',
-          'Cross-referencing with the ancient scrolls of Westminster…',
-          'Having a quick chat with the parliamentary ghosts…',
-          'Double-checking my facts against the cosmic database…',
-          'Consulting the oracle of Hansard for wisdom…',
-          'Taking a moment to absorb the gravity of the situation…',
-          'Rummaging through my collection of parliamentary tea leaves…',
-          'Having a brief conference with the spirits of democracy…',
-          'Processing the evidence through my parliamentary crystal ball…',
-          'Taking a step back to see the bigger picture…',
-          'Consulting the ancient texts of parliamentary procedure…',
-          'Having a quick think about what I\'ve discovered…',
-          'Cross-checking my findings with the parliamentary archives…',
-          'Taking a moment to connect the dots…',
-          'Having a quiet word with the parliamentary librarians…',
-          'Processing the information through my democratic filters…',
-          'Taking a breather to let the evidence sink in…',
-          'Having a brief consultation with the wisdom of ages…'
-        ];
-        
-        const randomMessage = resumeStatusMessages[Math.floor(Math.random() * resumeStatusMessages.length)];
-        send({ type: 'event', event: { type: 'resume_attempt', message: randomMessage, attempt: resumeAttempts } });
-
-        try {
-          const resumeParams: {
-            response_id: string;
-            starting_after?: number;
-            tools?: Array<Record<string, unknown>>;
-          } = {
-            response_id: responseId,
-            starting_after: resumeCursor ?? undefined,
-          };
-
-          if (Array.isArray(requestExtras.tools) && requestExtras.tools.length > 0) {
-            resumeParams.tools = requestExtras.tools;
-          }
-
-          currentStream = client.responses.stream(resumeParams) as ResponseStreamLike;
-          openAiStream = currentStream;
-          this.logger.log(
-            `[writing-desk research] resume attempt ${resumeAttempts} succeeded for response ${responseId}`,
-          );
-        } catch (resumeError) {
-          this.logger.error(
-            `[writing-desk research] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
-              resumeError instanceof Error ? resumeError.message : 'unknown error'
-            }`,
-          );
-          break;
+        } else {
+          currentStream = resumedStream;
+          openAiStream = resumedStream;
         }
       }
 
@@ -2458,8 +2965,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     run.cleanupTimer = timer as NodeJS.Timeout;
   }
 
-  private async waitForBackgroundResponseCompletion(client: any, responseId: string) {
+  private async waitForBackgroundResponseCompletion(
+    client: any,
+    responseId: string,
+    options?: { taskName?: string; timeoutMessage?: string; logContext?: string },
+  ) {
     const startedAt = Date.now();
+    const timeoutMessage = options?.timeoutMessage ?? 'Deep research timed out. Please try again.';
+    const logContext = options?.logContext ?? 'research';
 
     while (true) {
       try {
@@ -2471,17 +2984,17 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
 
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
+          throw new ServiceUnavailableException(timeoutMessage);
         }
       } catch (error) {
         if (error instanceof Error && error.message.includes('Timed out waiting')) {
           throw error;
         }
         if (Date.now() - startedAt >= BACKGROUND_POLL_TIMEOUT_MS) {
-          throw new ServiceUnavailableException('Deep research timed out. Please try again.');
+          throw new ServiceUnavailableException(timeoutMessage);
         }
         this.logger.warn(
-          `[writing-desk research] failed to retrieve background response ${responseId}: ${
+          `[writing-desk ${logContext}] failed to retrieve background response ${responseId}: ${
             (error as Error)?.message ?? error
           }`,
         );
@@ -2491,7 +3004,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
   }
 
-  private buildBackgroundFailureMessage(response: any, status: string | null | undefined): string {
+  private buildBackgroundFailureMessage(
+    response: any,
+    status: string | null | undefined,
+    options?: { taskName?: string },
+  ): string {
     const errorMessage = response?.error?.message;
     if (typeof errorMessage === 'string' && errorMessage.trim().length > 0) {
       return errorMessage.trim();
@@ -2502,14 +3019,16 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       return incompleteReason.trim();
     }
 
+    const taskName = options?.taskName ?? 'Deep research';
+
     switch (status) {
       case 'cancelled':
-        return 'Deep research was cancelled.';
+        return `${taskName} was cancelled.`;
       case 'failed':
       case 'incomplete':
-        return 'Deep research failed. Please try again in a few moments.';
+        return `${taskName} failed. Please try again in a few moments.`;
       default:
-        return 'Deep research finished without a usable result. Please try again in a few moments.';
+        return `${taskName} finished without a usable result. Please try again in a few moments.`;
     }
   }
 
@@ -2655,9 +3174,80 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     const sections: string[] = [
       'MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.',
       '',
-      'Research the issue described below and gather supporting facts, quotes, and statistics from credible, up-to-date sources.',
-      "Before analysing the constituent's issue, confirm today's date and the current political makeup of Parliament (which party is in government and how many seats each party holds).",
-      'Provide a structured evidence report with inline citations for every key fact. Cite URLs or publication titles for each data point.',
+      'Role & Objective:',
+      '- You are a UK parliamentary research assistant. Compile an evidence dossier that will later inform a persuasive, fact-checked constituent letter to their MP. Do not draft the letter.',
+      '',
+      'Research Discipline:',
+      '- Before gathering facts, produce a five-point search plan: list top queries, target UK sources, and anticipated evidence gaps.',
+      '- Execute the plan sequentially, revising it if a lead is empty, and record any adjustments.',
+      '',
+      'Source & Recency Policy:',
+      '- Default to UK primary / authoritative sources (GOV.UK, legislation.gov.uk, ONS, House of Commons Library, Hansard, NAO, OBR, NHS, devolved administrations, UK regulators).',
+      '- Capture constituency colour by consulting at least one credible local outlet (e.g. local authority press releases, BBC regional, well-established local newspapers).',
+      '- Balance perspective with reputable national journalism (BBC, Financial Times, Guardian, Times, Telegraph, ITV, Sky) and note when national coverage intersects with the constituency.',
+      '- Use a non-UK source only if no UK equivalent exists, and explain why that source was necessary.',
+      '- Every citation must include title, publisher, publication date, URL, and (when available) an archived link. Prefer publications ≤3 years old; explicitly justify older items.',
+      '',
+      'Verification Standards:',
+      '- Triangulate each material claim with at least two independent sources whenever possible. If triangulation is not feasible, flag the limitation and describe the best available evidence.',
+      '- Surface conflicting evidence, compare the sources, and explain how you resolved or weighted the conflict.',
+      '',
+      'Constituency Lens:',
+      '- Highlight constituency or local-authority level statistics and reporting. Explain the local impact succinctly and why it matters for this MP.',
+      '',
+      'MP Dossier:',
+      '- Summarise the MP’s recent votes, Hansard interventions, committee roles, APPG memberships, stated priorities, and relevant interests. Tie each to potential persuasion angles.',
+      '',
+      'Counterarguments:',
+      '- List likely counterarguments (government, opposition, third parties) and provide concise, evidence-backed rebuttals with citations.',
+      '',
+      'Policy Levers:',
+      '- Map findings to concrete levers: responsible departments or ministries, regulators, funding schemes, statutes (with section numbers), upcoming consultations, or oversight bodies.',
+      '',
+      'Evidence Quality:',
+      '- Assign a confidence rating to every key claim (High = multiple recent primary/authoritative sources; Medium = limited corroboration or older data; Low = single or lower-quality source) and justify the rating in one sentence.',
+      '',
+      'Handover Package for Letter Drafting (inputs only — do not draft prose):',
+      '- Problem framing (1–2 sentences)',
+      '- Three strongest evidence bullets (each with [#] citation tags)',
+      '- Specific ask(s) the MP should pursue',
+      '- MP-relevant angle (why this MP should care)',
+      '- Recommended tone for the eventual letter',
+      '',
+      'Output Structure (use numeric citations [1], [2], … consistently across all sections and the bibliography):',
+      '1) Executive snapshot (≤120 words)',
+      '2) Key findings (bulleted, each with [#])',
+      '3) Evidence table (Claim | Evidence summary | Citation [#] | Confidence)',
+      '4) MP profile & persuasive angles',
+      '5) Counterarguments & rebuttals',
+      '6) Policy levers & pathways',
+      '7) Evidence gaps & further research',
+      '8) Bibliography (numbered list aligned with citation tags, providing full citation details per the policy)',
+      '',
+      'Machine-Readable Summary (append verbatim):',
+      '- Emit a valid JSON object (double-quoted keys/strings) exactly once:',
+      '  {',
+      '    "summary": "...",',
+      '    "strongest_points": ["...", "...", "..."],',
+      '    "asks": ["..."],',
+      '    "mp_profile": "...",',
+      '    "angles": ["..."],',
+      '    "counterarguments": [',
+      '      {"claim": "...", "rebuttal": "...", "citations": [1,2]}',
+      '    ],',
+      '    "policy_levers": [',
+      '      {"lever": "...", "owner": "...", "citation": 3}',
+      '    ],',
+      '    "references": [',
+      '      {"id": 1, "title": "...", "publisher": "...", "date": "...", "url": "...", "archived_url": "..."}',
+      '    ]',
+      '  }',
+      '- Ensure citation numbers in the JSON align with the bibliography.',
+      '',
+      'Formatting Expectations:',
+      '- Use clear headings and bullet lists exactly where specified.',
+      '- Only the Evidence table may use pipe-format table syntax.',
+      '- Keep prose concise and avoid filler or hypothetical content.',
       '',
       `Constituent description: ${this.normalisePromptField(job.form?.issueDescription, 'Not provided.')}`,
     ];
@@ -3951,6 +4541,22 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     if (!/\b(since|for [0-9]+|weeks|months|years|when)\b/i.test(description)) {
       questions.push('How long has this been going on or when did it start?');
+    }
+
+    const fallbackQuestions = [
+      'Is there anything the MP should avoid doing when they intervene?',
+      'Have you already contacted anyone else about this? If so, what happened?',
+      'What would a successful MP response look like for you?',
+      'Are there key dates or deadlines the MP should be aware of?',
+    ];
+
+    for (const fallback of fallbackQuestions) {
+      if (questions.length >= 3) {
+        break;
+      }
+      if (!questions.includes(fallback)) {
+        questions.push(fallback);
+      }
     }
 
     return questions.slice(0, 5);

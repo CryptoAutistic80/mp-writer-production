@@ -271,6 +271,7 @@ export default function WritingDeskClient() {
   const [researchActivities, setResearchActivities] = useState<Array<{ id: string; text: string }>>([]);
   const [researchError, setResearchError] = useState<string | null>(null);
   const [pendingAutoResume, setPendingAutoResume] = useState(false);
+  const [isResearchBackgroundPolling, setIsResearchBackgroundPolling] = useState(false);
   const researchSourceRef = useRef<EventSource | null>(null);
   const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary' | null>(null);
   const lastResearchEventRef = useRef<number>(0);
@@ -405,6 +406,7 @@ export default function WritingDeskClient() {
       researchSourceRef.current.close();
       researchSourceRef.current = null;
     }
+    setIsResearchBackgroundPolling(false);
   }, []);
 
   const closeLetterStream = useCallback(() => {
@@ -446,6 +448,8 @@ export default function WritingDeskClient() {
     setResearchActivities([]);
     setResearchError(null);
     setPendingAutoResume(false);
+    setIsResearchBackgroundPolling(false);
+    lastResearchEventRef.current = 0;
   }, [closeResearchStream]);
 
   const appendResearchActivity = useCallback((text: string) => {
@@ -604,6 +608,7 @@ export default function WritingDeskClient() {
       setPendingAutoResume(false);
       setResearchStatus('running');
       setResearchError(null);
+      setIsResearchBackgroundPolling(false);
       if (!resume) {
         setResearchContent('');
         setResearchResponseId(null);
@@ -665,6 +670,9 @@ export default function WritingDeskClient() {
           markResearchActivity();
 
           if (payload.type === 'status') {
+            if (payload.status === 'background_polling') {
+              setIsResearchBackgroundPolling(true);
+            }
             updateCreditsFromStream(payload.remainingCredits);
             const statusMessage: Record<string, string> = {
               starting: 'Preparing the research brief…',
@@ -676,6 +684,8 @@ export default function WritingDeskClient() {
             const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
             if (descriptor) appendResearchActivity(descriptor);
           } else if (payload.type === 'delta') {
+            setIsResearchBackgroundPolling(false);
+            lastResearchEventRef.current = Date.now();
             if (typeof payload.text === 'string') {
               setResearchContent((prev) => {
                 // Clear activity feed when content starts streaming
@@ -686,9 +696,13 @@ export default function WritingDeskClient() {
               });
             }
           } else if (payload.type === 'event') {
+            setIsResearchBackgroundPolling(false);
+            lastResearchEventRef.current = Date.now();
             const descriptor = describeResearchEvent(payload.event);
             if (descriptor) appendResearchActivity(descriptor);
           } else if (payload.type === 'complete') {
+            setIsResearchBackgroundPolling(false);
+            lastResearchEventRef.current = Date.now();
             closeResearchStream();
             setResearchStatus('completed');
             setResearchContent(payload.content ?? '');
@@ -697,6 +711,8 @@ export default function WritingDeskClient() {
             appendResearchActivity('Deep research completed.');
             setPendingAutoResume(false);
         } else if (payload.type === 'error') {
+          setIsResearchBackgroundPolling(false);
+          lastResearchEventRef.current = Date.now();
           closeResearchStream();
           setResearchStatus('error');
           setResearchError(payload.message || 'Deep research failed. Please try again.');
@@ -708,6 +724,8 @@ export default function WritingDeskClient() {
       };
 
       source.onerror = () => {
+        setIsResearchBackgroundPolling(false);
+        lastResearchEventRef.current = Date.now();
         closeResearchStream();
         setResearchStatus('error');
         setResearchError('The research stream was interrupted. Please try again.');
@@ -718,16 +736,17 @@ export default function WritingDeskClient() {
 
         lastResearchEventRef.current = Date.now();
       } catch (err) {
+        setIsResearchBackgroundPolling(false);
         closeResearchStream();
         setResearchStatus('error');
-      const message =
-        err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
-      setResearchError(message);
-      appendResearchActivity('Unable to start deep research.');
-      setPendingAutoResume(false);
-      void reportRefundedFailure('deep research could not start');
-    }
-  },
+        const message =
+          err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
+        setResearchError(message);
+        appendResearchActivity('Unable to start deep research.');
+        setPendingAutoResume(false);
+        void reportRefundedFailure('deep research could not start');
+      }
+    },
     [appendResearchActivity, closeResearchStream, jobId, reportRefundedFailure, researchStatus, updateCreditsFromStream],
   );
 
@@ -749,6 +768,10 @@ export default function WritingDeskClient() {
       const source = researchSourceRef.current;
       if (!source) return;
 
+      if (isResearchBackgroundPolling) {
+        return;
+      }
+
       const now = Date.now();
       const lastEventAt = lastResearchEventRef.current || 0;
       if (now - lastEventAt < 45000) return;
@@ -765,7 +788,7 @@ export default function WritingDeskClient() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [appendResearchActivity, closeResearchStream, researchStatus, startDeepResearch]);
+  }, [appendResearchActivity, closeResearchStream, isResearchBackgroundPolling, researchStatus, startDeepResearch]);
 
   const openLetterStream = useCallback(
     (streamPath: string) => {
@@ -1086,6 +1109,8 @@ export default function WritingDeskClient() {
       const nextStatus = job.researchStatus ?? (existingResearch.trim().length > 0 ? 'completed' : 'idle');
       setResearchStatus(nextStatus === 'running' ? 'running' : nextStatus);
       setPendingAutoResume(nextStatus === 'running');
+      setIsResearchBackgroundPolling(false);
+      lastResearchEventRef.current = 0;
       setResearchActivities([]);
       setResearchError(null);
       setError(null);
@@ -2157,7 +2182,7 @@ export default function WritingDeskClient() {
                     <div className="research-progress" role="status" aria-live="polite">
                       <span className="research-progress__spinner" aria-hidden="true" />
                       <div className="research-progress__content">
-                        <p>Gathering evidence — this can take approximately 15 minutes while we trace reliable sources.</p>
+                        <p>Gathering evidence — this can take approximately 15-30 minutes while we trace reliable sources.</p>
                         <p>We&apos;ll post updates in the activity feed below while the research continues.</p>
                       </div>
                     </div>
