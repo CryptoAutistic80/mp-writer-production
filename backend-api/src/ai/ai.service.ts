@@ -29,367 +29,62 @@ import { Observable, ReplaySubject, Subscription } from 'rxjs';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 import { StreamingStateService } from '../streaming-state/streaming-state.service';
 import { StreamingRunState, StreamingRunKind } from '../streaming-state/streaming-state.types';
+import type {
+  DeepResearchRequestExtras,
+  DeepResearchRun,
+  DeepResearchRunStatus,
+  DeepResearchStreamPayload,
+  LetterCompletePayload,
+  LetterContext,
+  LetterDocumentInput,
+  LetterRun,
+  LetterRunStatus,
+  LetterStreamPayload,
+  ResponseStreamLike,
+  WritingDeskLetterResult,
+} from './types/streaming.types';
+import {
+  createOrGetOpenAiClient,
+  handleOpenAiError,
+  handleOpenAiSuccess,
+} from './utils/openai-client.util';
+import type { OpenAiClientState } from './utils/openai-client.util';
+import {
+  LETTER_TONE_REQUEST_PREFIX,
+  LETTER_TONE_SIGN_OFFS,
+  buildLetterPrompt,
+  buildLetterResponseSchema,
+  buildLetterSystemPrompt,
+} from './utils/letter-schema.util';
+import { buildLetterDocumentHtml } from './utils/letter-document.util';
+import {
+  BACKGROUND_POLL_INTERVAL_MS,
+  BACKGROUND_POLL_TIMEOUT_MS,
+  DEEP_RESEARCH_CREDIT_COST,
+  DEEP_RESEARCH_RUN_BUFFER_SIZE,
+  DEEP_RESEARCH_RUN_TTL_MS,
+  FOLLOW_UP_CREDIT_COST,
+  LETTER_CREDIT_COST,
+  LETTER_MAX_RESUME_ATTEMPTS,
+  LETTER_RUN_BUFFER_SIZE,
+  LETTER_RUN_TTL_MS,
+  LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
+  RESEARCH_MAX_RESUME_ATTEMPTS,
+  RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS,
+  TRANSCRIPTION_CREDIT_COST,
+  TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS,
+} from './constants/ai.constants';
 
-const FOLLOW_UP_CREDIT_COST = 0.1;
-const DEEP_RESEARCH_CREDIT_COST = 0.7;
-const LETTER_CREDIT_COST = 0.2;
-const TRANSCRIPTION_CREDIT_COST = 0;
-
-interface DeepResearchRequestExtras {
-  tools?: Array<Record<string, unknown>>;
-  max_tool_calls?: number;
-  reasoning?: {
-    summary?: 'auto' | 'disabled' | null;
-    effort?: 'low' | 'medium' | 'high';
-  };
-};
-
-type DeepResearchStreamPayload =
-  | { type: 'status'; status: string; remainingCredits?: number | null }
-  | { type: 'delta'; text: string }
-  | { type: 'event'; event: Record<string, unknown> }
-  | {
-      type: 'complete';
-      content: string;
-      responseId: string | null;
-      remainingCredits: number | null;
-      usage?: Record<string, unknown> | null;
-    }
-  | { type: 'error'; message: string; remainingCredits?: number | null };
-
-type DeepResearchRunStatus = 'running' | 'completed' | 'error';
-
-interface DeepResearchRun {
-  key: string;
-  userId: string;
-  jobId: string;
-  subject: ReplaySubject<DeepResearchStreamPayload>;
-  status: DeepResearchRunStatus;
-  startedAt: number;
-  cleanupTimer: NodeJS.Timeout | null;
-  promise: Promise<void> | null;
-  responseId: string | null;
-}
-
-type ResponseStreamLike = AsyncIterable<ResponseStreamEvent> & {
-  controller?: { abort: () => void };
-};
-
-const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
-const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
-const BACKGROUND_POLL_INTERVAL_MS = 2000;
-const BACKGROUND_POLL_TIMEOUT_MS = 40 * 60 * 1000;
-const RESEARCH_MAX_RESUME_ATTEMPTS = 10;
-const LETTER_RUN_BUFFER_SIZE = 2000;
-const LETTER_RUN_TTL_MS = 5 * 60 * 1000;
-const LETTER_MAX_RESUME_ATTEMPTS = 10;
 const STREAMING_RUN_ORPHAN_THRESHOLD_MS = 2 * 60 * 1000;
-// Stream inactivity timeouts - max time between events before aborting
-const LETTER_STREAM_INACTIVITY_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
-const RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-const TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
-
-type LetterStreamPayload =
-  | { type: 'status'; status: string; remainingCredits?: number | null }
-  | { type: 'event'; event: Record<string, unknown> }
-  | { type: 'delta'; text: string }
-  | { type: 'letter_delta'; html: string }
-  | {
-      type: 'complete';
-      letter: LetterCompletePayload;
-      remainingCredits: number | null;
-    }
-  | { type: 'error'; message: string; remainingCredits?: number | null };
-
-interface WritingDeskLetterResult {
-  mp_name: string;
-  mp_address_1: string;
-  mp_address_2: string;
-  mp_city: string;
-  mp_county: string;
-  mp_postcode: string;
-  date: string;
-  subject_line_html: string;
-  letter_content: string;
-  sender_name: string;
-  sender_address_1: string;
-  sender_address_2: string;
-  sender_address_3: string;
-  sender_city: string;
-  sender_county: string;
-  sender_postcode: string;
-  sender_phone: string;
-  references: string[];
-}
-
-interface LetterCompletePayload {
-  mpName: string;
-  mpAddress1: string;
-  mpAddress2: string;
-  mpCity: string;
-  mpCounty: string;
-  mpPostcode: string;
-  date: string;
-  subjectLineHtml: string;
-  letterContent: string;
-  senderName: string;
-  senderAddress1: string;
-  senderAddress2: string;
-  senderAddress3: string;
-  senderCity: string;
-  senderCounty: string;
-  senderPostcode: string;
-  senderTelephone: string;
-  references: string[];
-  responseId: string | null;
-  tone: WritingDeskLetterTone;
-  rawJson: string;
-}
-
-type LetterRunStatus = 'running' | 'completed' | 'error';
-
-interface LetterRun {
-  key: string;
-  userId: string;
-  jobId: string;
-  tone: WritingDeskLetterTone;
-  subject: ReplaySubject<LetterStreamPayload>;
-  status: LetterRunStatus;
-  startedAt: number;
-  cleanupTimer: NodeJS.Timeout | null;
-  promise: Promise<void> | null;
-  responseId: string | null;
-  remainingCredits: number | null;
-}
-
-interface LetterDocumentInput {
-  mpName?: string | null;
-  mpAddress1?: string | null;
-  mpAddress2?: string | null;
-  mpCity?: string | null;
-  mpCounty?: string | null;
-  mpPostcode?: string | null;
-  date?: string | null;
-  subjectLineHtml?: string | null;
-  letterContentHtml?: string | null;
-  senderName?: string | null;
-  senderAddress1?: string | null;
-  senderAddress2?: string | null;
-  senderAddress3?: string | null;
-  senderCity?: string | null;
-  senderCounty?: string | null;
-  senderPostcode?: string | null;
-  senderTelephone?: string | null;
-  references?: string[] | null;
-}
-
-interface LetterContext {
-  mpName: string;
-  mpAddress1: string;
-  mpAddress2: string;
-  mpCity: string;
-  mpCounty: string;
-  mpPostcode: string;
-  constituency: string;
-  senderName: string;
-  senderAddress1: string;
-  senderAddress2: string;
-  senderAddress3: string;
-  senderCity: string;
-  senderCounty: string;
-  senderPostcode: string;
-  senderTelephone: string;
-  today: string;
-}
-
-const LETTER_RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    mp_name: {
-      type: 'string',
-      description: "Full name of the Member of Parliament.",
-    },
-    mp_address_1: {
-      type: 'string',
-      description: "First line of the MP's address.",
-    },
-    mp_address_2: {
-      type: 'string',
-      description: "Second line of the MP's address.",
-    },
-    mp_city: {
-      type: 'string',
-      description: "City of the MP's address.",
-    },
-    mp_county: {
-      type: 'string',
-      description: "County of the MP's address.",
-    },
-    mp_postcode: {
-      type: 'string',
-      description: "Post code of the MP's address.",
-    },
-    date: {
-      type: 'string',
-      description: 'Date the letter is written (ISO 8601 format recommended).',
-      pattern: '^\\d{4}-\\d{2}-\\d{2}$',
-    },
-    subject_line_html: {
-      type: 'string',
-      description: 'HTML paragraph containing the subject line, starting with a bold "Subject:" label.',
-      pattern: '^\\s*<p>\\s*<strong>Subject:</strong>.*</p>\\s*$',
-    },
-    letter_content: {
-      type: 'string',
-      description: 'The text body of the letter.',
-    },
-    sender_name: {
-      type: 'string',
-      description: 'Name of the person sending the letter.',
-    },
-    sender_address_1: {
-      type: 'string',
-      description: "First line of the sender's address.",
-    },
-    sender_address_2: {
-      type: 'string',
-      description: "Second line of the sender's address.",
-    },
-    sender_address_3: {
-      type: 'string',
-      description: "Third line of the sender's address.",
-    },
-    sender_city: {
-      type: 'string',
-      description: "City of the sender's address.",
-    },
-    sender_county: {
-      type: 'string',
-      description: "County of the sender's address.",
-    },
-    sender_postcode: {
-      type: 'string',
-      description: "Post code of the sender's address.",
-    },
-    sender_phone: {
-      type: 'string',
-      description: "Telephone number for the sender, shown beneath the postal address.",
-    },
-    references: {
-      type: 'array',
-      description: 'List of full, properly formatted URLs used as references. URLs must be complete with protocol (https://) and should NOT be percent-encoded - use plain characters for special symbols like #, :, ~, and = in URL fragments.',
-      items: {
-        type: 'string',
-        description: 'A complete, unencoded URL with protocol (e.g. https://example.com/path#:~:text=quote). Do not percent-encode special characters in URL fragments.',
-      },
-    },
-  },
-  required: [
-    'mp_name',
-    'mp_address_1',
-    'mp_address_2',
-    'mp_city',
-    'mp_county',
-    'mp_postcode',
-    'date',
-    'subject_line_html',
-    'letter_content',
-    'sender_name',
-    'sender_address_1',
-    'sender_address_2',
-    'sender_address_3',
-    'sender_city',
-    'sender_county',
-    'sender_postcode',
-    'sender_phone',
-    'references',
-  ],
-  additionalProperties: false,
-} as const;
-
-const LETTER_TONE_DETAILS: Record<WritingDeskLetterTone, { label: string; prompt: string }> = {
-  formal: {
-    label: 'Formal',
-    prompt:
-      'Write with formal parliamentary etiquette: respectful, precise, and structured with clear paragraphs.',
-  },
-  polite_but_firm: {
-    label: 'Polite but firm',
-    prompt:
-      'Maintain polite language while firmly emphasising the urgency and expectation of action.',
-  },
-  empathetic: {
-    label: 'Empathetic',
-    prompt:
-      'Adopt a compassionate tone that centres the human impact while remaining respectful and solution-focused.',
-  },
-  urgent: {
-    label: 'Urgent',
-    prompt:
-      'Convey urgency and seriousness without being aggressive. Keep sentences direct and compelling.',
-  },
-  neutral: {
-    label: 'Neutral',
-    prompt:
-      'Use clear, matter-of-fact language that presents evidence and requests without emotional colouring.',
-  },
-  highly_persuasive: {
-    label: 'Highly persuasive',
-    prompt:
-      'Craft a confident, compelling argument that highlights benefits, anticipated outcomes, and stakes while remaining respectful and evidence-led.',
-  },
-};
-
-const LETTER_TONE_SIGN_OFFS: Record<WritingDeskLetterTone, string> = {
-  formal: 'Yours faithfully,',
-  polite_but_firm: 'Yours sincerely,',
-  empathetic: 'With thanks for your understanding,',
-  urgent: 'Yours urgently,',
-  neutral: 'Yours sincerely,',
-  highly_persuasive: 'With determination,',
-};
-
-const LETTER_TONE_REQUEST_PREFIX: Record<WritingDeskLetterTone, string> = {
-  formal: 'I would be grateful if you could',
-  polite_but_firm: 'I need you to',
-  empathetic: 'I kindly ask that you',
-  urgent: 'Please urgently',
-  neutral: 'I ask that you',
-  highly_persuasive: 'I strongly urge you to',
-};
-
-const LETTER_SYSTEM_PROMPT = `You are generating a UK MP letter using stored MP and sender details plus prior user inputs.
-
-MANDATORY: ALL OUTPUT MUST USE BRITISH ENGLISH SPELLING. We are communicating exclusively with British MPs.
-
-Goals:
-
-1. Return output strictly conforming to the provided JSON schema.
-2. Use stored MP profile for mp_* fields and stored sender profile for sender_*.
-3. Set date to match the schema's regex: ^\\d{4}-\\d{2}-\\d{2}$.
-4. Put the full HTML letter in letter_content. Use semantic HTML only (<p>, <strong>, <em>, lists). Use standard ASCII characters: plain single quotes ('), double quotes ("), and hyphens (-) instead of smart quotes or em-dashes.
-5. Write in the tone selected by the user.
-6. Draw on all prior inputs: user_intake (issue, who is affected, background, requested action); follow_ups (clarifications); deep_research (facts, citations, URLs).
-7. Include only accurate, supportable statements. Add actual URLs used into the references array. IMPORTANT: URLs must be unencoded - use plain text characters for special symbols (# : ~ =) in URL fragments, not percent-encoded versions (%20 %2C %27 etc).
-8. If any stored values are missing, output an empty string for that field, but keep the schema valid.
-9. Set subject_line_html to a single HTML paragraph that begins with <strong>Subject:</strong> followed immediately by the subject text. Do not prepend extra labels (for example "Urgent:", "Subject -", "For review:"); start with the key topic directly.
-
-Letter content requirements:
-
-* Opening: state the issue and constituency link.
-* Body: evidence-led argument in chosen tone.
-* Ask: specific, actionable request of the MP.
-* Closing: professional and courteous. Sign off using only the sender_name (no addresses or extra details after the name).
-
-Output:
-Return only the JSON object defined by the schema. Do not output explanations or text outside the JSON.`;
 
 @Injectable()
 export class AiService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(AiService.name);
-  private openaiClient: any | null = null;
-  private openaiClientCreatedAt: number | null = null;
-  private openaiClientErrorCount: number = 0;
+  private readonly openAiClientState: OpenAiClientState = {
+    client: null,
+    createdAt: null,
+    errorCount: 0,
+  };
   private readonly deepResearchRuns = new Map<string, DeepResearchRun>();
   private readonly letterRuns = new Map<string, LetterRun>();
   private readonly instanceId: string;
@@ -531,55 +226,6 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     // Don't keep process alive just for cleanup sweeps
     if (typeof (this.cleanupSweepInterval as any)?.unref === 'function') {
       (this.cleanupSweepInterval as any).unref();
-    }
-  }
-
-  private async getOpenAiClient(apiKey: string) {
-    // Check if client needs recreation due to age or error count
-    const now = Date.now();
-    const needsRecreation =
-      !this.openaiClient ||
-      (this.openaiClientCreatedAt && now - this.openaiClientCreatedAt > AiService.CLIENT_MAX_AGE_MS) ||
-      this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS;
-
-    if (needsRecreation) {
-      if (this.openaiClient) {
-        const reason = 
-          !this.openaiClientCreatedAt ? 'no timestamp' :
-          (now - this.openaiClientCreatedAt > AiService.CLIENT_MAX_AGE_MS) ? 'age limit (30 minutes)' :
-          `error count (${this.openaiClientErrorCount})`;
-        this.logger.log(`Recreating OpenAI client due to: ${reason}`);
-      }
-      const { default: OpenAI } = await import('openai');
-      this.openaiClient = new OpenAI({
-        apiKey,
-        timeout: 60000, // 60 seconds - accommodates streaming operations
-        maxRetries: 3,
-      });
-      this.openaiClientCreatedAt = now;
-      this.openaiClientErrorCount = 0;
-    }
-    
-    return this.openaiClient;
-  }
-
-  private handleOpenAiError(error: any, context: string): never {
-    this.openaiClientErrorCount++;
-    const errorMessage = error?.message || 'unknown error';
-    this.logger.error(`OpenAI error in ${context}: ${errorMessage} (error count: ${this.openaiClientErrorCount})`);
-    
-    if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
-      this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
-    }
-    
-    throw error;
-  }
-
-  private handleOpenAiSuccess() {
-    // Reset error count on successful operation
-    if (this.openaiClientErrorCount > 0) {
-      this.logger.log(`OpenAI client recovered after ${this.openaiClientErrorCount} previous errors`);
-      this.openaiClientErrorCount = 0;
     }
   }
 
@@ -746,17 +392,27 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
       return { content: `DEV-STUB: ${input.prompt.slice(0, 120)}...` };
     }
     try {
-      const client = await this.getOpenAiClient(apiKey);
+      const client = await createOrGetOpenAiClient(this.openAiClientState, {
+        apiKey,
+        logger: this.logger,
+        maxAgeMs: AiService.CLIENT_MAX_AGE_MS,
+        maxErrors: AiService.CLIENT_MAX_ERRORS,
+      });
       const resp = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: input.prompt }],
         temperature: 0.7,
       });
-      this.handleOpenAiSuccess();
+      handleOpenAiSuccess(this.openAiClientState, this.logger);
       const content = resp.choices?.[0]?.message?.content ?? '';
       return { content };
     } catch (error) {
-      this.handleOpenAiError(error, 'generate');
+      handleOpenAiError(this.openAiClientState, {
+        error,
+        context: 'generate',
+        logger: this.logger,
+        maxErrors: AiService.CLIENT_MAX_ERRORS,
+      });
     }
   }
 
@@ -788,7 +444,12 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
         };
       }
 
-      const client = await this.getOpenAiClient(apiKey);
+      const client = await createOrGetOpenAiClient(this.openAiClientState, {
+        apiKey,
+        logger: this.logger,
+        maxAgeMs: AiService.CLIENT_MAX_AGE_MS,
+        maxErrors: AiService.CLIENT_MAX_ERRORS,
+      });
 
       const instructions = `You help constituents prepare to write letters to their Members of Parliament.
 
@@ -884,7 +545,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         })}`,
       );
 
-      this.handleOpenAiSuccess();
+      handleOpenAiSuccess(this.openAiClientState, this.logger);
       return {
         model,
         responseId: (response as any)?.id ?? null,
@@ -902,10 +563,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       if (error && typeof error === 'object' && 'message' in error) {
         const errorMsg = (error as Error).message?.toLowerCase() || '';
         if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
-          this.openaiClientErrorCount++;
-          this.logger.warn(`OpenAI error detected in generateWritingDeskFollowUps (error count: ${this.openaiClientErrorCount})`);
-          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
-            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          this.openAiClientState.errorCount++;
+          this.logger.warn(
+            `OpenAI error detected in generateWritingDeskFollowUps (error count: ${this.openAiClientState.errorCount})`,
+          );
+          if (this.openAiClientState.errorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(
+              `OpenAI client will be recreated on next call due to ${this.openAiClientState.errorCount} consecutive errors`,
+            );
           }
         }
       }
@@ -1281,30 +946,38 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       );
 
       const context = await this.resolveLetterContext(userId);
-      const prompt = this.buildLetterPrompt({ job: baselineJob, tone, context, research: researchContent });
+      const prompt = buildLetterPrompt({
+        job: baselineJob,
+        tone,
+        context,
+        research: researchContent,
+      });
 
       if (!apiKey) {
         const stub = this.buildStubLetter({ job: baselineJob, tone, context, research: researchContent });
-        const stubDocument = this.buildLetterDocumentHtml({
-          mpName: stub.mp_name,
-          mpAddress1: stub.mp_address_1,
-          mpAddress2: stub.mp_address_2,
-          mpCity: stub.mp_city,
-          mpCounty: stub.mp_county,
-          mpPostcode: stub.mp_postcode,
-          date: stub.date,
-          subjectLineHtml: stub.subject_line_html,
-          letterContentHtml: stub.letter_content,
-          senderName: stub.sender_name,
-          senderAddress1: stub.sender_address_1,
-          senderAddress2: stub.sender_address_2,
-          senderAddress3: stub.sender_address_3,
-          senderCity: stub.sender_city,
-          senderCounty: stub.sender_county,
-          senderPostcode: stub.sender_postcode,
-          senderTelephone: stub.sender_phone,
-          references: stub.references,
-        });
+        const stubDocument = buildLetterDocumentHtml(
+          {
+            mpName: stub.mp_name,
+            mpAddress1: stub.mp_address_1,
+            mpAddress2: stub.mp_address_2,
+            mpCity: stub.mp_city,
+            mpCounty: stub.mp_county,
+            mpPostcode: stub.mp_postcode,
+            date: stub.date,
+            subjectLineHtml: stub.subject_line_html,
+            letterContentHtml: stub.letter_content,
+            senderName: stub.sender_name,
+            senderAddress1: stub.sender_address_1,
+            senderAddress2: stub.sender_address_2,
+            senderAddress3: stub.sender_address_3,
+            senderCity: stub.sender_city,
+            senderCounty: stub.sender_county,
+            senderPostcode: stub.sender_postcode,
+            senderTelephone: stub.sender_phone,
+            references: stub.references,
+          },
+          { normaliseTypography: (value) => this.normaliseLetterTypography(value) },
+        );
         const rawJson = JSON.stringify(stub);
         await this.persistLetterResult(userId, baselineJob, {
           status: 'completed',
@@ -1341,12 +1014,20 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         return;
       }
 
-      const client = await this.getOpenAiClient(apiKey);
+      const client = await createOrGetOpenAiClient(this.openAiClientState, {
+        apiKey,
+        logger: this.logger,
+        maxAgeMs: AiService.CLIENT_MAX_AGE_MS,
+        maxErrors: AiService.CLIENT_MAX_ERRORS,
+      });
       const createLetterStreamFromPrompt = () =>
         client.responses.stream({
           model,
           input: [
-            { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
+            {
+              role: 'system',
+              content: [{ type: 'input_text', text: buildLetterSystemPrompt() }],
+            },
             { role: 'user', content: [{ type: 'input_text', text: prompt }] },
           ],
           text: {
@@ -1354,7 +1035,10 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               type: 'json_schema',
               name: 'mp_letter',
               strict: true,
-              schema: this.buildLetterResponseSchema(context),
+              schema: buildLetterResponseSchema({
+                context,
+                normaliseTypography: (value) => this.normaliseLetterTypography(value),
+              }),
             },
             verbosity,
           },
@@ -1629,7 +1313,42 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 const preview = this.extractLetterPreview(jsonBuffer);
                 if (preview !== null) {
                   const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
-                  const previewDocument = this.buildLetterDocumentHtml({
+                  const previewDocument = buildLetterDocumentHtml(
+                    {
+                      mpName: context.mpName,
+                      mpAddress1: context.mpAddress1,
+                      mpAddress2: context.mpAddress2,
+                      mpCity: context.mpCity,
+                      mpCounty: context.mpCounty,
+                      mpPostcode: context.mpPostcode,
+                      date: context.today,
+                      subjectLineHtml: subjectPreview,
+                      letterContentHtml: preview,
+                      senderName: context.senderName,
+                      senderAddress1: context.senderAddress1,
+                      senderAddress2: context.senderAddress2,
+                      senderAddress3: context.senderAddress3,
+                      senderCity: context.senderCity,
+                      senderCounty: context.senderCounty,
+                      senderPostcode: context.senderPostcode,
+                      senderTelephone: context.senderTelephone,
+                      references: this.extractReferencesFromJson(jsonBuffer),
+                    },
+                    { normaliseTypography: (value) => this.normaliseLetterTypography(value) },
+                  );
+                  send({ type: 'letter_delta', html: previewDocument });
+                  await persistProgressIfNeeded(previewDocument);
+                }
+              }
+              continue;
+            }
+
+            if (eventType === 'response.output_text.done') {
+              const preview = this.extractLetterPreview(jsonBuffer);
+              if (preview !== null) {
+                const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
+                const previewDocument = buildLetterDocumentHtml(
+                  {
                     mpName: context.mpName,
                     mpAddress1: context.mpAddress1,
                     mpAddress2: context.mpAddress2,
@@ -1648,38 +1367,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                     senderPostcode: context.senderPostcode,
                     senderTelephone: context.senderTelephone,
                     references: this.extractReferencesFromJson(jsonBuffer),
-                  });
-                  send({ type: 'letter_delta', html: previewDocument });
-                  await persistProgressIfNeeded(previewDocument);
-                }
-              }
-              continue;
-            }
-
-            if (eventType === 'response.output_text.done') {
-              const preview = this.extractLetterPreview(jsonBuffer);
-              if (preview !== null) {
-                const subjectPreview = this.extractSubjectLinePreview(jsonBuffer);
-                const previewDocument = this.buildLetterDocumentHtml({
-                  mpName: context.mpName,
-                  mpAddress1: context.mpAddress1,
-                  mpAddress2: context.mpAddress2,
-                  mpCity: context.mpCity,
-                  mpCounty: context.mpCounty,
-                  mpPostcode: context.mpPostcode,
-                  date: context.today,
-                  subjectLineHtml: subjectPreview,
-                  letterContentHtml: preview,
-                  senderName: context.senderName,
-                  senderAddress1: context.senderAddress1,
-                  senderAddress2: context.senderAddress2,
-                  senderAddress3: context.senderAddress3,
-                  senderCity: context.senderCity,
-                  senderCounty: context.senderCounty,
-                  senderPostcode: context.senderPostcode,
-                  senderTelephone: context.senderTelephone,
-                  references: this.extractReferencesFromJson(jsonBuffer),
-                });
+                  },
+                  { normaliseTypography: (value) => this.normaliseLetterTypography(value) },
+                );
                 send({ type: 'letter_delta', html: previewDocument });
                 await persistProgressIfNeeded(previewDocument);
               }
@@ -1715,26 +1405,29 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                     }
                   })
                 : [];
-              const finalDocument = this.buildLetterDocumentHtml({
-                mpName: merged.mp_name,
-                mpAddress1: merged.mp_address_1,
-                mpAddress2: merged.mp_address_2,
-                mpCity: merged.mp_city,
-                mpCounty: merged.mp_county,
-                mpPostcode: merged.mp_postcode,
-                date: merged.date,
-                subjectLineHtml: merged.subject_line_html,
-                letterContentHtml: merged.letter_content,
-                senderName: merged.sender_name,
-                senderAddress1: merged.sender_address_1,
-                senderAddress2: merged.sender_address_2,
-                senderAddress3: merged.sender_address_3,
-                senderCity: merged.sender_city,
-                senderCounty: merged.sender_county,
-                senderPostcode: merged.sender_postcode,
-                senderTelephone: merged.sender_phone,
-                references,
-              });
+              const finalDocument = buildLetterDocumentHtml(
+                {
+                  mpName: merged.mp_name,
+                  mpAddress1: merged.mp_address_1,
+                  mpAddress2: merged.mp_address_2,
+                  mpCity: merged.mp_city,
+                  mpCounty: merged.mp_county,
+                  mpPostcode: merged.mp_postcode,
+                  date: merged.date,
+                  subjectLineHtml: merged.subject_line_html,
+                  letterContentHtml: merged.letter_content,
+                  senderName: merged.sender_name,
+                  senderAddress1: merged.sender_address_1,
+                  senderAddress2: merged.sender_address_2,
+                  senderAddress3: merged.sender_address_3,
+                  senderCity: merged.sender_city,
+                  senderCounty: merged.sender_county,
+                  senderPostcode: merged.sender_postcode,
+                  senderTelephone: merged.sender_phone,
+                  references,
+                },
+                { normaliseTypography: (value) => this.normaliseLetterTypography(value) },
+              );
 
               const resolvedId = resolvedResponseId ?? responseId ?? null;
               await this.persistLetterResult(userId, baselineJob, {
@@ -1762,7 +1455,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 status: 'completed',
                 responseId: resolvedId ?? run.responseId ?? null,
               });
-              this.handleOpenAiSuccess();
+              handleOpenAiSuccess(this.openAiClientState, this.logger);
               subject.complete();
 
               if (quietPeriodTimer) {
@@ -1870,26 +1563,29 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
               }
             })
           : [];
-        const finalDocument = this.buildLetterDocumentHtml({
-          mpName: merged.mp_name,
-          mpAddress1: merged.mp_address_1,
-          mpAddress2: merged.mp_address_2,
-          mpCity: merged.mp_city,
-          mpCounty: merged.mp_county,
-          mpPostcode: merged.mp_postcode,
-          date: merged.date,
-          subjectLineHtml: merged.subject_line_html,
-          letterContentHtml: merged.letter_content,
-          senderName: merged.sender_name,
-          senderAddress1: merged.sender_address_1,
-          senderAddress2: merged.sender_address_2,
-          senderAddress3: merged.sender_address_3,
-          senderCity: merged.sender_city,
-          senderCounty: merged.sender_county,
-          senderPostcode: merged.sender_postcode,
-          senderTelephone: merged.sender_phone,
-          references,
-        });
+        const finalDocument = buildLetterDocumentHtml(
+          {
+            mpName: merged.mp_name,
+            mpAddress1: merged.mp_address_1,
+            mpAddress2: merged.mp_address_2,
+            mpCity: merged.mp_city,
+            mpCounty: merged.mp_county,
+            mpPostcode: merged.mp_postcode,
+            date: merged.date,
+            subjectLineHtml: merged.subject_line_html,
+            letterContentHtml: merged.letter_content,
+            senderName: merged.sender_name,
+            senderAddress1: merged.sender_address_1,
+            senderAddress2: merged.sender_address_2,
+            senderAddress3: merged.sender_address_3,
+            senderCity: merged.sender_city,
+            senderCounty: merged.sender_county,
+            senderPostcode: merged.sender_postcode,
+            senderTelephone: merged.sender_phone,
+            references,
+          },
+          { normaliseTypography: (value) => this.normaliseLetterTypography(value) },
+        );
 
         await this.persistLetterResult(userId, baselineJob, {
           status: 'completed',
@@ -1915,7 +1611,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           status: 'completed',
           responseId,
         });
-        this.handleOpenAiSuccess();
+        handleOpenAiSuccess(this.openAiClientState, this.logger);
         subject.complete();
       } else {
         const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus, {
@@ -1975,10 +1671,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       if (error && typeof error === 'object' && 'message' in error) {
         const errorMsg = (error as Error).message?.toLowerCase() || '';
         if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
-          this.openaiClientErrorCount++;
-          this.logger.warn(`OpenAI error detected in generateLetterForUser (error count: ${this.openaiClientErrorCount})`);
-          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
-            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          this.openAiClientState.errorCount++;
+          this.logger.warn(
+            `OpenAI error detected in generateLetterForUser (error count: ${this.openAiClientState.errorCount})`,
+          );
+          if (this.openAiClientState.errorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(
+              `OpenAI client will be recreated on next call due to ${this.openAiClientState.errorCount} consecutive errors`,
+            );
           }
         }
       }
@@ -2394,7 +2094,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       const prompt = this.buildDeepResearchPrompt(baselineJob, { mpName });
-      const client = await this.getOpenAiClient(apiKey);
+      const client = await createOrGetOpenAiClient(this.openAiClientState, {
+        apiKey,
+        logger: this.logger,
+        maxAgeMs: AiService.CLIENT_MAX_AGE_MS,
+        maxErrors: AiService.CLIENT_MAX_ERRORS,
+      });
       const requestExtras = this.buildDeepResearchRequestExtras(model);
 
       this.logger.log(
@@ -2840,7 +2545,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             status: 'completed',
             responseId,
           });
-          this.handleOpenAiSuccess();
+          handleOpenAiSuccess(this.openAiClientState, this.logger);
           subject.complete();
         } else {
           const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus);
@@ -2869,10 +2574,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       if (error && typeof error === 'object' && 'message' in error) {
         const errorMsg = (error as Error).message?.toLowerCase() || '';
         if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
-          this.openaiClientErrorCount++;
-          this.logger.warn(`OpenAI error detected in startDeepResearch (error count: ${this.openaiClientErrorCount})`);
-          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
-            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          this.openAiClientState.errorCount++;
+          this.logger.warn(
+            `OpenAI error detected in startDeepResearch (error count: ${this.openAiClientState.errorCount})`,
+          );
+          if (this.openAiClientState.errorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(
+              `OpenAI client will be recreated on next call due to ${this.openAiClientState.errorCount} consecutive errors`,
+            );
           }
         }
       }
@@ -3656,88 +3365,6 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     };
   }
 
-  private buildLetterPrompt(params: {
-    job: ActiveWritingDeskJobResource;
-    tone: WritingDeskLetterTone;
-    context: LetterContext;
-    research: string;
-  }): string {
-    const { job, tone, context, research } = params;
-    const toneDetail = LETTER_TONE_DETAILS[tone];
-    const intake = job.form?.issueDescription ?? '';
-    const followUps = Array.isArray(job.followUpQuestions)
-      ? job.followUpQuestions
-          .map((question, index) => {
-            const answer = job.followUpAnswers?.[index] ?? '';
-            if (!question && !answer) return null;
-            return `Question: ${question}\nAnswer: ${answer}`;
-          })
-          .filter((entry): entry is string => !!entry)
-      : [];
-
-    const followUpSection =
-      followUps.length > 0 ? followUps.join('\n\n') : 'No follow-up questions were required.';
-
-    const researchSection = research || 'No deep research findings were available.';
-
-    const sections = [
-      `Selected tone: ${toneDetail.label}. ${toneDetail.prompt}`,
-      `Today's date: ${context.today}`,
-      `MP profile:\n- Name: ${context.mpName || 'Unknown'}\n- Constituency: ${context.constituency || 'Unknown'}\n- Parliamentary address line 1: ${context.mpAddress1 || ''}\n- Parliamentary address line 2: ${context.mpAddress2 || ''}\n- Parliamentary city: ${context.mpCity || ''}\n- Parliamentary county: ${context.mpCounty || ''}\n- Parliamentary postcode: ${context.mpPostcode || ''}`,
-      `Sender profile:\n- Name: ${context.senderName || ''}\n- Address line 1: ${context.senderAddress1 || ''}\n- Address line 2: ${context.senderAddress2 || ''}\n- Address line 3: ${context.senderAddress3 || ''}\n- City: ${context.senderCity || ''}\n- County: ${context.senderCounty || ''}\n- Postcode: ${context.senderPostcode || ''}`,
-      `Sender profile:\n- Name: ${context.senderName || ''}\n- Address line 1: ${context.senderAddress1 || ''}\n- Address line 2: ${context.senderAddress2 || ''}\n- Address line 3: ${context.senderAddress3 || ''}\n- City: ${context.senderCity || ''}\n- County: ${context.senderCounty || ''}\n- Postcode: ${context.senderPostcode || ''}\n- Telephone: ${context.senderTelephone || ''}`,
-      `User intake description:\n${intake}`,
-      `Follow-up details:\n${followUpSection}`,
-      `Deep research findings:\n${researchSection}`,
-    ];
-
-    return sections.join('\n\n');
-  }
-
-  private buildLetterSystemPrompt(): string {
-    return LETTER_SYSTEM_PROMPT;
-  }
-
-  private buildLetterResponseSchema(context: LetterContext) {
-    const schema = JSON.parse(JSON.stringify(LETTER_RESPONSE_SCHEMA)) as Record<string, any>;
-    const normalise = (value: string | null | undefined): string => {
-      if (typeof value !== 'string') return '';
-      return this.normaliseLetterTypography(value.trim());
-    };
-
-    const setFlexibleProperty = (key: string, value: string | null | undefined) => {
-      const property = schema.properties?.[key];
-      if (!property || typeof property !== 'object') {
-        return;
-      }
-      delete property.const;
-      const normalised = normalise(value);
-      if (normalised.length > 0) {
-        property.default = normalised;
-      } else {
-        delete property.default;
-      }
-    };
-
-    setFlexibleProperty('mp_name', context.mpName);
-    setFlexibleProperty('mp_address_1', context.mpAddress1);
-    setFlexibleProperty('mp_address_2', context.mpAddress2);
-    setFlexibleProperty('mp_city', context.mpCity);
-    setFlexibleProperty('mp_county', context.mpCounty);
-    setFlexibleProperty('mp_postcode', context.mpPostcode);
-    setFlexibleProperty('date', context.today);
-    setFlexibleProperty('sender_name', context.senderName);
-    setFlexibleProperty('sender_address_1', context.senderAddress1);
-    setFlexibleProperty('sender_address_2', context.senderAddress2);
-    setFlexibleProperty('sender_address_3', context.senderAddress3);
-    setFlexibleProperty('sender_city', context.senderCity);
-    setFlexibleProperty('sender_county', context.senderCounty);
-    setFlexibleProperty('sender_postcode', context.senderPostcode);
-    setFlexibleProperty('sender_phone', context.senderTelephone);
-
-    return schema;
-  }
-
   private buildStubLetter(params: {
     job: ActiveWritingDeskJobResource;
     tone: WritingDeskLetterTone;
@@ -3869,196 +3496,6 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       sender_phone: context.senderTelephone || '',
       references: [],
     };
-  }
-
-  private buildLetterDocumentHtml(input: LetterDocumentInput): string {
-    const normalise = (value: string | null | undefined): string =>
-      typeof value === 'string' ? this.normaliseLetterTypography(value) : '';
-
-    const sections: string[] = [];
-    const mpLines = this.buildAddressLines({
-      name: normalise(input.mpName),
-      line1: normalise(input.mpAddress1),
-      line2: normalise(input.mpAddress2),
-      line3: null,
-      city: normalise(input.mpCity),
-      county: normalise(input.mpCounty),
-      postcode: normalise(input.mpPostcode),
-    });
-    if (mpLines.length > 0) {
-      sections.push(`<p>${mpLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
-    }
-
-    const formattedDate = this.formatLetterDisplayDate(normalise(input.date));
-    if (formattedDate) {
-      sections.push(`<p>${this.escapeLetterHtml(formattedDate)}</p>`);
-    }
-
-    const subjectLineHtml = normalise(input.subjectLineHtml).trim();
-    if (subjectLineHtml.length > 0) {
-      sections.push(subjectLineHtml);
-    }
-
-    const letterContentHtml = normalise(input.letterContentHtml);
-    if (letterContentHtml) {
-      sections.push(letterContentHtml);
-    }
-
-    const senderName = normalise(input.senderName).trim();
-    const senderLines = this.buildAddressLines({
-      name: null,
-      line1: normalise(input.senderAddress1),
-      line2: normalise(input.senderAddress2),
-      line3: normalise(input.senderAddress3),
-      city: normalise(input.senderCity),
-      county: normalise(input.senderCounty),
-      postcode: normalise(input.senderPostcode),
-    });
-
-    const hasAddressDetail = senderLines.some((line) => line.trim().length > 0);
-    if (hasAddressDetail && this.shouldAppendSenderAddress(letterContentHtml, senderLines, senderName)) {
-      sections.push(`<p>${senderLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
-    }
-
-    const telephone = normalise(input.senderTelephone).trim();
-    if (telephone.length > 0) {
-      sections.push(`<p>Tel: ${this.escapeLetterHtml(telephone)}</p>`);
-    }
-
-    const references = Array.isArray(input.references)
-      ? input.references
-          .filter((ref) => typeof ref === 'string' && ref.trim().length > 0)
-          .map((ref) => this.normaliseLetterTypography(ref))
-      : [];
-    if (references.length > 0) {
-      sections.push('<p><strong>References</strong></p>');
-      sections.push(
-        `<ul>${references
-          .map((ref) => {
-            const trimmed = ref.trim();
-            if (!trimmed) return '';
-            // Don't escape the URL for the href attribute, but escape the display text
-            const displayText = this.escapeLetterHtml(trimmed);
-            return `<li><a href="${trimmed}" target="_blank" rel="noreferrer noopener">${displayText}</a></li>`;
-          })
-          .filter((entry) => entry.length > 0)
-          .join('')}</ul>`,
-      );
-    }
-
-    return sections.join('');
-  }
-
-  private buildAddressLines(input: {
-    name?: string | null;
-    line1?: string | null;
-    line2?: string | null;
-    line3?: string | null;
-    city?: string | null;
-    county?: string | null;
-    postcode?: string | null;
-  }): string[] {
-    const lines: string[] = [];
-    const push = (value?: string | null) => {
-      if (typeof value !== 'string') return;
-      const trimmed = value.trim();
-      if (trimmed.length > 0) {
-        lines.push(trimmed);
-      }
-    };
-
-    push(input.name);
-    push(input.line1);
-    push(input.line2);
-    push(input.line3);
-
-    const city = typeof input.city === 'string' ? input.city.trim() : '';
-    const county = typeof input.county === 'string' ? input.county.trim() : '';
-    const postcode = typeof input.postcode === 'string' ? input.postcode.trim() : '';
-
-    const hasCity = city.length > 0;
-    const hasCounty = county.length > 0;
-    const hasPostcode = postcode.length > 0;
-
-    if (hasCity && !hasCounty && hasPostcode) {
-      lines.push(`${city} ${postcode}`.trim());
-    } else {
-      const locality = [city, county].filter((part) => part.length > 0).join(', ');
-      if (locality.length > 0) {
-        lines.push(locality);
-      }
-      if (hasPostcode) {
-        lines.push(postcode);
-      }
-    }
-
-    if (!hasCity && !hasCounty && hasPostcode && lines[lines.length - 1] !== postcode) {
-      lines.push(postcode);
-    }
-
-    return lines;
-  }
-
-  private escapeLetterHtml(value: string): string {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  private formatLetterDisplayDate(value: string | null | undefined): string {
-    if (typeof value !== 'string') return '';
-    const trimmed = value.trim();
-    if (!trimmed) return '';
-    const isoMatch = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
-    if (!isoMatch) {
-      return trimmed;
-    }
-    const [year, month, day] = trimmed.split('-');
-    if (!year || !month || !day) return trimmed;
-    return `${day}/${month}/${year}`;
-  }
-
-  private shouldAppendSenderAddress(
-    letterHtml: string,
-    senderLines: string[],
-    senderName?: string | null,
-  ): boolean {
-    const addressDetail = senderLines.filter((line) => line.trim().length > 0);
-    if (addressDetail.length === 0) return false;
-    const text = this.normaliseLetterPlainText(letterHtml);
-    if (!text) return true;
-    const lower = text.toLowerCase();
-    const hasAddress = addressDetail.some((line) => lower.includes(line.trim().toLowerCase()));
-    if (hasAddress) {
-      return false;
-    }
-    if (typeof senderName === 'string' && senderName.trim().length > 0) {
-      const name = senderName.trim().toLowerCase();
-      if (!lower.includes(name)) {
-        return true;
-      }
-    }
-    return true;
-  }
-
-  private normaliseLetterPlainText(value: string | null | undefined): string {
-    if (typeof value !== 'string') return '';
-    const normalised = this.normaliseLetterTypography(value);
-    return normalised
-      .replace(/<br\s*\/?\s*>/gi, '\n')
-      .replace(/<\/(p|div|h\d)>/gi, '\n')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/gi, ' ')
-      .replace(/&amp;/gi, '&')
-      .replace(/&quot;/gi, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&lt;/gi, '<')
-      .replace(/&gt;/gi, '>')
-      .replace(/\s+/g, ' ')
-      .trim();
   }
 
   private toLetterCompletePayload(
@@ -4582,7 +4019,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         };
       }
 
-      const client = await this.getOpenAiClient(apiKey);
+      const client = await createOrGetOpenAiClient(this.openAiClientState, {
+        apiKey,
+        logger: this.logger,
+        maxAgeMs: AiService.CLIENT_MAX_AGE_MS,
+        maxErrors: AiService.CLIENT_MAX_ERRORS,
+      });
       const model = this.resolveTranscriptionModel(input.model);
       const responseFormat = input.responseFormat ?? TranscriptionResponseFormat.TEXT;
       
@@ -4602,7 +4044,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       this.logger.log(`[transcription] Raw response: ${JSON.stringify(transcription)}`);
 
-      this.handleOpenAiSuccess();
+      handleOpenAiSuccess(this.openAiClientState, this.logger);
 
       const bundle = {
         model,
@@ -4618,10 +4060,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       if (error && typeof error === 'object' && 'message' in error) {
         const errorMsg = (error as Error).message?.toLowerCase() || '';
         if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
-          this.openaiClientErrorCount++;
-          this.logger.warn(`OpenAI error detected in transcribeAudio (error count: ${this.openaiClientErrorCount})`);
-          if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
-            this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+          this.openAiClientState.errorCount++;
+          this.logger.warn(
+            `OpenAI error detected in transcribeAudio (error count: ${this.openAiClientState.errorCount})`,
+          );
+          if (this.openAiClientState.errorCount >= AiService.CLIENT_MAX_ERRORS) {
+            this.logger.warn(
+              `OpenAI client will be recreated on next call due to ${this.openAiClientState.errorCount} consecutive errors`,
+            );
           }
         }
       }
@@ -4652,7 +4098,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             return;
           }
 
-          const client = await this.getOpenAiClient(apiKey);
+          const client = await createOrGetOpenAiClient(this.openAiClientState, {
+            apiKey,
+            logger: this.logger,
+            maxAgeMs: AiService.CLIENT_MAX_AGE_MS,
+            maxErrors: AiService.CLIENT_MAX_ERRORS,
+          });
           const model = this.resolveTranscriptionModel(input.model);
           
           // Convert base64 to buffer
@@ -4686,7 +4137,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             if (typedEvent.type === 'transcript.text.delta') {
               subscriber.next({ data: JSON.stringify({ type: 'delta', text: typedEvent.delta }) });
             } else if (typedEvent.type === 'transcript.text.done') {
-              this.handleOpenAiSuccess();
+              handleOpenAiSuccess(this.openAiClientState, this.logger);
               subscriber.next({ data: JSON.stringify({ type: 'complete', text: typedEvent.text, remainingCredits: remainingAfterCharge }) });
               subscriber.complete();
               _settled = true;
@@ -4703,10 +4154,14 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           if (error && typeof error === 'object' && 'message' in error) {
             const errorMsg = (error as Error).message?.toLowerCase() || '';
             if (errorMsg.includes('openai') || errorMsg.includes('api key') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
-              this.openaiClientErrorCount++;
-              this.logger.warn(`OpenAI error detected in streamTranscription (error count: ${this.openaiClientErrorCount})`);
-              if (this.openaiClientErrorCount >= AiService.CLIENT_MAX_ERRORS) {
-                this.logger.warn(`OpenAI client will be recreated on next call due to ${this.openaiClientErrorCount} consecutive errors`);
+              this.openAiClientState.errorCount++;
+              this.logger.warn(
+                `OpenAI error detected in streamTranscription (error count: ${this.openAiClientState.errorCount})`,
+              );
+              if (this.openAiClientState.errorCount >= AiService.CLIENT_MAX_ERRORS) {
+                this.logger.warn(
+                  `OpenAI client will be recreated on next call due to ${this.openAiClientState.errorCount} consecutive errors`,
+                );
               }
             }
           }
