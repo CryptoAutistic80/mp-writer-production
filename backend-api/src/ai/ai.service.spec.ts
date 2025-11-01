@@ -1,4 +1,5 @@
 import { AiService } from './ai.service';
+import * as letterHelpers from './letter';
 import { WritingDeskJobsService } from '../writing-desk-jobs/writing-desk-jobs.service';
 import { UserCreditsService } from '../user-credits/user-credits.service';
 import { ConfigService } from '@nestjs/config';
@@ -64,24 +65,27 @@ describe('AiService', () => {
         configGet: () => null,
       });
 
-      const schema = (service as any).buildLetterResponseSchema({
-        mpName: 'Canonical MP',
-        mpAddress1: 'Line 1',
-        mpAddress2: 'Line 2',
-        mpCity: 'Town',
-        mpCounty: 'County',
-        mpPostcode: 'AB1 2CD',
-        constituency: 'Somewhere',
-        senderName: 'Constituent',
-        senderAddress1: 'Sender Line 1',
-        senderAddress2: 'Sender Line 2',
-        senderAddress3: 'Sender Line 3',
-        senderCity: 'Sender Town',
-        senderCounty: 'Sender County',
-        senderPostcode: 'ZX9 9XZ',
-        senderTelephone: '020 7946 0123',
-        today: '2025-01-15',
-      });
+      const schema = letterHelpers.buildLetterResponseSchema(
+        {
+          mpName: 'Canonical MP',
+          mpAddress1: 'Line 1',
+          mpAddress2: 'Line 2',
+          mpCity: 'Town',
+          mpCounty: 'County',
+          mpPostcode: 'AB1 2CD',
+          constituency: 'Somewhere',
+          senderName: 'Constituent',
+          senderAddress1: 'Sender Line 1',
+          senderAddress2: 'Sender Line 2',
+          senderAddress3: 'Sender Line 3',
+          senderCity: 'Sender Town',
+          senderCounty: 'Sender County',
+          senderPostcode: 'ZX9 9XZ',
+          senderTelephone: '020 7946 0123',
+          today: '2025-01-15',
+        },
+        (value) => (service as any).normaliseLetterTypography(value),
+      );
 
       const fields = [
         'mp_name',
@@ -384,8 +388,8 @@ describe('AiService', () => {
       jest.spyOn(service as any, 'scheduleLetterRunCleanup').mockImplementation(() => undefined);
       jest.spyOn(service as any, 'delay').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'resolveLetterContext').mockResolvedValue(context);
-      jest.spyOn(service as any, 'buildLetterPrompt').mockReturnValue('prompt');
-      jest.spyOn(service as any, 'buildLetterSystemPrompt').mockReturnValue('system');
+      jest.spyOn(letterHelpers, 'buildLetterPrompt').mockReturnValue('prompt');
+      jest.spyOn(letterHelpers, 'buildLetterSystemPrompt').mockReturnValue('system');
       jest.spyOn(service as any, 'extractLetterPreview').mockReturnValue(null);
       jest.spyOn(service as any, 'extractSubjectLinePreview').mockReturnValue(null);
       jest.spyOn(service as any, 'extractReferencesFromJson').mockReturnValue([]);
