@@ -679,6 +679,44 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     return false;
   }
 
+  private isOpenAiResponseMissingError(error: unknown, responseId?: string | null): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const candidate = error as { status?: unknown; message?: unknown; error?: { message?: unknown } };
+    const status =
+      typeof candidate?.status === 'number'
+        ? candidate.status
+        : typeof candidate?.status === 'string'
+          ? Number(candidate.status)
+          : null;
+    const message =
+      typeof candidate?.message === 'string'
+        ? candidate.message
+        : typeof candidate?.error?.message === 'string'
+          ? candidate.error.message
+          : '';
+
+    if (status !== 404) {
+      return false;
+    }
+
+    if (!message) {
+      return false;
+    }
+
+    if (!message.toLowerCase().includes('response') || !message.toLowerCase().includes('not found')) {
+      return false;
+    }
+
+    if (responseId && !message.includes(responseId)) {
+      return false;
+    }
+
+    return true;
+  }
+
   private resolveTranscriptionModel(modelFromRequest?: TranscriptionModel): TranscriptionModel {
     if (modelFromRequest) {
       return modelFromRequest;
@@ -1304,6 +1342,31 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       const client = await this.getOpenAiClient(apiKey);
+      const createLetterStreamFromPrompt = () =>
+        client.responses.stream({
+          model,
+          input: [
+            { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
+            { role: 'user', content: [{ type: 'input_text', text: prompt }] },
+          ],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'mp_letter',
+              strict: true,
+              schema: this.buildLetterResponseSchema(context),
+            },
+            verbosity,
+          },
+          reasoning: {
+            effort: reasoningEffort,
+            summary: 'auto',
+          },
+          tools: [],
+          store: true,
+          include: ['reasoning.encrypted_content'],
+        }) as ResponseStreamLike;
+
       let openAiStream: ResponseStreamLike | null = null;
       let currentStream: ResponseStreamLike | null = null;
       let lastSequenceNumber: number | null = null;
@@ -1357,6 +1420,27 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         let latestError: unknown = initialError;
 
         while (true) {
+          if (this.isOpenAiResponseMissingError(latestError, responseId)) {
+            this.logger.warn(
+              `[writing-desk letter] response ${responseId ?? 'unknown'} missing; starting a new streamed response`,
+            );
+            send({
+              type: 'event',
+              event: {
+                type: 'resume_attempt',
+                message: 'Recreating your live draft after the previous stream expired…',
+                attempt: resumeAttempts + 1,
+              },
+            });
+            responseId = null;
+            run.responseId = null;
+            lastSequenceNumber = null;
+            lastCursor = null;
+            resumeAttempts = 0;
+            backgroundPollingNotified = false;
+            return createLetterStreamFromPrompt();
+          }
+
           if (!this.isRecoverableTransportError(latestError)) {
             throw latestError instanceof Error
               ? latestError
@@ -1412,6 +1496,26 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             );
             return resumed;
           } catch (resumeError) {
+            if (this.isOpenAiResponseMissingError(resumeError, responseId)) {
+              this.logger.warn(
+                `[writing-desk letter] response ${responseId ?? 'unknown'} missing on resume; starting a fresh letter stream`,
+              );
+              send({
+                type: 'event',
+                event: {
+                  type: 'resume_attempt',
+                  message: 'The live draft expired, starting a fresh stream with your latest details…',
+                  attempt: resumeAttempts,
+                },
+              });
+              responseId = null;
+              run.responseId = null;
+              lastSequenceNumber = null;
+              lastCursor = null;
+              resumeAttempts = 0;
+              backgroundPollingNotified = false;
+              return createLetterStreamFromPrompt();
+            }
             this.logger.error(
               `[writing-desk letter] resume attempt ${resumeAttempts} failed for response ${responseId}: ${
                 resumeError instanceof Error ? resumeError.message : 'unknown error'
@@ -1425,29 +1529,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
       openAiStream = resumeFromState?.responseId
         ? (client.responses.stream({ response_id: resumeFromState.responseId }) as ResponseStreamLike)
-        : (client.responses.stream({
-            model,
-            input: [
-              { role: 'system', content: [{ type: 'input_text', text: this.buildLetterSystemPrompt() }] },
-              { role: 'user', content: [{ type: 'input_text', text: prompt }] },
-            ],
-            text: {
-              format: {
-                type: 'json_schema',
-                name: 'mp_letter',
-                strict: true,
-                schema: this.buildLetterResponseSchema(context),
-              },
-              verbosity,
-            },
-            reasoning: {
-              effort: reasoningEffort,
-              summary: 'auto',
-            },
-            tools: [],
-            store: true,
-            include: ['reasoning.encrypted_content'],
-          }) as ResponseStreamLike);
+        : createLetterStreamFromPrompt();
 
       currentStream = openAiStream;
       registerController(currentStream);
@@ -1720,6 +1802,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           streamError = error;
         }
 
+        if (quietPeriodTimer) {
+          clearTimeout(quietPeriodTimer);
+          quietPeriodTimer = null;
+        }
+
         const resumedStream = await attemptStreamResume(streamError);
         if (!resumedStream) {
           currentStream = null;
@@ -1727,6 +1814,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
         currentStream = resumedStream;
         registerController(currentStream);
+        startQuietPeriodTimer();
       }
 
       if (_settled) {
