@@ -1,46 +1,34 @@
 import { AiService } from './ai.service';
-import { WritingDeskJobsService } from '../writing-desk-jobs/writing-desk-jobs.service';
-import { UserCreditsService } from '../user-credits/user-credits.service';
 import { ConfigService } from '@nestjs/config';
 import { OpenAiClientService } from './openai/openai-client.service';
 import { StreamingRunManager } from './streaming/streaming-run.manager';
 import { WritingDeskLetterService } from './writing-desk/letter/letter.service';
 import { StreamingRunState } from '../streaming-state/streaming-state.types';
 import { WritingDeskResearchService } from './writing-desk/research/research.service';
+import { WritingDeskFollowUpService } from './writing-desk/follow-up/follow-up.service';
+import { AiTranscriptionService } from './transcription/transcription.service';
 
 describe('AiService', () => {
   const createService = ({
     configGet,
-    userCredits,
-    writingDeskJobs,
     streamingRuns,
     openAiClient,
     letterService,
     researchService,
+    followUpService,
+    transcriptionService,
   }: {
     configGet?: (key: string) => string | null | undefined;
-    userCredits?: Partial<UserCreditsService>;
-    writingDeskJobs?: Partial<WritingDeskJobsService>;
     streamingRuns?: Partial<StreamingRunManager>;
     openAiClient?: Partial<OpenAiClientService>;
     letterService?: Partial<WritingDeskLetterService>;
     researchService?: Partial<WritingDeskResearchService>;
+    followUpService?: Partial<WritingDeskFollowUpService>;
+    transcriptionService?: Partial<AiTranscriptionService>;
   } = {}) => {
     const config = {
       get: jest.fn((key: string) => (configGet ? configGet(key) : null)),
     } as unknown as ConfigService;
-
-    const credits = {
-      deductFromMine: jest.fn().mockResolvedValue({ credits: 10 }),
-      addToMine: jest.fn().mockResolvedValue(undefined),
-      ...userCredits,
-    } as unknown as UserCreditsService;
-
-    const jobs = {
-      getActiveJobForUser: jest.fn(),
-      upsertActiveJob: jest.fn(),
-      ...writingDeskJobs,
-    } as unknown as WritingDeskJobsService;
 
     const streaming = {
       getInstanceId: jest.fn().mockReturnValue('test-instance'),
@@ -85,26 +73,38 @@ describe('AiService', () => {
       ...researchService,
     } as unknown as WritingDeskResearchService;
 
+    const followUp = {
+      generate: jest.fn(),
+      record: jest.fn(),
+      ...followUpService,
+    } as unknown as WritingDeskFollowUpService;
+
+    const transcription = {
+      transcribeAudio: jest.fn(),
+      streamTranscription: jest.fn(),
+      ...transcriptionService,
+    } as unknown as AiTranscriptionService;
+
     const service = new AiService(
       config,
-      credits,
-      jobs,
       streaming,
       openAi,
       letter,
       research,
+      followUp,
+      transcription,
     );
 
     return {
       service,
       dependencies: {
         config,
-        credits,
-        jobs,
         streamingRuns: streaming,
         openAi,
         letter,
         research,
+        followUp,
+        transcription,
       },
     };
   };
@@ -150,6 +150,92 @@ describe('AiService', () => {
         createIfMissing: true,
       });
       expect(result).toEqual({ jobId: 'job-123', status: 'running' });
+    });
+  });
+
+  describe('generateWritingDeskFollowUps', () => {
+    it('throws when userId is missing', async () => {
+      const { service } = createService();
+      await expect(service.generateWritingDeskFollowUps(null, { issueDescription: 'Test' } as any)).rejects.toThrow(
+        'User account required',
+      );
+    });
+
+    it('delegates to the follow-up service', async () => {
+      const payload = { model: 'test', followUpQuestions: ['Q1'], notes: null } as any;
+      const { service, dependencies } = createService({
+        followUpService: {
+          generate: jest.fn().mockResolvedValue(payload),
+        },
+      });
+
+      const result = await service.generateWritingDeskFollowUps('user-1', { issueDescription: 'Help' } as any);
+
+      expect(dependencies.followUp.generate).toHaveBeenCalledWith('user-1', { issueDescription: 'Help' });
+      expect(result).toBe(payload);
+    });
+  });
+
+  describe('recordWritingDeskFollowUps', () => {
+    it('delegates to the follow-up service', async () => {
+      const { service, dependencies } = createService({
+        followUpService: {
+          record: jest.fn().mockResolvedValue({ ok: true }),
+        },
+      });
+
+      const dto = {
+        issueDescription: 'Issue',
+        followUpQuestions: ['Q1'],
+        followUpAnswers: ['A1'],
+      } as any;
+
+      const result = await service.recordWritingDeskFollowUps(dto);
+
+      expect(dependencies.followUp.record).toHaveBeenCalledWith(dto);
+      expect(result).toEqual({ ok: true });
+    });
+  });
+
+  describe('transcribeAudio', () => {
+    it('throws when userId is missing', async () => {
+      const { service } = createService();
+      await expect(service.transcribeAudio(null, { audioData: '' } as any)).rejects.toThrow('User account required');
+    });
+
+    it('delegates to the transcription service', async () => {
+      const transcription = { text: 'hello' } as any;
+      const { service, dependencies } = createService({
+        transcriptionService: {
+          transcribeAudio: jest.fn().mockResolvedValue(transcription),
+        },
+      });
+
+      const result = await service.transcribeAudio('user-1', { audioData: 'data' } as any);
+
+      expect(dependencies.transcription.transcribeAudio).toHaveBeenCalledWith('user-1', { audioData: 'data' });
+      expect(result).toBe(transcription);
+    });
+  });
+
+  describe('streamTranscription', () => {
+    it('throws when userId is missing', () => {
+      const { service } = createService();
+      expect(() => service.streamTranscription(null, { audioData: '' } as any)).toThrowError('User account required');
+    });
+
+    it('delegates to the transcription service', () => {
+      const stream = { subscribe: jest.fn() } as any;
+      const { service, dependencies } = createService({
+        transcriptionService: {
+          streamTranscription: jest.fn().mockReturnValue(stream),
+        },
+      });
+
+      const result = service.streamTranscription('user-1', { audioData: 'data' } as any);
+
+      expect(dependencies.transcription.streamTranscription).toHaveBeenCalledWith('user-1', { audioData: 'data' });
+      expect(result).toBe(stream);
     });
   });
 
