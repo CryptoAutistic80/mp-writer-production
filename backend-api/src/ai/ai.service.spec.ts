@@ -6,8 +6,8 @@ import { UserMpService } from '../user-mp/user-mp.service';
 import { UsersService } from '../users/users.service';
 import { UserAddressService } from '../user-address-store/user-address.service';
 import { ActiveWritingDeskJobResource } from '../writing-desk-jobs/writing-desk-jobs.types';
-import { StreamingStateService } from '../streaming-state/streaming-state.service';
 import { OpenAiClientService } from './openai/openai-client.service';
+import { StreamingRunManager } from './streaming/streaming-run.manager';
 
 describe('AiService', () => {
   const createService = ({
@@ -17,7 +17,7 @@ describe('AiService', () => {
     userMp,
     users,
     userAddress,
-    streamingState,
+    streamingRuns,
     openAiClient,
   }: {
     configGet: (key: string) => string | null | undefined;
@@ -26,7 +26,7 @@ describe('AiService', () => {
     userMp?: Partial<UserMpService>;
     users?: Partial<UsersService>;
     userAddress?: Partial<UserAddressService>;
-    streamingState?: Partial<StreamingStateService>;
+    streamingRuns?: Partial<StreamingRunManager>;
     openAiClient?: Partial<OpenAiClientService>;
   }) => {
     const config = { get: jest.fn((key: string) => configGet(key)) } as unknown as ConfigService;
@@ -48,12 +48,14 @@ describe('AiService', () => {
       getInstanceId: jest.fn().mockReturnValue('test-instance'),
       registerRun: jest.fn().mockResolvedValue(undefined),
       touchRun: jest.fn().mockResolvedValue(undefined),
-      removeRun: jest.fn().mockResolvedValue(undefined),
-      getRun: jest.fn().mockResolvedValue(null),
+      clearRun: jest.fn().mockResolvedValue(undefined),
+      createHeartbeat: jest.fn(() => jest.fn()),
+      listAllRuns: jest.fn().mockResolvedValue([]),
       findStaleRuns: jest.fn().mockResolvedValue([]),
-      checkHealth: jest.fn(),
-      ...streamingState,
-    } as unknown as StreamingStateService;
+      getRun: jest.fn().mockResolvedValue(null),
+      updateRun: jest.fn().mockResolvedValue(null),
+      ...streamingRuns,
+    } as unknown as StreamingRunManager;
 
     const openAi = {
       getClient: jest.fn(),
@@ -67,7 +69,7 @@ describe('AiService', () => {
 
     return {
       service: new AiService(config, credits, jobs, mp, usersService, address, streaming, openAi),
-      dependencies: { config, credits, jobs, mp, usersService, address, streaming, openAi },
+      dependencies: { config, credits, jobs, mp, usersService, address, streamingRuns: streaming, openAi },
     };
   };
 
@@ -363,7 +365,7 @@ describe('AiService', () => {
     });
 
     const setupLetterService = (activeJob: ActiveWritingDeskJobResource, context: Record<string, any>) => {
-      const { service } = createService({
+      const { service, dependencies } = createService({
         configGet: (key) => {
           switch (key) {
             case 'OPENAI_API_KEY':
@@ -391,9 +393,11 @@ describe('AiService', () => {
       const persistResultSpy = jest
         .spyOn(service as any, 'persistLetterResult')
         .mockResolvedValue(undefined);
-      const touchSpy = jest.spyOn(service as any, 'touchStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'clearStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'createStreamingHeartbeat').mockReturnValue(jest.fn());
+      const touchSpy = dependencies.streamingRuns.touchRun as jest.Mock;
+      touchSpy.mockResolvedValue(undefined);
+      (dependencies.streamingRuns.clearRun as jest.Mock).mockResolvedValue(undefined);
+      const heartbeat = jest.fn();
+      (dependencies.streamingRuns.createHeartbeat as jest.Mock).mockReturnValue(heartbeat);
       jest.spyOn(service as any, 'scheduleLetterRunCleanup').mockImplementation(() => undefined);
       jest.spyOn(service as any, 'delay').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'resolveLetterContext').mockResolvedValue(context);
@@ -806,16 +810,16 @@ describe('AiService', () => {
           getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
           upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
         },
-        streamingState: {
+        streamingRuns: {
           findStaleRuns: jest.fn().mockResolvedValue([staleRun]),
-          removeRun: jest.fn().mockResolvedValue(undefined),
+          clearRun: jest.fn().mockResolvedValue(undefined),
         },
       });
 
       await service.recoverStaleStreamingRuns();
 
       expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-1', 0.7);
-      expect(dependencies.streaming.removeRun).toHaveBeenCalledWith('deep_research', staleRun.runKey);
+      expect(dependencies.streamingRuns.clearRun).toHaveBeenCalledWith('deep_research', staleRun.runKey);
     });
 
     it('handles stale letter runs by refunding credits', async () => {
@@ -842,16 +846,16 @@ describe('AiService', () => {
           getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
           upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
         },
-        streamingState: {
+        streamingRuns: {
           findStaleRuns: jest.fn().mockResolvedValue([staleRun]),
-          removeRun: jest.fn().mockResolvedValue(undefined),
+          clearRun: jest.fn().mockResolvedValue(undefined),
         },
       });
 
       await service.recoverStaleStreamingRuns();
 
       expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-2', 0.2);
-      expect(dependencies.streaming.removeRun).toHaveBeenCalledWith('letter', staleRun.runKey);
+      expect(dependencies.streamingRuns.clearRun).toHaveBeenCalledWith('letter', staleRun.runKey);
     });
   });
 
@@ -907,9 +911,10 @@ describe('AiService', () => {
       const persistResultSpy = jest
         .spyOn(service as any, 'persistDeepResearchResult')
         .mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'touchStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'clearStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'createStreamingHeartbeat').mockReturnValue(jest.fn());
+      (dependencies.streamingRuns.touchRun as jest.Mock).mockResolvedValue(undefined);
+      (dependencies.streamingRuns.clearRun as jest.Mock).mockResolvedValue(undefined);
+      const heartbeat = jest.fn();
+      (dependencies.streamingRuns.createHeartbeat as jest.Mock).mockReturnValue(heartbeat);
       jest.spyOn(service as any, 'resolveUserMpName').mockResolvedValue('Test MP');
       jest.spyOn(service as any, 'buildDeepResearchPrompt').mockReturnValue('prompt');
       jest

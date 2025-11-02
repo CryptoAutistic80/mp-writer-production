@@ -27,9 +27,9 @@ import {
 import { UpsertActiveWritingDeskJobDto } from '../writing-desk-jobs/dto/upsert-active-writing-desk-job.dto';
 import { Observable, ReplaySubject, Subscription } from 'rxjs';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
-import { StreamingStateService } from '../streaming-state/streaming-state.service';
 import { StreamingRunState, StreamingRunKind } from '../streaming-state/streaming-state.types';
 import { OpenAiClientService } from './openai/openai-client.service';
+import { StreamingRunManager } from './streaming/streaming-run.manager';
 
 const FOLLOW_UP_CREDIT_COST = 0.1;
 const DEEP_RESEARCH_CREDIT_COST = 0.7;
@@ -400,10 +400,10 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
     private readonly userMp: UserMpService,
     private readonly users: UsersService,
     private readonly userAddress: UserAddressService,
-    private readonly streamingState: StreamingStateService,
+    private readonly streamingRuns: StreamingRunManager,
     private readonly openAiClient: OpenAiClientService,
   ) {
-    this.instanceId = this.streamingState.getInstanceId();
+    this.instanceId = this.streamingRuns.getInstanceId();
   }
 
   async onModuleInit() {
@@ -429,7 +429,7 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
       }
 
       // Get all active runs from Redis
-      const allRuns = await this.streamingState.listAllRuns();
+      const allRuns = await this.streamingRuns.listAllRuns();
       const activeRuns = allRuns.filter(run => run.status === 'running' && run.instanceId === this.instanceId);
       
       this.logger.log(`Found ${activeRuns.length} active streaming runs to drain`);
@@ -450,12 +450,12 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
             // We'll mark the run as cancelled in Redis and let existing cleanup handle it
             
             // Update status to cancelled in Redis
-            await this.streamingState.updateRun(run.type, runKey, { status: 'cancelled' });
+            await this.streamingRuns.updateRun(run.type, runKey, { status: 'cancelled' });
             
             this.logger.log(`Cancelled ${run.type} run: ${runKey}`);
           } else {
             // Run exists in Redis but not in local memory - mark as cancelled
-            await this.streamingState.updateRun(run.type, runKey, { status: 'cancelled' });
+            await this.streamingRuns.updateRun(run.type, runKey, { status: 'cancelled' });
             this.logger.log(`Marked orphaned ${run.type} run as cancelled: ${runKey}`);
           }
         } catch (error) {
@@ -496,7 +496,7 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
         if (isStale && isTerminated) {
           this.letterRuns.delete(key);
           cleanedLetter++;
-          void this.clearStreamingRun('letter', key).catch((err) => {
+          void this.streamingRuns.clearRun('letter', key).catch((err) => {
             this.logger.warn(`Failed to clear stale letter run ${key}: ${(err as Error)?.message}`);
           });
         }
@@ -511,7 +511,7 @@ export class AiService implements OnModuleInit, OnApplicationShutdown {
         if (isStale && isTerminated) {
           this.deepResearchRuns.delete(key);
           cleanedResearch++;
-          void this.clearStreamingRun('deep_research', key).catch((err) => {
+          void this.streamingRuns.clearRun('deep_research', key).catch((err) => {
             this.logger.warn(`Failed to clear stale research run ${key}: ${(err as Error)?.message}`);
           });
         }
@@ -1066,7 +1066,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         return existing;
       }
     } else {
-      const persisted = await this.streamingState.getRun('letter', key);
+      const persisted = await this.streamingRuns.getRun('letter', key);
       if (persisted) {
         if (persisted.responseId) {
           return this.resumeLetterRunFromState({
@@ -1108,7 +1108,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     this.letterRuns.set(key, run);
 
-    await this.registerStreamingRun({
+    await this.streamingRuns.registerRun({
       type: 'letter',
       runKey: key,
       userId,
@@ -1139,7 +1139,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     resumeFromState?: { responseId: string | null; charged: boolean; remainingCredits: number | null };
   }) {
     const { run, userId, baselineJob, subject, researchContent, resumeFromState } = params;
-    const heartbeat = this.createStreamingHeartbeat('letter', run.key);
+    const heartbeat = this.streamingRuns.createHeartbeat('letter', run.key);
     const tone = run.tone;
     let deductionApplied = false;
     let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
@@ -1207,7 +1207,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         );
       }
 
-      await this.touchStreamingRun('letter', run.key, { responseId: trimmed });
+      await this.streamingRuns.touchRun('letter', run.key, { responseId: trimmed });
     };
 
     try {
@@ -1220,7 +1220,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         deductionApplied = true;
         remainingCredits = Math.round(creditsAfterCharge * 100) / 100;
         run.remainingCredits = remainingCredits;
-        await this.touchStreamingRun('letter', run.key, {
+        await this.streamingRuns.touchRun('letter', run.key, {
           meta: { charged: true, remainingCredits },
         });
       }
@@ -1290,12 +1290,12 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           ),
           remainingCredits,
         });
-        await this.touchStreamingRun('letter', run.key, {
+        await this.streamingRuns.touchRun('letter', run.key, {
           status: 'completed',
           responseId: 'dev-stub',
           meta: { tone },
         });
-        await this.clearStreamingRun('letter', run.key);
+        await this.streamingRuns.clearRun('letter', run.key);
         subject.complete();
         
         // Clean up the quiet period timer
@@ -1723,7 +1723,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                 ),
                 remainingCredits,
               });
-              await this.touchStreamingRun('letter', run.key, {
+              await this.streamingRuns.touchRun('letter', run.key, {
                 status: 'completed',
                 responseId: resolvedId ?? run.responseId ?? null,
               });
@@ -1876,7 +1876,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           ),
           remainingCredits,
         });
-        await this.touchStreamingRun('letter', run.key, {
+        await this.streamingRuns.touchRun('letter', run.key, {
           status: 'completed',
           responseId,
         });
@@ -1890,7 +1890,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         run.status = 'error';
         _settled = true;
         send({ type: 'error', message, remainingCredits });
-        await this.touchStreamingRun('letter', run.key, {
+        await this.streamingRuns.touchRun('letter', run.key, {
           status: 'error',
           responseId,
         });
@@ -1962,7 +1962,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       );
 
       try {
-        await this.persistLetterState(userId, baselineJob, { status: 'error', tone });
+      await this.persistLetterState(userId, baselineJob, { status: 'error', tone });
       } catch (persistError) {
         this.logger.warn(
           `Failed to persist letter error state for user ${userId}: ${(persistError as Error)?.message ?? persistError}`,
@@ -1984,7 +1984,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       }
 
       send({ type: 'error', message, remainingCredits });
-      await this.touchStreamingRun('letter', run.key, {
+      await this.streamingRuns.touchRun('letter', run.key, {
         status: 'error',
         responseId: run.responseId,
       });
@@ -2004,7 +2004,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       }
 
-      await this.clearStreamingRun('letter', run.key);
+      await this.streamingRuns.clearRun('letter', run.key);
       this.scheduleLetterRunCleanup(run);
     }
   }
@@ -2019,7 +2019,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.letterRuns.delete(run.key);
-      void this.clearStreamingRun('letter', run.key).catch((err) => {
+      void this.streamingRuns.clearRun('letter', run.key).catch((err) => {
         this.logger.warn(`Failed to clear letter run ${run.key}: ${(err as Error)?.message}`);
       });
     }, LETTER_RUN_TTL_MS);
@@ -2061,7 +2061,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         return existing;
       }
     } else {
-      const persisted = await this.streamingState.getRun('deep_research', key);
+      const persisted = await this.streamingRuns.getRun('deep_research', key);
       if (persisted) {
         if (persisted.responseId) {
           return this.resumeDeepResearchRunFromState({
@@ -2091,7 +2091,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
 
     this.deepResearchRuns.set(key, run);
 
-    await this.registerStreamingRun({
+    await this.streamingRuns.registerRun({
       type: 'deep_research',
       runKey: key,
       userId,
@@ -2134,7 +2134,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         ? ((resumeMeta as Record<string, unknown>).remainingCredits as number)
         : null;
 
-    await this.touchStreamingRun('deep_research', run.key, {
+    await this.streamingRuns.touchRun('deep_research', run.key, {
       status: 'running',
       responseId: run.responseId,
       meta: { charged, remainingCredits },
@@ -2213,7 +2213,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
       remainingCredits,
     });
 
-    await this.touchStreamingRun('letter', run.key, {
+    await this.streamingRuns.touchRun('letter', run.key, {
       status: 'running',
       responseId: run.responseId,
       meta: { tone, charged, remainingCredits },
@@ -2246,7 +2246,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     resumeFromState?: { responseId: string | null; charged: boolean; remainingCredits: number | null };
   }) {
     const { run, userId, baselineJob, subject, resumeFromState } = params;
-    const heartbeat = this.createStreamingHeartbeat('deep_research', run.key);
+    const heartbeat = this.streamingRuns.createHeartbeat('deep_research', run.key);
     let deductionApplied = false;
     let remainingCredits: number | null = resumeFromState?.remainingCredits ?? null;
     let aggregatedText = '';
@@ -2342,11 +2342,11 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           responseId: 'dev-stub',
           remainingCredits,
         });
-        await this.touchStreamingRun('deep_research', run.key, {
+        await this.streamingRuns.touchRun('deep_research', run.key, {
           status: 'completed',
           responseId: 'dev-stub',
         });
-        await this.clearStreamingRun('deep_research', run.key);
+        await this.streamingRuns.clearRun('deep_research', run.key);
         subject.complete();
         return;
       }
@@ -2720,7 +2720,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
                   remainingCredits,
                   usage: (finalResponse as any)?.usage ?? null,
                 });
-                await this.touchStreamingRun('deep_research', run.key, {
+                await this.streamingRuns.touchRun('deep_research', run.key, {
                   status: 'completed',
                   responseId: resolvedResponseId ?? responseId,
                 });
@@ -2794,7 +2794,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
             remainingCredits,
             usage: (finalResponse as any)?.usage ?? null,
           });
-          await this.touchStreamingRun('deep_research', run.key, {
+          await this.streamingRuns.touchRun('deep_research', run.key, {
             status: 'completed',
             responseId,
           });
@@ -2809,7 +2809,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
           run.status = 'error';
           _settled = true;
           send({ type: 'error', message, remainingCredits });
-          await this.touchStreamingRun('deep_research', run.key, {
+          await this.streamingRuns.touchRun('deep_research', run.key, {
             status: 'error',
             responseId,
           });
@@ -2868,7 +2868,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         message,
         remainingCredits,
       });
-      await this.touchStreamingRun('deep_research', run.key, {
+      await this.streamingRuns.touchRun('deep_research', run.key, {
         status: 'error',
         responseId,
       });
@@ -2890,7 +2890,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         }
       }
 
-      await this.clearStreamingRun('deep_research', run.key);
+      await this.streamingRuns.clearRun('deep_research', run.key);
       this.scheduleRunCleanup(run);
     }
   }
@@ -2905,7 +2905,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     }
     const timer = setTimeout(() => {
       this.deepResearchRuns.delete(run.key);
-      void this.clearStreamingRun('deep_research', run.key).catch((err) => {
+      void this.streamingRuns.clearRun('deep_research', run.key).catch((err) => {
         this.logger.warn(`Failed to clear deep research run ${run.key}: ${(err as Error)?.message}`);
       });
     }, DEEP_RESEARCH_RUN_TTL_MS);
@@ -3011,66 +3011,9 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     return job;
   }
 
-  private async registerStreamingRun(params: {
-    type: StreamingRunKind;
-    runKey: string;
-    userId: string;
-    jobId: string;
-    status?: 'running' | 'completed' | 'error';
-    responseId?: string | null;
-    meta?: Record<string, unknown>;
-  }) {
-    try {
-      await this.streamingState.registerRun(params);
-    } catch (error) {
-      this.logger.error(
-        `[streaming-state] Failed to register ${params.type} run ${params.runKey}: ${
-          (error as Error)?.message ?? error
-        }`,
-      );
-      throw new ServiceUnavailableException('Streaming is temporarily unavailable. Please try again in a moment.');
-    }
-  }
-
-  private async touchStreamingRun(
-    type: StreamingRunKind,
-    runKey: string,
-    patch?: { status?: 'running' | 'completed' | 'error'; responseId?: string | null; meta?: Record<string, unknown> },
-  ) {
-    try {
-      await this.streamingState.touchRun(type, runKey, patch);
-    } catch (error) {
-      this.logger.warn(
-        `[streaming-state] Failed to update ${type} run ${runKey}: ${(error as Error)?.message ?? error}`,
-      );
-    }
-  }
-
-  private async clearStreamingRun(type: StreamingRunKind, runKey: string) {
-    try {
-      await this.streamingState.removeRun(type, runKey);
-    } catch (error) {
-      this.logger.warn(
-        `[streaming-state] Failed to remove ${type} run ${runKey}: ${(error as Error)?.message ?? error}`,
-      );
-    }
-  }
-
-  private createStreamingHeartbeat(type: StreamingRunKind, runKey: string) {
-    let lastBeatAt = 0;
-    return (patch?: { status?: 'running' | 'completed' | 'error'; responseId?: string | null; meta?: Record<string, unknown> }) => {
-      const now = Date.now();
-      if (!patch && now - lastBeatAt < 1000) {
-        return;
-      }
-      lastBeatAt = now;
-      void this.touchStreamingRun(type, runKey, patch);
-    };
-  }
-
   async recoverStaleStreamingRuns() {
     try {
-      const staleRuns = await this.streamingState.findStaleRuns(STREAMING_RUN_ORPHAN_THRESHOLD_MS);
+      const staleRuns = await this.streamingRuns.findStaleRuns(STREAMING_RUN_ORPHAN_THRESHOLD_MS);
       for (const state of staleRuns) {
         await this.handleOrphanedRun(state);
       }
@@ -3085,7 +3028,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
     try {
       const job = await this.writingDeskJobs.getActiveJobForUser(state.userId);
       if (!job || job.jobId !== state.jobId) {
-        await this.clearStreamingRun(state.type, state.runKey);
+        await this.streamingRuns.clearRun(state.type, state.runKey);
         return;
       }
 
@@ -3105,7 +3048,7 @@ Do NOT ask for documents, permissions, names, addresses, or personal details. On
         `[streaming-state] Failed to recover run ${state.type}:${state.runKey}: ${(error as Error)?.message ?? error}`,
       );
     } finally {
-      await this.clearStreamingRun(state.type, state.runKey);
+      await this.streamingRuns.clearRun(state.type, state.runKey);
     }
   }
 
