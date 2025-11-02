@@ -7,6 +7,7 @@ import { UsersService } from '../users/users.service';
 import { UserAddressService } from '../user-address-store/user-address.service';
 import { ActiveWritingDeskJobResource } from '../writing-desk-jobs/writing-desk-jobs.types';
 import { StreamingStateService } from '../streaming-state/streaming-state.service';
+import { OpenAiClientService } from './openai/openai-client.service';
 
 describe('AiService', () => {
   const createService = ({
@@ -17,6 +18,7 @@ describe('AiService', () => {
     users,
     userAddress,
     streamingState,
+    openAiClient,
   }: {
     configGet: (key: string) => string | null | undefined;
     userCredits?: Partial<UserCreditsService>;
@@ -25,6 +27,7 @@ describe('AiService', () => {
     users?: Partial<UsersService>;
     userAddress?: Partial<UserAddressService>;
     streamingState?: Partial<StreamingStateService>;
+    openAiClient?: Partial<OpenAiClientService>;
   }) => {
     const config = { get: jest.fn((key: string) => configGet(key)) } as unknown as ConfigService;
     const credits = {
@@ -52,9 +55,19 @@ describe('AiService', () => {
       ...streamingState,
     } as unknown as StreamingStateService;
 
+    const openAi = {
+      getClient: jest.fn(),
+      handleError: jest.fn((error: unknown) => {
+        throw error;
+      }),
+      recordSuccess: jest.fn(),
+      markError: jest.fn(),
+      ...openAiClient,
+    } as unknown as OpenAiClientService;
+
     return {
-      service: new AiService(config, credits, jobs, mp, usersService, address, streaming),
-      dependencies: { config, credits, jobs, mp, usersService, address, streaming },
+      service: new AiService(config, credits, jobs, mp, usersService, address, streaming, openAi),
+      dependencies: { config, credits, jobs, mp, usersService, address, streaming, openAi },
     };
   };
 
@@ -235,7 +248,7 @@ describe('AiService', () => {
         },
       };
 
-      (service as any).getOpenAiClient = jest.fn().mockResolvedValue(clientMock);
+      (dependencies.openAi.getClient as jest.Mock).mockResolvedValue(clientMock);
 
       // Capture schema passed to OpenAI to confirm lack of const constraints
       (clientMock.responses.stream as jest.Mock).mockImplementation((params: any) => {
@@ -488,7 +501,7 @@ describe('AiService', () => {
         },
       };
 
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+      (dependencies.openAi.getClient as jest.Mock).mockResolvedValue(client);
 
       await (service as any).executeLetterRun({
         run,
@@ -579,7 +592,7 @@ describe('AiService', () => {
         },
       };
 
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+      (dependencies.openAi.getClient as jest.Mock).mockResolvedValue(client);
       const waitSpy = jest
         .spyOn(service as any, 'waitForBackgroundResponseCompletion')
         .mockResolvedValue({ status: 'completed', output_text: 'final-json', id: 'resp-123' });
@@ -689,7 +702,7 @@ describe('AiService', () => {
         },
       };
 
-      (service as any).getOpenAiClient = jest.fn().mockResolvedValue(clientMock);
+      (dependencies.openAi.getClient as jest.Mock).mockResolvedValue(clientMock);
       (service as any).resolveLetterContext = jest.fn().mockResolvedValue({});
       (service as any).persistLetterState = jest.fn().mockResolvedValue(undefined);
 
@@ -964,7 +977,7 @@ describe('AiService', () => {
         },
       };
 
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+      (dependencies.openAi.getClient as jest.Mock).mockResolvedValue(client);
       await (service as any).executeDeepResearchRun({
         run,
         userId: 'user-1',
@@ -1039,7 +1052,7 @@ describe('AiService', () => {
         .spyOn(service as any, 'waitForBackgroundResponseCompletion')
         .mockResolvedValue({ status: 'completed', output_text: 'Hello world' });
 
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
+      (dependencies.openAi.getClient as jest.Mock).mockResolvedValue(client);
 
       await (service as any).executeDeepResearchRun({
         run,
