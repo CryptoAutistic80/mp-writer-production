@@ -7,10 +7,10 @@ import {
   TranscriptionDto,
   TranscriptionModel,
   TranscriptionResponseFormat,
-} from '../../dto/transcription.dto';
-import { UserCreditsService } from '../../../user-credits/user-credits.service';
-import { OpenAiClientService } from '../../openai/openai-client.service';
-import { isOpenAiRelatedError } from '../../openai/openai.helpers';
+} from '../dto/transcription.dto';
+import { UserCreditsService } from '../../user-credits/user-credits.service';
+import { OpenAiClientService } from '../openai/openai-client.service';
+import { isOpenAiRelatedError } from '../openai/openai.helpers';
 
 @Injectable()
 export class AiTranscriptionService {

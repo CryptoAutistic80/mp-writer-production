@@ -893,8 +893,10 @@ export class WritingDeskResearchService {
 
   private async resolveUserMpName(userId: string): Promise<string | null> {
     try {
-      const mp = await this.userMp.getMine(userId);
-      return mp?.name ?? null;
+      const mpRecord = await this.userMp.getMine(userId);
+      const mp: any = (mpRecord as any)?.mp ?? (mpRecord as any) ?? {};
+      const name = mp?.name;
+      return typeof name === 'string' && name.trim().length > 0 ? name.trim() : null;
     } catch (error) {
       this.logger.warn(`Failed to resolve MP name for user ${userId}: ${(error as Error)?.message ?? error}`);
       return null;
@@ -922,15 +924,10 @@ export class WritingDeskResearchService {
   ) {
     const payload = this.buildBaseUpsertPayload(job);
     const nextContent = this.normaliseResearchContent(result.content ?? null);
-    const existingContent = this.normaliseResearchContent(job.researchContent ?? null);
 
     payload.researchContent = nextContent ?? undefined;
     payload.researchResponseId = result.responseId ?? undefined;
     payload.researchStatus = result.status ?? job.researchStatus ?? 'completed';
-
-    if (nextContent && existingContent && nextContent !== existingContent) {
-      payload.researchVersion = (job.researchVersion ?? 0) + 1;
-    }
 
     await this.writingDeskJobs.upsertActiveJob(userId, payload);
   }
@@ -949,10 +946,6 @@ export class WritingDeskResearchService {
     const researchContent = this.normaliseResearchContent(job.researchContent ?? null);
     if (researchContent) {
       payload.researchContent = researchContent;
-    }
-
-    if (typeof job.researchVersion === 'number') {
-      payload.researchVersion = job.researchVersion;
     }
 
     if (job.researchResponseId) {
@@ -975,10 +968,6 @@ export class WritingDeskResearchService {
     const letterJson = this.normaliseResearchContent(job.letterJson ?? null);
     if (letterJson) {
       payload.letterJson = letterJson;
-    }
-
-    if (typeof job.letterVersion === 'number') {
-      payload.letterVersion = job.letterVersion;
     }
 
     if (job.letterResponseId) {

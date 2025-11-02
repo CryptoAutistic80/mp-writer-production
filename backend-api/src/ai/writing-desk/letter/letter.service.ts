@@ -435,7 +435,7 @@ export class WritingDeskLetterService {
       heartbeat({ responseId: trimmed });
 
       try {
-        await this.persistLetterState(userId, baselineJob, { responseId: trimmed, tone });
+        await this.persistLetterState(userId, baselineJob, { status: 'generating', responseId: trimmed, tone });
       } catch (error) {
         this.logger.warn(
           `Failed to persist letter response id for user ${userId}: ${(error as Error)?.message ?? error}`,
@@ -965,13 +965,14 @@ export class WritingDeskLetterService {
 
   private async resolveLetterContext(userId: string): Promise<LetterContext> {
     const [user, mpRecord, addressRecord] = await Promise.all([
-      this.users.findOneById(userId),
+      this.users.findById(userId),
       this.userMp.getMine(userId),
       this.userAddress.getMine(userId),
     ]);
 
-    const mp = (mpRecord as any)?.mp ?? {};
-    const address = (addressRecord as any)?.address ?? {};
+    const mp = (mpRecord as any)?.mp ?? (mpRecord as any) ?? {};
+    const address = (addressRecord as any)?.address ?? (addressRecord as any) ?? {};
+    const sender = (user as any) ?? {};
 
     const today = new Date().toISOString().slice(0, 10);
 
@@ -983,7 +984,7 @@ export class WritingDeskLetterService {
       mpCounty: mp?.correspondenceAddress?.county?.trim?.() || '',
       mpPostcode: mp?.correspondenceAddress?.postcode?.trim?.() || '',
       constituency: mp?.constituency?.trim?.() || '',
-      senderName: user?.displayName?.trim?.() || '',
+      senderName: sender?.displayName?.trim?.() || sender?.name?.trim?.() || '',
       senderAddress1: address?.line1?.trim?.() || '',
       senderAddress2: address?.line2?.trim?.() || '',
       senderAddress3: address?.line3?.trim?.() || '',
@@ -1780,10 +1781,18 @@ export class WritingDeskLetterService {
   }
 
   private normaliseStreamEvent(event: ResponseStreamEvent): Record<string, unknown> {
-    if (!event) return {};
-    if (typeof event === 'object') {
-      return event as Record<string, unknown>;
+    if (!event) {
+      return { type: 'unknown', value: null };
     }
+
+    if (typeof event === 'object') {
+      try {
+        return JSON.parse(JSON.stringify(event)) as Record<string, unknown>;
+      } catch {
+        return { ...(event as unknown as Record<string, unknown>) };
+      }
+    }
+
     return { type: 'unknown', value: event };
   }
 
