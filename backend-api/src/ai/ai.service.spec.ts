@@ -2,36 +2,29 @@ import { AiService } from './ai.service';
 import { WritingDeskJobsService } from '../writing-desk-jobs/writing-desk-jobs.service';
 import { UserCreditsService } from '../user-credits/user-credits.service';
 import { ConfigService } from '@nestjs/config';
-import { UserMpService } from '../user-mp/user-mp.service';
-import { UsersService } from '../users/users.service';
-import { UserAddressService } from '../user-address-store/user-address.service';
-import { ActiveWritingDeskJobResource } from '../writing-desk-jobs/writing-desk-jobs.types';
 import { OpenAiClientService } from './openai/openai-client.service';
 import { StreamingRunManager } from './streaming/streaming-run.manager';
 import { WritingDeskLetterService } from './writing-desk/letter/letter.service';
 import { StreamingRunState } from '../streaming-state/streaming-state.types';
+import { WritingDeskResearchService } from './writing-desk/research/research.service';
 
 describe('AiService', () => {
   const createService = ({
     configGet,
     userCredits,
     writingDeskJobs,
-    userMp,
-    users,
-    userAddress,
     streamingRuns,
     openAiClient,
     letterService,
+    researchService,
   }: {
     configGet?: (key: string) => string | null | undefined;
     userCredits?: Partial<UserCreditsService>;
     writingDeskJobs?: Partial<WritingDeskJobsService>;
-    userMp?: Partial<UserMpService>;
-    users?: Partial<UsersService>;
-    userAddress?: Partial<UserAddressService>;
     streamingRuns?: Partial<StreamingRunManager>;
     openAiClient?: Partial<OpenAiClientService>;
     letterService?: Partial<WritingDeskLetterService>;
+    researchService?: Partial<WritingDeskResearchService>;
   } = {}) => {
     const config = {
       get: jest.fn((key: string) => (configGet ? configGet(key) : null)),
@@ -48,10 +41,6 @@ describe('AiService', () => {
       upsertActiveJob: jest.fn(),
       ...writingDeskJobs,
     } as unknown as WritingDeskJobsService;
-
-    const mp = { ...userMp } as unknown as UserMpService;
-    const usersService = { ...users } as unknown as UsersService;
-    const address = { ...userAddress } as unknown as UserAddressService;
 
     const streaming = {
       getInstanceId: jest.fn().mockReturnValue('test-instance'),
@@ -86,16 +75,24 @@ describe('AiService', () => {
       ...letterService,
     } as unknown as WritingDeskLetterService;
 
+    const research = {
+      streamResearch: jest.fn(),
+      ensureResearchRun: jest.fn(),
+      cleanupStaleRuns: jest.fn().mockReturnValue(0),
+      getRunTtlMs: jest.fn().mockReturnValue(5 * 60 * 1000),
+      handleOrphanedRun: jest.fn().mockResolvedValue(undefined),
+      markRunCancelled: jest.fn().mockResolvedValue(true),
+      ...researchService,
+    } as unknown as WritingDeskResearchService;
+
     const service = new AiService(
       config,
       credits,
       jobs,
-      mp,
-      usersService,
-      address,
       streaming,
       openAi,
       letter,
+      research,
     );
 
     return {
@@ -104,12 +101,10 @@ describe('AiService', () => {
         config,
         credits,
         jobs,
-        mp,
-        usersService,
-        address,
         streamingRuns: streaming,
         openAi,
         letter,
+        research,
       },
     };
   };
@@ -158,6 +153,50 @@ describe('AiService', () => {
     });
   });
 
+  describe('streamWritingDeskDeepResearch', () => {
+    it('throws when userId is missing', () => {
+      const { service } = createService();
+      expect(() => service.streamWritingDeskDeepResearch(null, {})).toThrowError('User account required');
+    });
+
+    it('delegates streaming to the research service', () => {
+      const stream = { subscribe: jest.fn() } as any;
+      const { service, dependencies } = createService({
+        researchService: {
+          streamResearch: jest.fn().mockReturnValue(stream),
+        },
+      });
+
+      const result = service.streamWritingDeskDeepResearch('user-1', { jobId: 'job-123' });
+
+      expect(dependencies.research.streamResearch).toHaveBeenCalledWith('user-1', {
+        jobId: 'job-123',
+        restart: undefined,
+        createIfMissing: undefined,
+      });
+      expect(result).toBe(stream);
+    });
+  });
+
+  describe('ensureDeepResearchRun', () => {
+    it('delegates to the research service', async () => {
+      const { service, dependencies } = createService({
+        researchService: {
+          ensureResearchRun: jest
+            .fn()
+            .mockResolvedValue({ jobId: 'job-456', status: 'completed' as const }),
+        },
+      });
+
+      const result = await service.ensureDeepResearchRun('user-1', 'job-456', { restart: true });
+
+      expect(dependencies.research.ensureResearchRun).toHaveBeenCalledWith('user-1', 'job-456', {
+        restart: true,
+      });
+      expect(result).toEqual({ jobId: 'job-456', status: 'completed' });
+    });
+  });
+
   describe('recoverStaleStreamingRuns', () => {
     const createStaleRun = (overrides: Partial<StreamingRunState> = {}): StreamingRunState => ({
       type: 'deep_research',
@@ -190,44 +229,21 @@ describe('AiService', () => {
       expect(dependencies.streamingRuns.clearRun).not.toHaveBeenCalledWith('letter', letterRun.runKey);
     });
 
-    it('refunds credits and clears deep research stale runs', async () => {
+    it('delegates deep research stale runs to the research service', async () => {
       const researchRun = createStaleRun();
-      const activeJob: ActiveWritingDeskJobResource = {
-        jobId: 'job-1',
-        phase: 'researching',
-        stepIndex: 0,
-        followUpIndex: 0,
-        form: { issueDescription: 'Issue details' },
-        followUpQuestions: [],
-        followUpAnswers: [],
-        notes: null,
-        responseId: null,
-        researchContent: null,
-        researchResponseId: null,
-        researchStatus: 'running',
-        letterStatus: 'idle',
-        letterTone: null,
-        letterResponseId: null,
-        letterContent: null,
-        letterReferences: [],
-        letterJson: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
       const { service, dependencies } = createService({
         streamingRuns: {
           findStaleRuns: jest.fn().mockResolvedValue([researchRun]),
         },
-        writingDeskJobs: {
-          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
-          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        researchService: {
+          handleOrphanedRun: jest.fn().mockResolvedValue(undefined),
         },
       });
 
       await service.recoverStaleStreamingRuns();
 
-      expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-1', 0.7);
-      expect(dependencies.streamingRuns.clearRun).toHaveBeenCalledWith(
+      expect(dependencies.research.handleOrphanedRun).toHaveBeenCalledWith(researchRun);
+      expect(dependencies.streamingRuns.clearRun).not.toHaveBeenCalledWith(
         'deep_research',
         researchRun.runKey,
       );
