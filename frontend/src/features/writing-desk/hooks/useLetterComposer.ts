@@ -233,6 +233,7 @@ export function useLetterComposer({
         if (payload.type === 'letter_delta') {
           if (typeof payload.html === 'string') {
             setContentHtml(payload.html);
+            setEvents([]);
           }
           return;
         }

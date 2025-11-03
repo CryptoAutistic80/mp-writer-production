@@ -549,6 +549,72 @@ export class WritingDeskLetterService {
         }
       };
 
+      const finaliseRunFromJson = async (resultJson: string, responseIdOverride: string | null) => {
+        const trimmed = typeof resultJson === 'string' ? resultJson.trim() : '';
+        if (trimmed.length === 0) {
+          throw new InternalServerErrorException('Letter response was empty. Please try again.');
+        }
+
+        const resolvedResponseId = responseIdOverride ?? responseId ?? run.responseId;
+        const parsed = this.parseLetterResult(trimmed);
+        const contextForMerge = await this.resolveLetterContext(userId);
+        const merged = this.mergeLetterResultWithContext(parsed, contextForMerge);
+        const references = this.extractReferencesFromJson(trimmed);
+        const finalDocumentHtml = this.buildLetterDocumentHtml({
+          mpName: merged.mp_name,
+          mpAddress1: merged.mp_address_1,
+          mpAddress2: merged.mp_address_2,
+          mpCity: merged.mp_city,
+          mpCounty: merged.mp_county,
+          mpPostcode: merged.mp_postcode,
+          date: merged.date,
+          subjectLineHtml: merged.subject_line_html,
+          letterContentHtml: merged.letter_content,
+          senderName: merged.sender_name,
+          senderAddress1: merged.sender_address_1,
+          senderAddress2: merged.sender_address_2,
+          senderAddress3: merged.sender_address_3,
+          senderCity: merged.sender_city,
+          senderCounty: merged.sender_county,
+          senderPostcode: merged.sender_postcode,
+          senderTelephone: merged.sender_phone,
+          references,
+        });
+
+        await this.persistLetterResult(userId, baselineJob, {
+          status: 'completed',
+          tone,
+          responseId: resolvedResponseId,
+          content: finalDocumentHtml,
+          references,
+          json: trimmed,
+        });
+
+        jsonBuffer = trimmed;
+        run.status = 'completed';
+        run.responseId = resolvedResponseId;
+        _settled = true;
+        lastPreviewHtml = finalDocumentHtml;
+        send({ type: 'letter_delta', html: finalDocumentHtml });
+        send({
+          type: 'complete',
+          letter: this.toLetterCompletePayload(merged, {
+            responseId: resolvedResponseId,
+            tone,
+            rawJson: trimmed,
+            html: finalDocumentHtml,
+          }),
+          remainingCredits,
+        });
+        await this.streamingRuns.touchRun('letter', run.key, {
+          status: 'completed',
+          responseId: resolvedResponseId,
+          meta: { tone, charged: deductionApplied, remainingCredits },
+        });
+        this.openAiClient.recordSuccess();
+        subject.complete();
+      };
+
       if (!apiKey) {
         const stub = this.buildStubLetter({ job: baselineJob, tone, context, research: researchContent });
         const stubDocument = this.buildLetterDocumentHtml({
@@ -819,6 +885,18 @@ export class WritingDeskLetterService {
       }
 
       if (!_settled) {
+        if (run.status === 'completed' && typeof jsonBuffer === 'string' && jsonBuffer.trim().length > 0) {
+          try {
+            await finaliseRunFromJson(jsonBuffer, responseId);
+          } catch (error) {
+            this.logger.warn(
+              `[writing-desk letter] failed to finalise streamed letter directly: ${(error as Error)?.message ?? error}`,
+            );
+          }
+        }
+      }
+
+      if (!_settled) {
         if (!responseId) {
           throw new ServiceUnavailableException('Letter stream ended unexpectedly. Please try again.');
         }
@@ -841,64 +919,7 @@ export class WritingDeskLetterService {
 
         if (finalStatus === 'completed') {
           const resultJson = jsonBuffer || finalText;
-          if (!resultJson || typeof resultJson !== 'string') {
-            throw new InternalServerErrorException('Letter response was empty. Please try again.');
-          }
-
-          const parsed = this.parseLetterResult(resultJson);
-          const contextForMerge = await this.resolveLetterContext(userId);
-          const merged = this.mergeLetterResultWithContext(parsed, contextForMerge);
-          const references = this.extractReferencesFromJson(resultJson);
-          const finalDocumentHtml = this.buildLetterDocumentHtml({
-            mpName: merged.mp_name,
-            mpAddress1: merged.mp_address_1,
-            mpAddress2: merged.mp_address_2,
-            mpCity: merged.mp_city,
-            mpCounty: merged.mp_county,
-            mpPostcode: merged.mp_postcode,
-            date: merged.date,
-            subjectLineHtml: merged.subject_line_html,
-            letterContentHtml: merged.letter_content,
-            senderName: merged.sender_name,
-            senderAddress1: merged.sender_address_1,
-            senderAddress2: merged.sender_address_2,
-            senderAddress3: merged.sender_address_3,
-            senderCity: merged.sender_city,
-            senderCounty: merged.sender_county,
-            senderPostcode: merged.sender_postcode,
-            senderTelephone: merged.sender_phone,
-            references,
-          });
-          await this.persistLetterResult(userId, baselineJob, {
-            status: 'completed',
-            tone,
-            responseId,
-            content: finalDocumentHtml,
-            references,
-            json: resultJson,
-          });
-
-          run.status = 'completed';
-          _settled = true;
-          lastPreviewHtml = finalDocumentHtml;
-          send({ type: 'letter_delta', html: finalDocumentHtml });
-          send({
-            type: 'complete',
-            letter: this.toLetterCompletePayload(merged, {
-              responseId,
-              tone,
-              rawJson: resultJson,
-              html: finalDocumentHtml,
-            }),
-            remainingCredits,
-          });
-          await this.streamingRuns.touchRun('letter', run.key, {
-            status: 'completed',
-            responseId,
-            meta: { tone, charged: deductionApplied, remainingCredits },
-          });
-          this.openAiClient.recordSuccess();
-          subject.complete();
+          await finaliseRunFromJson(resultJson as string, responseId);
         } else {
           const message = this.buildBackgroundFailureMessage(finalResponse, finalStatus);
           await this.persistLetterState(userId, baselineJob, { status: 'error', tone, responseId });
@@ -1091,13 +1112,89 @@ export class WritingDeskLetterService {
 
     const today = new Date().toISOString().slice(0, 10);
 
+    const normalise = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+    const pickAddressValue = (source: Record<string, unknown> | undefined, keys: string[]): string => {
+      if (!source) return '';
+      for (const key of keys) {
+        const value = source[key];
+        const normalised = normalise(value);
+        if (normalised.length > 0) {
+          return normalised;
+        }
+      }
+      return '';
+    };
+
+    const correspondenceAddress = (mp?.correspondenceAddress ??
+      (typeof mp?.address === 'object' ? mp.address : null)) as Record<string, unknown> | null;
+
+    const parliamentaryAddressLinesRaw =
+      typeof mp?.parliamentaryAddress === 'string'
+        ? mp.parliamentaryAddress
+            .split(/[\n,]+/)
+            .map((part: string) => part.trim())
+            .filter((part: string) => part.length > 0)
+        : [];
+    const postcodeRegex = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+    const fallbackParts = [...parliamentaryAddressLinesRaw];
+    let fallbackPostcode = '';
+    const postcodeIndex = fallbackParts.findIndex((part) => postcodeRegex.test(part));
+    if (postcodeIndex !== -1) {
+      fallbackPostcode = fallbackParts.splice(postcodeIndex, 1)[0] ?? '';
+    }
+    const fallbackLine1 = fallbackParts.shift() ?? '';
+    const fallbackLine2 = fallbackParts.shift() ?? '';
+    const fallbackCity = fallbackParts.shift() ?? '';
+    const fallbackCounty = fallbackParts.shift() ?? '';
+
+    const mpAddress1 =
+      pickAddressValue(correspondenceAddress ?? undefined, [
+        'line1',
+        'addressLine1',
+        'line_1',
+        'address_line_1',
+        'address1',
+      ]) || fallbackLine1;
+    const mpAddress2 =
+      pickAddressValue(correspondenceAddress ?? undefined, [
+        'line2',
+        'addressLine2',
+        'line_2',
+        'address_line_2',
+        'address2',
+      ]) || fallbackLine2;
+    const mpCity =
+      pickAddressValue(correspondenceAddress ?? undefined, [
+        'city',
+        'town',
+        'postTown',
+        'locality',
+        'borough',
+      ]) || fallbackCity;
+    const mpCounty =
+      pickAddressValue(correspondenceAddress ?? undefined, [
+        'county',
+        'region',
+        'state',
+        'district',
+        'area',
+      ]) || fallbackCounty;
+    const mpPostcode =
+      pickAddressValue(correspondenceAddress ?? undefined, [
+        'postcode',
+        'postCode',
+        'postalCode',
+        'zip',
+      ]) || fallbackPostcode;
+
     return {
-      mpName: mp?.name?.trim?.() || '',
-      mpAddress1: mp?.correspondenceAddress?.line1?.trim?.() || '',
-      mpAddress2: mp?.correspondenceAddress?.line2?.trim?.() || '',
-      mpCity: mp?.correspondenceAddress?.city?.trim?.() || '',
-      mpCounty: mp?.correspondenceAddress?.county?.trim?.() || '',
-      mpPostcode: mp?.correspondenceAddress?.postcode?.trim?.() || '',
+      mpName: normalise(mp?.name) || normalise((mp as any)?.nameDisplayAs) || '',
+      mpAddress1,
+      mpAddress2,
+      mpCity,
+      mpCounty,
+      mpPostcode,
       constituency: mp?.constituency?.trim?.() || '',
       senderName: sender?.displayName?.trim?.() || sender?.name?.trim?.() || '',
       senderAddress1: address?.line1?.trim?.() || '',
@@ -1331,14 +1428,48 @@ export class WritingDeskLetterService {
       typeof value === 'string' ? this.normaliseLetterTypography(value) : '';
 
     const sections: string[] = [];
+    const mpName = normalise(input.mpName);
+    let mpAddress1 = normalise(input.mpAddress1);
+    let mpAddress2 = normalise(input.mpAddress2);
+    let mpCity = normalise(input.mpCity);
+    let mpCounty = normalise(input.mpCounty);
+    let mpPostcode = normalise(input.mpPostcode);
+
+    const hasParliamentaryAddressDetail = [mpAddress1, mpAddress2, mpCity, mpCounty, mpPostcode].some(
+      (value) => value.length > 0,
+    );
+    const fallbackAddress1 = 'House of Commons';
+    const fallbackCity = 'London';
+    const fallbackPostcode = 'SW1A 0AA';
+
+    if (!hasParliamentaryAddressDetail) {
+      mpAddress1 = fallbackAddress1;
+      mpCity = fallbackCity;
+      mpPostcode = fallbackPostcode;
+    } else {
+      if (!mpAddress1) {
+        mpAddress1 = fallbackAddress1;
+      }
+      if (!mpCity) {
+        mpCity = fallbackCity;
+      }
+      if (!mpPostcode) {
+        mpPostcode = fallbackPostcode;
+      }
+    }
+
     const mpLines = this.buildAddressLines({
-      name: normalise(input.mpName),
-      line1: normalise(input.mpAddress1),
-      line2: normalise(input.mpAddress2),
+      name: mpName,
+      line1: mpAddress1,
+      line2: mpAddress2,
       line3: null,
-      city: normalise(input.mpCity),
-      county: normalise(input.mpCounty),
-      postcode: normalise(input.mpPostcode),
+      city: mpCity,
+      county: mpCounty,
+      postcode: mpPostcode,
+    }).filter((line, index, array) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      return array.findIndex((entry) => entry.trim().toLowerCase() === trimmed.toLowerCase()) === index;
     });
     if (mpLines.length > 0) {
       sections.push(`<p>${mpLines.map((line) => this.escapeLetterHtml(line)).join('<br />')}</p>`);
@@ -1481,21 +1612,7 @@ export class WritingDeskLetterService {
     senderName?: string | null,
   ): boolean {
     const addressDetail = senderLines.filter((line) => line.trim().length > 0);
-    if (addressDetail.length === 0) return false;
-    const text = this.normaliseLetterPlainText(letterHtml);
-    if (!text) return true;
-    const lower = text.toLowerCase();
-    const hasAddress = addressDetail.some((line) => lower.includes(line.trim().toLowerCase()));
-    if (hasAddress) {
-      return false;
-    }
-    if (typeof senderName === 'string' && senderName.trim().length > 0) {
-      const name = senderName.trim().toLowerCase();
-      if (!lower.includes(name)) {
-        return true;
-      }
-    }
-    return true;
+    return addressDetail.length > 0;
   }
 
   private normaliseLetterPlainText(value: string | null | undefined): string {
@@ -1610,66 +1727,71 @@ export class WritingDeskLetterService {
   }
 
   private extractStringPreviewField(buffer: string, field: string): string | null {
-    const marker = `"${field}":"`;
-    const index = buffer.lastIndexOf(marker);
+    const marker = `"${field}"`;
+    let index = buffer.lastIndexOf(marker);
     if (index === -1) return null;
-    const start = index + marker.length;
-    let result = '';
-    let i = start;
-    while (i < buffer.length) {
-      const char = buffer[i];
-      if (char === '"') {
-        const escaped = i > start && buffer[i - 1] === '\\';
-        if (!escaped) {
-          break;
-        }
-      }
 
-      if (char === '\\') {
-        const next = buffer[i + 1];
-        if (next === 'n') {
-          result += '\n';
-          i += 2;
-          continue;
-        }
-        if (next === 'r') {
-          result += '\n';
-          i += 2;
-          continue;
-        }
-        if (next === 't') {
-          result += '\t';
-          i += 2;
-          continue;
-        }
-        if (next === 'b' || next === 'f') {
-          i += 2;
-          continue;
-        }
-        if (next === '\\' || next === '"') {
-          result += next;
-          i += 2;
-          continue;
-        }
-        if (next === '/') {
-          result += '/';
-          i += 2;
-          continue;
-        }
-        if (next === 'u' && i + 5 < buffer.length) {
-          const code = buffer.slice(i + 2, i + 6);
-          if (/^[0-9a-fA-F]{4}$/.test(code)) {
-            result += String.fromCharCode(parseInt(code, 16));
-            i += 6;
-            continue;
+    index += marker.length;
+    while (index < buffer.length && /\s/.test(buffer[index])) {
+      index += 1;
+    }
+    if (index >= buffer.length || buffer[index] !== ':') {
+      return null;
+    }
+    index += 1;
+
+    while (index < buffer.length && /\s/.test(buffer[index])) {
+      index += 1;
+    }
+    if (index >= buffer.length || buffer[index] !== '"') {
+      return null;
+    }
+    index += 1;
+
+    let result = '';
+    let escaped = false;
+    for (; index < buffer.length; index += 1) {
+      const char = buffer[index];
+
+      if (escaped) {
+        switch (char) {
+          case 'n':
+          case 'r':
+            result += '\n';
+            break;
+          case 't':
+            result += '\t';
+            break;
+          case '"':
+          case '\\':
+          case '/':
+            result += char;
+            break;
+          case 'u': {
+            const hex = buffer.slice(index + 1, index + 5);
+            if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+              result += String.fromCharCode(parseInt(hex, 16));
+              index += 4;
+            }
+            break;
           }
+          default:
+            result += char;
         }
-        i += 2;
+        escaped = false;
         continue;
       }
 
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        return result;
+      }
+
       result += char;
-      i += 1;
     }
 
     return result;
@@ -1765,6 +1887,18 @@ export class WritingDeskLetterService {
         this.logger.warn(
           `[writing-desk ${logContext}] failed to poll response ${responseId}: ${(error as Error)?.message ?? error}`,
         );
+        const statusCode =
+          typeof (error as any)?.status === 'number'
+            ? (error as any).status
+            : typeof (error as any)?.statusCode === 'number'
+              ? (error as any).statusCode
+              : typeof (error as any)?.code === 'number'
+                ? (error as any).code
+                : undefined;
+        const message = typeof (error as any)?.message === 'string' ? (error as any).message : '';
+        if (statusCode === 404 || /not found/i.test(message)) {
+          throw new ServiceUnavailableException('Letter response could not be recovered. Please try again.');
+        }
       }
 
       if (Date.now() - startedAt > 2 * 60 * 1000) {
