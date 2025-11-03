@@ -6,6 +6,7 @@ export interface LetterRenderInput {
   mpCounty?: string | null;
   mpPostcode?: string | null;
   date?: string | null;
+  subjectLineHtml?: string | null;
   letterContentHtml?: string | null;
   senderName?: string | null;
   senderAddress1?: string | null;
@@ -18,16 +19,57 @@ export interface LetterRenderInput {
   references?: string[] | null;
 }
 
+const normaliseField = (value: string | null | undefined): string => {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+};
+
 export const composeLetterHtml = (input: LetterRenderInput): string => {
   const sections: string[] = [];
+
+  const fallbackAddress1 = 'House of Commons';
+  const fallbackCity = 'London';
+  const fallbackPostcode = 'SW1A 0AA';
+
+  const mpName = normaliseField(input.mpName);
+  let mpAddress1 = normaliseField(input.mpAddress1);
+  let mpAddress2 = normaliseField(input.mpAddress2);
+  let mpCity = normaliseField(input.mpCity);
+  let mpCounty = normaliseField(input.mpCounty);
+  let mpPostcode = normaliseField(input.mpPostcode);
+
+  const hasParliamentaryAddressDetail = [mpAddress1, mpAddress2, mpCity, mpCounty, mpPostcode].some(
+    (value) => value.length > 0,
+  );
+
+  if (!hasParliamentaryAddressDetail) {
+    mpAddress1 = fallbackAddress1;
+    mpCity = fallbackCity;
+    mpPostcode = fallbackPostcode;
+  } else {
+    if (!mpAddress1) {
+      mpAddress1 = fallbackAddress1;
+    }
+    if (!mpCity) {
+      mpCity = fallbackCity;
+    }
+    if (!mpPostcode) {
+      mpPostcode = fallbackPostcode;
+    }
+  }
+
   const mpLines = buildAddressLines({
-    name: input.mpName,
-    line1: input.mpAddress1,
-    line2: input.mpAddress2,
+    name: mpName || null,
+    line1: mpAddress1 || null,
+    line2: mpAddress2 || null,
     line3: null,
-    city: input.mpCity,
-    county: input.mpCounty,
-    postcode: input.mpPostcode,
+    city: mpCity || null,
+    county: mpCounty || null,
+    postcode: mpPostcode || null,
+  }).filter((line, idx, arr) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    return arr.findIndex((entry) => entry.trim().toLowerCase() === trimmed.toLowerCase()) === idx;
   });
 
   if (mpLines.length > 0) {
@@ -37,6 +79,11 @@ export const composeLetterHtml = (input: LetterRenderInput): string => {
   const formattedDate = formatDisplayDate(input.date);
   if (formattedDate) {
     sections.push(`<p>${escapeHtml(formattedDate)}</p>`);
+  }
+
+  const subjectLineHtml = typeof input.subjectLineHtml === 'string' ? input.subjectLineHtml.trim() : '';
+  if (subjectLineHtml.length > 0) {
+    sections.push(subjectLineHtml);
   }
 
   if (input.letterContentHtml) {
@@ -164,21 +211,7 @@ const shouldAppendSenderAddress = (
   senderName?: string | null,
 ): boolean => {
   const addressDetail = senderLines.filter((line) => line.trim().length > 0);
-  if (addressDetail.length === 0) return false;
-  const text = normalisePlainText(letterHtml);
-  if (!text) return true;
-  const lower = text.toLowerCase();
-  const hasAddress = addressDetail.some((line) => lower.includes(line.trim().toLowerCase()));
-  if (hasAddress) {
-    return false;
-  }
-  if (typeof senderName === 'string' && senderName.trim().length > 0) {
-    const name = senderName.trim().toLowerCase();
-    if (!lower.includes(name)) {
-      return true;
-    }
-  }
-  return true;
+  return addressDetail.length > 0;
 };
 
 const normalisePlainText = (value: string | null | undefined): string => {

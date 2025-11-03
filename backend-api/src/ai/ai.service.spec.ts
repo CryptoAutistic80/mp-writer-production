@@ -1,1068 +1,338 @@
 import { AiService } from './ai.service';
-import { WritingDeskJobsService } from '../writing-desk-jobs/writing-desk-jobs.service';
-import { UserCreditsService } from '../user-credits/user-credits.service';
 import { ConfigService } from '@nestjs/config';
-import { UserMpService } from '../user-mp/user-mp.service';
-import { UsersService } from '../users/users.service';
-import { UserAddressService } from '../user-address-store/user-address.service';
-import { ActiveWritingDeskJobResource } from '../writing-desk-jobs/writing-desk-jobs.types';
-import { StreamingStateService } from '../streaming-state/streaming-state.service';
+import { OpenAiClientService } from './openai/openai-client.service';
+import { StreamingRunManager } from './streaming/streaming-run.manager';
+import { WritingDeskLetterService } from './writing-desk/letter/letter.service';
+import { StreamingRunState } from '../streaming-state/streaming-state.types';
+import { WritingDeskResearchService } from './writing-desk/research/research.service';
+import { WritingDeskFollowUpService } from './writing-desk/follow-up/follow-up.service';
+import { AiTranscriptionService } from './transcription/transcription.service';
 
 describe('AiService', () => {
   const createService = ({
     configGet,
-    userCredits,
-    writingDeskJobs,
-    userMp,
-    users,
-    userAddress,
-    streamingState,
+    streamingRuns,
+    openAiClient,
+    letterService,
+    researchService,
+    followUpService,
+    transcriptionService,
   }: {
-    configGet: (key: string) => string | null | undefined;
-    userCredits?: Partial<UserCreditsService>;
-    writingDeskJobs?: Partial<WritingDeskJobsService>;
-    userMp?: Partial<UserMpService>;
-    users?: Partial<UsersService>;
-    userAddress?: Partial<UserAddressService>;
-    streamingState?: Partial<StreamingStateService>;
-  }) => {
-    const config = { get: jest.fn((key: string) => configGet(key)) } as unknown as ConfigService;
-    const credits = {
-      deductFromMine: jest.fn().mockResolvedValue({ credits: 10 }),
-      addToMine: jest.fn().mockResolvedValue({}),
-      ...userCredits,
-    } as unknown as UserCreditsService;
-    const jobs = {
-      getActiveJobForUser: jest.fn(),
-      upsertActiveJob: jest.fn(),
-      ...writingDeskJobs,
-    } as unknown as WritingDeskJobsService;
-    const mp = { ...userMp } as unknown as UserMpService;
-    const usersService = { ...users } as unknown as UsersService;
-    const address = { ...userAddress } as unknown as UserAddressService;
+    configGet?: (key: string) => string | null | undefined;
+    streamingRuns?: Partial<StreamingRunManager>;
+    openAiClient?: Partial<OpenAiClientService>;
+    letterService?: Partial<WritingDeskLetterService>;
+    researchService?: Partial<WritingDeskResearchService>;
+    followUpService?: Partial<WritingDeskFollowUpService>;
+    transcriptionService?: Partial<AiTranscriptionService>;
+  } = {}) => {
+    const config = {
+      get: jest.fn((key: string) => (configGet ? configGet(key) : null)),
+    } as unknown as ConfigService;
 
     const streaming = {
       getInstanceId: jest.fn().mockReturnValue('test-instance'),
+      listAllRuns: jest.fn().mockResolvedValue([]),
+      findStaleRuns: jest.fn().mockResolvedValue([]),
+      clearRun: jest.fn().mockResolvedValue(undefined),
+      updateRun: jest.fn().mockResolvedValue(undefined),
+      createHeartbeat: jest.fn(() => jest.fn()),
       registerRun: jest.fn().mockResolvedValue(undefined),
       touchRun: jest.fn().mockResolvedValue(undefined),
-      removeRun: jest.fn().mockResolvedValue(undefined),
       getRun: jest.fn().mockResolvedValue(null),
-      findStaleRuns: jest.fn().mockResolvedValue([]),
-      checkHealth: jest.fn(),
-      ...streamingState,
-    } as unknown as StreamingStateService;
+      ...streamingRuns,
+    } as unknown as StreamingRunManager;
+
+    const openAi = {
+      getClient: jest.fn(),
+      handleError: jest.fn((error: unknown) => {
+        throw error;
+      }),
+      recordSuccess: jest.fn(),
+      markError: jest.fn(),
+      ...openAiClient,
+    } as unknown as OpenAiClientService;
+
+    const letter = {
+      streamLetter: jest.fn(),
+      ensureLetterRun: jest.fn(),
+      markRunCancelled: jest.fn().mockResolvedValue(true),
+      cleanupStaleRuns: jest.fn().mockReturnValue(0),
+      getRunTtlMs: jest.fn().mockReturnValue(5 * 60 * 1000),
+      handleOrphanedRun: jest.fn().mockResolvedValue(undefined),
+      ...letterService,
+    } as unknown as WritingDeskLetterService;
+
+    const research = {
+      streamResearch: jest.fn(),
+      ensureResearchRun: jest.fn(),
+      cleanupStaleRuns: jest.fn().mockReturnValue(0),
+      getRunTtlMs: jest.fn().mockReturnValue(5 * 60 * 1000),
+      handleOrphanedRun: jest.fn().mockResolvedValue(undefined),
+      markRunCancelled: jest.fn().mockResolvedValue(true),
+      ...researchService,
+    } as unknown as WritingDeskResearchService;
+
+    const followUp = {
+      generate: jest.fn(),
+      record: jest.fn(),
+      ...followUpService,
+    } as unknown as WritingDeskFollowUpService;
+
+    const transcription = {
+      transcribeAudio: jest.fn(),
+      streamTranscription: jest.fn(),
+      ...transcriptionService,
+    } as unknown as AiTranscriptionService;
+
+    const service = new AiService(
+      config,
+      streaming,
+      openAi,
+      letter,
+      research,
+      followUp,
+      transcription,
+    );
 
     return {
-      service: new AiService(config, credits, jobs, mp, usersService, address, streaming),
-      dependencies: { config, credits, jobs, mp, usersService, address, streaming },
+      service,
+      dependencies: {
+        config,
+        streamingRuns: streaming,
+        openAi,
+        letter,
+        research,
+        followUp,
+        transcription,
+      },
     };
   };
 
-  describe('buildLetterResponseSchema', () => {
-    it('does not enforce const values for context-derived fields', () => {
-      const { service } = createService({
-        configGet: () => null,
-      });
-
-      const schema = (service as any).buildLetterResponseSchema({
-        mpName: 'Canonical MP',
-        mpAddress1: 'Line 1',
-        mpAddress2: 'Line 2',
-        mpCity: 'Town',
-        mpCounty: 'County',
-        mpPostcode: 'AB1 2CD',
-        constituency: 'Somewhere',
-        senderName: 'Constituent',
-        senderAddress1: 'Sender Line 1',
-        senderAddress2: 'Sender Line 2',
-        senderAddress3: 'Sender Line 3',
-        senderCity: 'Sender Town',
-        senderCounty: 'Sender County',
-        senderPostcode: 'ZX9 9XZ',
-        senderTelephone: '020 7946 0123',
-        today: '2025-01-15',
-      });
-
-      const fields = [
-        'mp_name',
-        'mp_address_1',
-        'mp_address_2',
-        'mp_city',
-        'mp_county',
-        'mp_postcode',
-        'date',
-        'sender_name',
-        'sender_address_1',
-        'sender_address_2',
-        'sender_address_3',
-        'sender_city',
-        'sender_county',
-        'sender_postcode',
-        'sender_phone',
-      ];
-
-      for (const field of fields) {
-        expect(schema.properties[field].const).toBeUndefined();
-        expect(schema.properties[field].default).toEqual(expect.any(String));
-      }
-    });
-  });
-
   describe('streamWritingDeskLetter', () => {
-    const createActiveJob = (overrides: Partial<ActiveWritingDeskJobResource> = {}): ActiveWritingDeskJobResource => ({
-      jobId: 'job-123',
-      phase: 'generating',
-      stepIndex: 0,
-      followUpIndex: 0,
-      form: { issueDescription: 'Issue details' },
-      followUpQuestions: [],
-      followUpAnswers: [],
-      notes: null,
-      responseId: null,
-      researchContent: 'Research summary',
-      researchResponseId: null,
-      researchStatus: 'completed',
-      letterStatus: 'idle',
-      letterTone: null,
-      letterResponseId: null,
-      letterContent: null,
-      letterReferences: [],
-      letterJson: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      ...overrides,
+    it('throws when userId is missing', () => {
+      const { service } = createService();
+      expect(() => service.streamWritingDeskLetter(null, {})).toThrowError('User account required');
     });
 
-    it('completes without streaming an error when model output uses non-canonical context values', async () => {
-      const activeJob = createActiveJob();
-      const capturedSchemas: any[] = [];
-
+    it('delegates streaming to the letter service', () => {
+      const stream = { subscribe: jest.fn() } as any;
       const { service, dependencies } = createService({
-        configGet: (key) => {
-          switch (key) {
-            case 'OPENAI_API_KEY':
-              return 'test-key';
-            case 'OPENAI_LETTER_MODEL':
-              return 'gpt-5-mini';
-            case 'OPENAI_LETTER_VERBOSITY':
-              return 'medium';
-            case 'OPENAI_LETTER_REASONING_EFFORT':
-              return 'medium';
-            default:
-              return null;
-          }
-        },
-        userCredits: {
-          deductFromMine: jest.fn().mockResolvedValue({ credits: 9.5 }),
-          addToMine: jest.fn().mockResolvedValue(undefined),
-        },
-        writingDeskJobs: {
-          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
-          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        letterService: {
+          streamLetter: jest.fn().mockReturnValue(stream),
         },
       });
 
-      const letterJson = JSON.stringify({
-        mp_name: 'Different MP Name',
-        mp_address_1: 'Alt Line 1',
-        mp_address_2: 'Alt Line 2',
-        mp_city: 'Alt City',
-        mp_county: 'Alt County',
-        mp_postcode: 'ZZ1 1ZZ',
-        date: '2025-02-02',
-        subject_line_html: '<p><strong>Subject:</strong> Alternate Subject</p>',
-        letter_content: '<p>Body content</p>',
-        sender_name: 'Alt Sender',
-        sender_address_1: 'Alt Sender Line 1',
-        sender_address_2: 'Alt Sender Line 2',
-        sender_address_3: 'Alt Sender Line 3',
-        sender_city: 'Alt Sender City',
-        sender_county: 'Alt Sender County',
-        sender_postcode: 'AA1 1AA',
-        sender_phone: '555-0000',
-        references: ['https://example.com/resource'],
-      });
+      const result = service.streamWritingDeskLetter('user-1', { jobId: 'job-123' });
 
-      const context = {
-        mpName: 'Canonical MP',
-        mpAddress1: 'Line 1',
-        mpAddress2: 'Line 2',
-        mpCity: 'Town',
-        mpCounty: 'County',
-        mpPostcode: 'AB1 2CD',
-        constituency: 'Somewhere',
-        senderName: 'Constituent',
-        senderAddress1: 'Sender Line 1',
-        senderAddress2: 'Sender Line 2',
-        senderAddress3: 'Sender Line 3',
-        senderCity: 'Sender Town',
-        senderCounty: 'Sender County',
-        senderPostcode: 'ZX9 9XZ',
-        senderTelephone: '020 7946 0123',
-        today: '2025-01-15',
-      };
-
-      (service as any).resolveLetterContext = jest.fn().mockResolvedValue(context);
-
-      const persistLetterState = jest.fn().mockResolvedValue(undefined);
-      const persistLetterResult = jest.fn().mockResolvedValue(undefined);
-      (service as any).persistLetterState = persistLetterState;
-      (service as any).persistLetterResult = persistLetterResult;
-
-      const clientMock = {
-        responses: {
-          stream: jest.fn(() => ({
-            controller: { abort: jest.fn() },
-            [Symbol.asyncIterator]: async function* () {
-              yield {
-                type: 'response.completed',
-                response: {
-                  id: 'resp-123',
-                  output: [
-                    {
-                      content: [
-                        {
-                          type: 'output_text',
-                          text: letterJson,
-                        },
-                      ],
-                    },
-                  ],
-                },
-              };
-            },
-          })),
-        },
-      };
-
-      (service as any).getOpenAiClient = jest.fn().mockResolvedValue(clientMock);
-
-      // Capture schema passed to OpenAI to confirm lack of const constraints
-      (clientMock.responses.stream as jest.Mock).mockImplementation((params: any) => {
-        capturedSchemas.push(params?.text?.format?.schema);
-        return {
-          controller: { abort: jest.fn() },
-          [Symbol.asyncIterator]: async function* () {
-            yield {
-              type: 'response.completed',
-              response: {
-                id: 'resp-123',
-                output: [
-                  {
-                    content: [
-                      {
-                        type: 'output_text',
-                        text: letterJson,
-                      },
-                    ],
-                  },
-                ],
-              },
-            };
-          },
-        };
-      });
-
-      const subjectMessages: Array<Record<string, any>> = [];
-
-      const messageStream = service.streamWritingDeskLetter('user-1', {
-        jobId: activeJob.jobId,
-        tone: 'formal',
-        resume: false,
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        const subscription = messageStream.subscribe({
-          next: (event) => {
-            const payload = JSON.parse(String(event.data));
-            subjectMessages.push(payload);
-            if (payload.type === 'complete') {
-              subscription.unsubscribe();
-              resolve();
-            }
-          },
-          error: (error) => {
-            reject(error);
-          },
-          complete: () => {
-            resolve();
-          },
-        });
-      });
-
-      const runKey = `user-1::${activeJob.jobId}`;
-      const run = ((service as any).letterRuns as Map<string, any>).get(runKey);
-      if (run?.promise) {
-        await run.promise;
-      }
-
-      expect(subjectMessages.some((message) => message.type === 'error')).toBe(false);
-
-      const completePayload = subjectMessages.find((message) => message.type === 'complete');
-      expect(completePayload).toBeDefined();
-      expect(completePayload.letter.senderTelephone).toBe(context.senderTelephone);
-
-      expect(persistLetterResult).toHaveBeenCalledWith(
-        'user-1',
-        activeJob,
-        expect.objectContaining({
-          status: 'completed',
-          tone: 'formal',
-          content: expect.stringContaining(`Tel: ${context.senderTelephone}`),
-          json: letterJson,
-        }),
-      );
-
-      expect(capturedSchemas).toHaveLength(1);
-      const schema = capturedSchemas[0];
-      expect(schema.properties.sender_phone.const).toBeUndefined();
-      expect(schema.properties.sender_phone.default).toBe(context.senderTelephone);
-
-      expect(dependencies.credits.deductFromMine).toHaveBeenCalledWith('user-1', expect.any(Number));
+      expect(dependencies.letter.streamLetter).toHaveBeenCalledWith('user-1', { jobId: 'job-123' });
+      expect(result).toBe(stream);
     });
   });
 
-  describe('executeLetterRun', () => {
-    const createActiveJob = (
-      overrides: Partial<ActiveWritingDeskJobResource> = {},
-    ): ActiveWritingDeskJobResource => ({
-      jobId: 'job-123',
-      phase: 'generating',
-      stepIndex: 0,
-      followUpIndex: 0,
-      form: { issueDescription: 'Issue details' },
-      followUpQuestions: [],
-      followUpAnswers: [],
-      notes: null,
-      responseId: null,
-      researchContent: 'Research summary',
-      researchResponseId: null,
-      researchStatus: 'completed',
-      letterStatus: 'idle',
-      letterTone: null,
-      letterResponseId: null,
-      letterContent: null,
-      letterReferences: [],
-      letterJson: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      ...overrides,
-    });
-
-    const setupLetterService = (activeJob: ActiveWritingDeskJobResource, context: Record<string, any>) => {
-      const { service } = createService({
-        configGet: (key) => {
-          switch (key) {
-            case 'OPENAI_API_KEY':
-              return 'test-key';
-            case 'OPENAI_LETTER_MODEL':
-              return 'gpt-5';
-            case 'OPENAI_LETTER_VERBOSITY':
-              return 'medium';
-            case 'OPENAI_LETTER_REASONING_EFFORT':
-              return 'low';
-            default:
-              return null;
-          }
-        },
-        userCredits: {
-          deductFromMine: jest.fn().mockResolvedValue({ credits: 9.8 }),
-        },
-        writingDeskJobs: {
-          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
-          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+  describe('ensureLetterRun', () => {
+    it('delegates to the letter service', async () => {
+      const { service, dependencies } = createService({
+        letterService: {
+          ensureLetterRun: jest
+            .fn()
+            .mockResolvedValue({ jobId: 'job-123', status: 'running' as const }),
         },
       });
 
-      jest.spyOn(service as any, 'persistLetterState').mockResolvedValue(undefined);
-      const persistResultSpy = jest
-        .spyOn(service as any, 'persistLetterResult')
-        .mockResolvedValue(undefined);
-      const touchSpy = jest.spyOn(service as any, 'touchStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'clearStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'createStreamingHeartbeat').mockReturnValue(jest.fn());
-      jest.spyOn(service as any, 'scheduleLetterRunCleanup').mockImplementation(() => undefined);
-      jest.spyOn(service as any, 'delay').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'resolveLetterContext').mockResolvedValue(context);
-      jest.spyOn(service as any, 'buildLetterPrompt').mockReturnValue('prompt');
-      jest.spyOn(service as any, 'buildLetterSystemPrompt').mockReturnValue('system');
-      jest.spyOn(service as any, 'extractLetterPreview').mockReturnValue(null);
-      jest.spyOn(service as any, 'extractSubjectLinePreview').mockReturnValue(null);
-      jest.spyOn(service as any, 'extractReferencesFromJson').mockReturnValue([]);
-      jest.spyOn(service as any, 'createStreamWithTimeout').mockImplementation((stream: any) => stream);
-
-      return { service, persistResultSpy, touchSpy };
-    };
-
-    const createContext = () => ({
-      mpName: 'Canonical MP',
-      mpAddress1: 'Line 1',
-      mpAddress2: 'Line 2',
-      mpCity: 'Town',
-      mpCounty: 'County',
-      mpPostcode: 'AB1 2CD',
-      constituency: 'Somewhere',
-      senderName: 'Constituent',
-      senderAddress1: 'Sender Line 1',
-      senderAddress2: 'Sender Line 2',
-      senderAddress3: 'Sender Line 3',
-      senderCity: 'Sender Town',
-      senderCounty: 'Sender County',
-      senderPostcode: 'ZX9 9XZ',
-      senderTelephone: '020 7946 0123',
-      today: '2025-01-15',
-    });
-
-    it('retries recoverable transport errors when composing letters', async () => {
-      const activeJob = createActiveJob();
-      const context = createContext();
-      const { service, persistResultSpy, touchSpy } = setupLetterService(activeJob, context);
-
-      const parsedResult = {
-        mp_name: 'Canonical MP',
-        mp_address_1: 'Line 1',
-        mp_address_2: 'Line 2',
-        mp_city: 'Town',
-        mp_county: 'County',
-        mp_postcode: 'AB1 2CD',
-        date: '2025-01-15',
-        subject_line_html: '<p>Subject</p>',
-        letter_content: '<p>Letter</p>',
-        sender_name: 'Constituent',
-        sender_address_1: 'Sender Line 1',
-        sender_address_2: 'Sender Line 2',
-        sender_address_3: 'Sender Line 3',
-        sender_city: 'Sender Town',
-        sender_county: 'Sender County',
-        sender_postcode: 'ZX9 9XZ',
-        sender_phone: '020 7946 0123',
-        references: ['https://example.com'],
-      };
-
-      jest.spyOn(service as any, 'parseLetterResult').mockReturnValue(parsedResult);
-      jest.spyOn(service as any, 'mergeLetterResultWithContext').mockReturnValue(parsedResult);
-      jest.spyOn(service as any, 'buildLetterDocumentHtml').mockReturnValue('LETTER_HTML');
-      jest.spyOn(service as any, 'toLetterCompletePayload').mockReturnValue({});
-
-      const subject = { next: jest.fn(), complete: jest.fn() };
-      const run: any = {
-        key: 'user-1::job-123',
-        userId: 'user-1',
-        jobId: activeJob.jobId,
+      const result = await service.ensureLetterRun('user-1', 'job-123', {
         tone: 'formal',
-        subject,
-        status: 'running',
-        startedAt: Date.now(),
-        cleanupTimer: null,
-        promise: null,
-        responseId: null,
-        remainingCredits: null,
-      };
-
-      const firstStream = (async function* () {
-        yield { type: 'response.created', id: 'evt-1', sequence_number: 1, response: { id: 'resp-123' } };
-        yield { type: 'response.output_text.delta', id: 'evt-2', sequence_number: 2, delta: 'partial' };
-        throw new Error('socket hang up');
-      })();
-      (firstStream as any).controller = { abort: jest.fn() };
-
-      const resumedStream = (async function* () {
-        yield { type: 'response.in_progress', id: 'evt-3', sequence_number: 3 };
-        yield {
-          type: 'response.completed',
-          id: 'evt-4',
-          sequence_number: 4,
-          response: { id: 'resp-123', output_text: 'final-json', usage: { total_tokens: 10 } },
-        };
-      })();
-      (resumedStream as any).controller = { abort: jest.fn() };
-
-      const streamMock = jest
-        .fn()
-        .mockImplementationOnce(() => firstStream)
-        .mockImplementationOnce(() => resumedStream);
-
-      const client = {
-        responses: {
-          stream: streamMock,
-        },
-      };
-
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
-
-      await (service as any).executeLetterRun({
-        run,
-        userId: 'user-1',
-        baselineJob: activeJob,
-        subject,
-        researchContent: 'Research summary',
+        createIfMissing: true,
       });
 
-      expect(streamMock).toHaveBeenCalledTimes(2);
-      expect(streamMock).toHaveBeenCalledWith(
-        expect.objectContaining({ response_id: 'resp-123', after: 'evt-2', event_id: 'evt-2' }),
-      );
-      expect(persistResultSpy).toHaveBeenCalledWith(
-        'user-1',
-        activeJob,
-        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
-      );
-      expect(touchSpy).toHaveBeenCalledWith(
-        'letter',
-        run.key,
-        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
-      );
-      expect(subject.complete).toHaveBeenCalled();
-      expect(run.status).toBe('completed');
-    });
-
-    it('falls back to background polling after exhausting resume attempts', async () => {
-      const activeJob = createActiveJob();
-      const context = createContext();
-      const { service, persistResultSpy, touchSpy } = setupLetterService(activeJob, context);
-
-      const parsedResult = {
-        mp_name: 'Canonical MP',
-        mp_address_1: 'Line 1',
-        mp_address_2: 'Line 2',
-        mp_city: 'Town',
-        mp_county: 'County',
-        mp_postcode: 'AB1 2CD',
-        date: '2025-01-15',
-        subject_line_html: '<p>Subject</p>',
-        letter_content: '<p>Letter</p>',
-        sender_name: 'Constituent',
-        sender_address_1: 'Sender Line 1',
-        sender_address_2: 'Sender Line 2',
-        sender_address_3: 'Sender Line 3',
-        sender_city: 'Sender Town',
-        sender_county: 'Sender County',
-        sender_postcode: 'ZX9 9XZ',
-        sender_phone: '020 7946 0123',
-        references: ['https://example.com'],
-      };
-
-      jest.spyOn(service as any, 'parseLetterResult').mockReturnValue(parsedResult);
-      jest.spyOn(service as any, 'mergeLetterResultWithContext').mockReturnValue(parsedResult);
-      jest.spyOn(service as any, 'buildLetterDocumentHtml').mockReturnValue('LETTER_HTML');
-      jest.spyOn(service as any, 'toLetterCompletePayload').mockReturnValue({});
-
-      const subject = { next: jest.fn(), complete: jest.fn() };
-      const run: any = {
-        key: 'user-1::job-123',
-        userId: 'user-1',
-        jobId: activeJob.jobId,
+      expect(dependencies.letter.ensureLetterRun).toHaveBeenCalledWith('user-1', 'job-123', {
         tone: 'formal',
-        subject,
-        status: 'running',
-        startedAt: Date.now(),
-        cleanupTimer: null,
-        promise: null,
-        responseId: null,
-        remainingCredits: null,
-      };
-
-      const firstStream = (async function* () {
-        yield { type: 'response.created', id: 'evt-1', sequence_number: 1, response: { id: 'resp-123' } };
-        yield { type: 'response.output_text.delta', id: 'evt-2', sequence_number: 2, delta: 'partial' };
-        throw new Error('socket hang up');
-      })();
-      (firstStream as any).controller = { abort: jest.fn() };
-
-      const streamMock = jest.fn().mockImplementationOnce(() => firstStream).mockImplementation(() => {
-        throw new Error('fetch failed');
+        createIfMissing: true,
       });
-
-      const client = {
-        responses: {
-          stream: streamMock,
-        },
-      };
-
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
-      const waitSpy = jest
-        .spyOn(service as any, 'waitForBackgroundResponseCompletion')
-        .mockResolvedValue({ status: 'completed', output_text: 'final-json', id: 'resp-123' });
-
-      await (service as any).executeLetterRun({
-        run,
-        userId: 'user-1',
-        baselineJob: activeJob,
-        subject,
-        researchContent: 'Research summary',
-      });
-
-      expect(streamMock).toHaveBeenCalledTimes(11);
-      expect(waitSpy).toHaveBeenCalledWith(
-        client,
-        'resp-123',
-        expect.objectContaining({ taskName: 'Letter composition', logContext: 'letter' }),
-      );
-      expect(
-        subject.next.mock.calls.some(([payload]) => payload.type === 'status' && payload.status === 'background_polling'),
-      ).toBe(true);
-      expect(persistResultSpy).toHaveBeenCalledWith(
-        'user-1',
-        activeJob,
-        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
-      );
-      expect(touchSpy).toHaveBeenCalledWith(
-        'letter',
-        run.key,
-        expect.objectContaining({ status: 'completed', responseId: 'resp-123' }),
-      );
-      expect(subject.complete).toHaveBeenCalled();
-      expect(run.status).toBe('completed');
+      expect(result).toEqual({ jobId: 'job-123', status: 'running' });
     });
   });
 
-  describe('error logging', () => {
-    const createActiveJob = (overrides: Partial<ActiveWritingDeskJobResource> = {}): ActiveWritingDeskJobResource => ({
-      jobId: 'job-123',
-      phase: 'generating',
-      stepIndex: 0,
-      followUpIndex: 0,
-      form: { issueDescription: 'Issue details' },
-      followUpQuestions: [],
-      followUpAnswers: [],
-      notes: null,
-      responseId: null,
-      researchContent: 'Research summary',
-      researchResponseId: null,
-      researchStatus: 'completed',
-      letterStatus: 'idle',
-      letterTone: null,
-      letterResponseId: null,
-      letterContent: null,
-      letterReferences: [],
-      letterJson: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      ...overrides,
-    });
-
-    it('logs comprehensive error details when letter composition fails', async () => {
-      const activeJob = createActiveJob();
-      const mockLogger = {
-        error: jest.fn(),
-        warn: jest.fn(),
-      };
-
-      const { service, dependencies } = createService({
-        configGet: (key) => {
-          switch (key) {
-            case 'OPENAI_API_KEY':
-              return 'test-key';
-            case 'OPENAI_LETTER_MODEL':
-              return 'gpt-5-mini';
-            default:
-              return null;
-          }
-        },
-        userCredits: {
-          deductFromMine: jest.fn().mockResolvedValue({ credits: 9.5 }),
-          addToMine: jest.fn().mockResolvedValue(undefined),
-        },
-        writingDeskJobs: {
-          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
-          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
-        },
-      });
-
-      // Mock the logger
-      (service as any).logger = mockLogger;
-
-      const clientMock = {
-        responses: {
-          stream: jest.fn(() => ({
-            controller: { abort: jest.fn() },
-            [Symbol.asyncIterator]: async function* () {
-              yield {
-                type: 'response.error',
-                error: {
-                  message: 'Test error message',
-                  code: 'TEST_ERROR_CODE',
-                },
-              };
-            },
-          })),
-        },
-      };
-
-      (service as any).getOpenAiClient = jest.fn().mockResolvedValue(clientMock);
-      (service as any).resolveLetterContext = jest.fn().mockResolvedValue({});
-      (service as any).persistLetterState = jest.fn().mockResolvedValue(undefined);
-
-      const messageStream = service.streamWritingDeskLetter('user-1', {
-        jobId: activeJob.jobId,
-        tone: 'formal',
-        resume: false,
-      });
-
-      const errorMessages: Array<Record<string, any>> = [];
-
-      await new Promise<void>((resolve, reject) => {
-        const subscription = messageStream.subscribe({
-          next: (event) => {
-            const payload = JSON.parse(String(event.data));
-            if (payload.type === 'error') {
-              errorMessages.push(payload);
-              subscription.unsubscribe();
-              resolve();
-            }
-          },
-          error: (error) => {
-            reject(error);
-          },
-          complete: () => {
-            resolve();
-          },
-        });
-      });
-
-      // Verify error logging was called with comprehensive context
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('LETTER_COMPOSITION_RESPONSE_ERROR: Test error message'),
-        expect.objectContaining({
-          errorType: 'LETTER_COMPOSITION_RESPONSE_ERROR',
-          userId: 'user-1',
-          jobId: activeJob.jobId,
-          tone: 'formal',
-          eventType: 'response.error',
-          errorDetails: expect.objectContaining({
-            message: 'Test error message',
-            code: 'TEST_ERROR_CODE',
-          }),
-          timestamp: expect.any(String),
-          service: 'writing-desk-letter-composition',
-        })
+  describe('generateWritingDeskFollowUps', () => {
+    it('throws when userId is missing', async () => {
+      const { service } = createService();
+      await expect(service.generateWritingDeskFollowUps(null, { issueDescription: 'Test' } as any)).rejects.toThrow(
+        'User account required',
       );
-
-      // Verify error message was sent to client
-      expect(errorMessages).toHaveLength(1);
-      expect(errorMessages[0].type).toBe('error');
-      expect(errorMessages[0].message).toBe('Letter composition failed. Please try again in a few moments.');
-      });
     });
+
+    it('delegates to the follow-up service', async () => {
+      const payload = { model: 'test', followUpQuestions: ['Q1'], notes: null } as any;
+      const { service, dependencies } = createService({
+        followUpService: {
+          generate: jest.fn().mockResolvedValue(payload),
+        },
+      });
+
+      const result = await service.generateWritingDeskFollowUps('user-1', { issueDescription: 'Help' } as any);
+
+      expect(dependencies.followUp.generate).toHaveBeenCalledWith('user-1', { issueDescription: 'Help' });
+      expect(result).toBe(payload);
+    });
+  });
+
+  describe('recordWritingDeskFollowUps', () => {
+    it('delegates to the follow-up service', async () => {
+      const { service, dependencies } = createService({
+        followUpService: {
+          record: jest.fn().mockResolvedValue({ ok: true }),
+        },
+      });
+
+      const dto = {
+        issueDescription: 'Issue',
+        followUpQuestions: ['Q1'],
+        followUpAnswers: ['A1'],
+      } as any;
+
+      const result = await service.recordWritingDeskFollowUps(dto);
+
+      expect(dependencies.followUp.record).toHaveBeenCalledWith(dto);
+      expect(result).toEqual({ ok: true });
+    });
+  });
+
+  describe('transcribeAudio', () => {
+    it('throws when userId is missing', async () => {
+      const { service } = createService();
+      await expect(service.transcribeAudio(null, { audioData: '' } as any)).rejects.toThrow('User account required');
+    });
+
+    it('delegates to the transcription service', async () => {
+      const transcription = { text: 'hello' } as any;
+      const { service, dependencies } = createService({
+        transcriptionService: {
+          transcribeAudio: jest.fn().mockResolvedValue(transcription),
+        },
+      });
+
+      const result = await service.transcribeAudio('user-1', { audioData: 'data' } as any);
+
+      expect(dependencies.transcription.transcribeAudio).toHaveBeenCalledWith('user-1', { audioData: 'data' });
+      expect(result).toBe(transcription);
+    });
+  });
+
+  describe('streamTranscription', () => {
+    it('throws when userId is missing', () => {
+      const { service } = createService();
+      expect(() => service.streamTranscription(null, { audioData: '' } as any)).toThrowError('User account required');
+    });
+
+    it('delegates to the transcription service', () => {
+      const stream = { subscribe: jest.fn() } as any;
+      const { service, dependencies } = createService({
+        transcriptionService: {
+          streamTranscription: jest.fn().mockReturnValue(stream),
+        },
+      });
+
+      const result = service.streamTranscription('user-1', { audioData: 'data' } as any);
+
+      expect(dependencies.transcription.streamTranscription).toHaveBeenCalledWith('user-1', { audioData: 'data' });
+      expect(result).toBe(stream);
+    });
+  });
+
+  describe('streamWritingDeskDeepResearch', () => {
+    it('throws when userId is missing', () => {
+      const { service } = createService();
+      expect(() => service.streamWritingDeskDeepResearch(null, {})).toThrowError('User account required');
+    });
+
+    it('delegates streaming to the research service', () => {
+      const stream = { subscribe: jest.fn() } as any;
+      const { service, dependencies } = createService({
+        researchService: {
+          streamResearch: jest.fn().mockReturnValue(stream),
+        },
+      });
+
+      const result = service.streamWritingDeskDeepResearch('user-1', { jobId: 'job-123' });
+
+      expect(dependencies.research.streamResearch).toHaveBeenCalledWith('user-1', {
+        jobId: 'job-123',
+        restart: undefined,
+        createIfMissing: undefined,
+      });
+      expect(result).toBe(stream);
+    });
+  });
+
+  describe('ensureDeepResearchRun', () => {
+    it('delegates to the research service', async () => {
+      const { service, dependencies } = createService({
+        researchService: {
+          ensureResearchRun: jest
+            .fn()
+            .mockResolvedValue({ jobId: 'job-456', status: 'completed' as const }),
+        },
+      });
+
+      const result = await service.ensureDeepResearchRun('user-1', 'job-456', { restart: true });
+
+      expect(dependencies.research.ensureResearchRun).toHaveBeenCalledWith('user-1', 'job-456', {
+        restart: true,
+      });
+      expect(result).toEqual({ jobId: 'job-456', status: 'completed' });
+    });
+  });
 
   describe('recoverStaleStreamingRuns', () => {
-    const createActiveJob = (): ActiveWritingDeskJobResource => ({
-      jobId: 'job-123',
-      phase: 'generating',
-      stepIndex: 0,
-      followUpIndex: 0,
-      form: { issueDescription: 'Issue' },
-      followUpQuestions: [],
-      followUpAnswers: [],
-      notes: null,
+    const createStaleRun = (overrides: Partial<StreamingRunState> = {}): StreamingRunState => ({
+      type: 'deep_research',
+      runKey: 'user-1::job-1',
+      userId: 'user-1',
+      jobId: 'job-1',
+      status: 'running',
+      startedAt: Date.now() - 1000,
+      lastActivityAt: Date.now() - 1000,
       responseId: null,
-      researchContent: 'Research',
-      researchResponseId: null,
-      researchStatus: 'running',
-      letterStatus: 'idle',
-      letterTone: null,
-      letterResponseId: null,
-      letterContent: null,
-      letterReferences: [],
-      letterJson: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    it('refunds credits and clears stale deep research runs', async () => {
-      const activeJob = createActiveJob();
-      const staleRun = {
-        type: 'deep_research' as const,
-        runKey: 'user-1::job-123',
-        userId: 'user-1',
-        jobId: 'job-123',
-        status: 'running' as const,
-        startedAt: Date.now() - 10_000,
-        lastActivityAt: Date.now() - 10_000,
-        responseId: null,
-        instanceId: 'other',
-        meta: { charged: true },
-      };
-
-      const { service, dependencies } = createService({
-        configGet: () => null,
-        userCredits: {
-          addToMine: jest.fn().mockResolvedValue(undefined),
-        },
-        writingDeskJobs: {
-          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
-          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
-        },
-        streamingState: {
-          findStaleRuns: jest.fn().mockResolvedValue([staleRun]),
-          removeRun: jest.fn().mockResolvedValue(undefined),
-        },
-      });
-
-      await service.recoverStaleStreamingRuns();
-
-      expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-1', 0.7);
-      expect(dependencies.streaming.removeRun).toHaveBeenCalledWith('deep_research', staleRun.runKey);
-    });
-
-    it('handles stale letter runs by refunding credits', async () => {
-      const activeJob = createActiveJob();
-      const staleRun = {
-        type: 'letter' as const,
-        runKey: 'user-2::job-123',
-        userId: 'user-2',
-        jobId: 'job-123',
-        status: 'running' as const,
-        startedAt: Date.now() - 20_000,
-        lastActivityAt: Date.now() - 20_000,
-        responseId: 'resp_123',
-        instanceId: 'other',
-        meta: { charged: true },
-      };
-
-      const { service, dependencies } = createService({
-        configGet: () => null,
-        userCredits: {
-          addToMine: jest.fn().mockResolvedValue(undefined),
-        },
-        writingDeskJobs: {
-          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
-          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
-        },
-        streamingState: {
-          findStaleRuns: jest.fn().mockResolvedValue([staleRun]),
-          removeRun: jest.fn().mockResolvedValue(undefined),
-        },
-      });
-
-      await service.recoverStaleStreamingRuns();
-
-      expect(dependencies.credits.addToMine).toHaveBeenCalledWith('user-2', 0.2);
-      expect(dependencies.streaming.removeRun).toHaveBeenCalledWith('letter', staleRun.runKey);
-    });
-  });
-
-  describe('executeDeepResearchRun', () => {
-    const createActiveJob = (
-      overrides: Partial<ActiveWritingDeskJobResource> = {},
-    ): ActiveWritingDeskJobResource => ({
-      jobId: 'job-123',
-      phase: 'researching',
-      stepIndex: 0,
-      followUpIndex: 0,
-      form: { issueDescription: 'Issue details' },
-      followUpQuestions: [],
-      followUpAnswers: [],
-      notes: null,
-      responseId: null,
-      researchContent: null,
-      researchResponseId: null,
-      researchStatus: 'idle',
-      letterStatus: 'idle',
-      letterTone: null,
-      letterResponseId: null,
-      letterContent: null,
-      letterReferences: [],
-      letterJson: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      instanceId: 'other',
+      meta: { charged: true },
       ...overrides,
     });
 
-    const setupDeepResearchService = (activeJob: ActiveWritingDeskJobResource) => {
+    it('delegates letter stale runs to the letter service', async () => {
+      const letterRun = createStaleRun({ type: 'letter', runKey: 'user-2::job-2', userId: 'user-2' });
       const { service, dependencies } = createService({
-        configGet: (key) => {
-          switch (key) {
-            case 'OPENAI_API_KEY':
-              return 'test-key';
-            case 'OPENAI_DEEP_RESEARCH_MODEL':
-              return 'gpt-5-mini';
-            default:
-              return null;
-          }
+        streamingRuns: {
+          findStaleRuns: jest.fn().mockResolvedValue([letterRun]),
         },
-        userCredits: {
-          deductFromMine: jest.fn().mockResolvedValue({ credits: 9 }),
-        },
-        writingDeskJobs: {
-          getActiveJobForUser: jest.fn().mockResolvedValue(activeJob),
-          upsertActiveJob: jest.fn().mockResolvedValue(activeJob),
+        letterService: {
+          handleOrphanedRun: jest.fn().mockResolvedValue(undefined),
         },
       });
 
-      jest.spyOn(service as any, 'persistDeepResearchStatus').mockResolvedValue(undefined);
-      const persistResultSpy = jest
-        .spyOn(service as any, 'persistDeepResearchResult')
-        .mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'touchStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'clearStreamingRun').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'createStreamingHeartbeat').mockReturnValue(jest.fn());
-      jest.spyOn(service as any, 'resolveUserMpName').mockResolvedValue('Test MP');
-      jest.spyOn(service as any, 'buildDeepResearchPrompt').mockReturnValue('prompt');
-      jest
-        .spyOn(service as any, 'buildDeepResearchRequestExtras')
-        .mockReturnValue({ tools: [] });
-      jest.spyOn(service as any, 'scheduleRunCleanup').mockImplementation(() => undefined);
-      jest.spyOn(service as any, 'delay').mockResolvedValue(undefined);
+      await service.recoverStaleStreamingRuns();
 
-      return { service, dependencies, persistResultSpy };
-    };
-
-    it('reuses the last cursor when resuming a deep research stream', async () => {
-      const activeJob = createActiveJob();
-      const { service, persistResultSpy } = setupDeepResearchService(activeJob);
-
-      const subject = { next: jest.fn(), complete: jest.fn() };
-      const run: any = {
-        key: 'user-1::job-123',
-        userId: 'user-1',
-        jobId: activeJob.jobId,
-        subject,
-        status: 'running',
-        startedAt: Date.now(),
-        cleanupTimer: null,
-        promise: null,
-        responseId: null,
-      };
-
-      const firstStream = (async function* () {
-        yield {
-          type: 'response.in_progress',
-          id: 'evt-1',
-          sequence_number: 1,
-          response: { id: 'resp-123' },
-        };
-        yield {
-          type: 'response.output_text.delta',
-          id: 'evt-2',
-          sequence_number: 2,
-          delta: 'Hello',
-        };
-        throw new Error('socket hang up');
-      })();
-      (firstStream as any).controller = { abort: jest.fn() };
-
-      const resumedStream = (async function* () {
-        yield { type: 'response.in_progress', id: 'evt-3', sequence_number: 3 };
-        yield {
-          type: 'response.completed',
-          id: 'evt-4',
-          sequence_number: 4,
-          response: {
-            id: 'resp-123',
-            output_text: 'Hello world',
-          },
-        };
-      })();
-      (resumedStream as any).controller = { abort: jest.fn() };
-
-      const streamMock = jest.fn().mockReturnValue(resumedStream);
-      const client = {
-        responses: {
-          create: jest.fn().mockResolvedValue(firstStream),
-          stream: streamMock,
-        },
-      };
-
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
-      await (service as any).executeDeepResearchRun({
-        run,
-        userId: 'user-1',
-        baselineJob: activeJob,
-        subject,
-      });
-
-      expect(streamMock).toHaveBeenCalledTimes(1);
-      expect(streamMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          response_id: 'resp-123',
-          after: 'evt-2',
-          event_id: 'evt-2',
-        }),
-      );
-      expect(subject.complete).toHaveBeenCalled();
-      expect(run.status).toBe('completed');
-      expect(persistResultSpy).toHaveBeenCalledWith(
-        'user-1',
-        activeJob,
-        expect.objectContaining({ content: 'Hello world', responseId: 'resp-123', status: 'completed' }),
-      );
+      expect(dependencies.letter.handleOrphanedRun).toHaveBeenCalledWith(letterRun);
+      expect(dependencies.streamingRuns.clearRun).not.toHaveBeenCalledWith('letter', letterRun.runKey);
     });
 
-    it('falls back to background polling after exhausting resume attempts', async () => {
-      const activeJob = createActiveJob();
-      const { service } = setupDeepResearchService(activeJob);
-
-      const subject = { next: jest.fn(), complete: jest.fn() };
-      const run: any = {
-        key: 'user-1::job-123',
-        userId: 'user-1',
-        jobId: activeJob.jobId,
-        subject,
-        status: 'running',
-        startedAt: Date.now(),
-        cleanupTimer: null,
-        promise: null,
-        responseId: null,
-      };
-
-      const firstStreamError = new Error('socket hang up');
-      const firstStream = (async function* () {
-        yield {
-          type: 'response.in_progress',
-          id: 'evt-1',
-          sequence_number: 1,
-          response: { id: 'resp-123' },
-        };
-        yield {
-          type: 'response.output_text.delta',
-          id: 'evt-2',
-          sequence_number: 2,
-          delta: 'Hello',
-        };
-        throw firstStreamError;
-      })();
-      (firstStream as any).controller = { abort: jest.fn() };
-
-      const streamMock = jest.fn().mockImplementation(() => {
-        throw new Error('fetch failed');
-      });
-      const client = {
-        responses: {
-          create: jest.fn().mockResolvedValue(firstStream),
-          stream: streamMock,
-          retrieve: jest.fn(),
+    it('delegates deep research stale runs to the research service', async () => {
+      const researchRun = createStaleRun();
+      const { service, dependencies } = createService({
+        streamingRuns: {
+          findStaleRuns: jest.fn().mockResolvedValue([researchRun]),
         },
-      };
-
-      const waitSpy = jest
-        .spyOn(service as any, 'waitForBackgroundResponseCompletion')
-        .mockResolvedValue({ status: 'completed', output_text: 'Hello world' });
-
-      jest.spyOn(service as any, 'getOpenAiClient').mockResolvedValue(client);
-
-      await (service as any).executeDeepResearchRun({
-        run,
-        userId: 'user-1',
-        baselineJob: activeJob,
-        subject,
+        researchService: {
+          handleOrphanedRun: jest.fn().mockResolvedValue(undefined),
+        },
       });
 
-      expect(streamMock).toHaveBeenCalledTimes(10);
-      expect(streamMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          response_id: 'resp-123',
-          after: 'evt-2',
-          event_id: 'evt-2',
-        }),
+      await service.recoverStaleStreamingRuns();
+
+      expect(dependencies.research.handleOrphanedRun).toHaveBeenCalledWith(researchRun);
+      expect(dependencies.streamingRuns.clearRun).not.toHaveBeenCalledWith(
+        'deep_research',
+        researchRun.runKey,
       );
-      expect(waitSpy).toHaveBeenCalledWith(client, 'resp-123');
-      expect(
-        subject.next.mock.calls.some(([payload]) => payload.type === 'status' && payload.status === 'background_polling'),
-      ).toBe(true);
-      expect(subject.complete).toHaveBeenCalled();
-      expect(run.status).toBe('completed');
     });
   });
-
 });

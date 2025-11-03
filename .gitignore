@@ -45,6 +45,7 @@ Thumbs.db
 
 # Next.js
 .next
+frontend/.next-root-owned
 out
 
 # Environment files
@@ -89,5 +90,4 @@ playwright/.cache/
 
 # Docker local overrides
 docker-compose.override.local.yml
-
 

@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { letterHtmlToPlainText } from '../utils/composeLetterHtml';
+import { letterHtmlToPlainText } from '../utils';
 import type { WritingDeskLetterPayload } from '../types';
 
 export const LETTER_DOCUMENT_CSS = `
