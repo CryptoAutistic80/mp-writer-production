@@ -83,12 +83,13 @@ export function WritingDeskSummary({
   letterPanelProps,
 }: WritingDeskSummaryProps) {
   return (
-    <div className="result" aria-live="polite">
-      {letterPhase === 'idle' && (
-        <>
-          <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
-          <p className="section-sub">
-            Thanks for the detail. When you’re ready, start the research to gather supporting evidence.
+    <>
+      <div className="result" aria-live="polite">
+        {letterPhase === 'idle' && (
+          <>
+            <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
+            <p className="section-sub">
+              Thanks for the detail. When you’re ready, start the research to gather supporting evidence.
           </p>
 
           {serverError && (
@@ -316,7 +317,99 @@ export function WritingDeskSummary({
         </>
       )}
 
-      {letterPhase !== 'idle' && <WritingDeskLetterPanel {...letterPanelProps} />}
-    </div>
+        {letterPhase !== 'idle' && <WritingDeskLetterPanel {...letterPanelProps} />}
+      </div>
+      <style>{`
+        .result {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .research-progress {
+          display: flex;
+          gap: 12px;
+          margin-top: 16px;
+          align-items: flex-start;
+          background: #f8fafc;
+          border-radius: 12px;
+          padding: 12px;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+        }
+
+        .research-progress__spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(59, 130, 246, 0.3);
+          border-top-color: #2563eb;
+          border-radius: 999px;
+          animation: spin 0.8s linear infinite;
+          margin-top: 4px;
+        }
+
+        .research-progress__content {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .research-notes {
+          background: #0f172a;
+          border-radius: 12px;
+          padding: 16px;
+          color: #e2e8f0;
+          font-size: 0.92rem;
+          line-height: 1.55;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+
+        .research-notes :global(a) {
+          color: #38bdf8;
+          text-decoration: underline;
+        }
+
+        .research-notes__placeholder {
+          margin: 0;
+          color: rgba(226, 232, 240, 0.7);
+        }
+
+        .create-letter-button {
+          animation: create-letter-jiggle 1.6s ease-in-out infinite;
+        }
+
+        .create-letter-button:disabled {
+          animation: none;
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        @keyframes create-letter-jiggle {
+          0%,
+          100% {
+            transform: translateX(0);
+          }
+          15% {
+            transform: translateX(-2px) rotate(-1deg);
+          }
+          30% {
+            transform: translateX(2px) rotate(1deg);
+          }
+          45% {
+            transform: translateX(-2px) rotate(-1deg);
+          }
+          60% {
+            transform: translateX(2px) rotate(1deg);
+          }
+          75% {
+            transform: translateX(-1px) rotate(-0.5deg);
+          }
+        }
+
+        @keyframes spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
+    </>
   );
 }
