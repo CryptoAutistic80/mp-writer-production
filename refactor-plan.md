@@ -1,32 +1,35 @@
-# Writing Desk Client Refactor
+# Restore Writing Desk Experience Plan
 
-1. Snapshot Current Behaviour
+## Scope
 
-- Review existing writing desk flows (initial intake, follow-ups, research, letter generation) to ensure refactor preserves state transitions and streaming behaviour.
-- Identify current tests covering the desk (frontend unit/e2e) and note any gaps that may need new coverage after the split.
+- Reintroduce tone styling, reasoning feed updates, streaming preview, and full letter metadata so the Writing Desk matches the pre-refactor behaviour.
 
-2. Extract Shared Types, Constants, Utilities
+## Steps
 
-- Move `steps`, `LETTER_TONE_LABELS`, credit costs, helper fns like `createLetterRunId`, `extractReasoningSummary`, `describeResearchEvent`, `formatCredits` into `frontend/src/app/features/writing-desk/utils/` (or similar) with targeted exports.
-- Ensure `WritingDeskClient` imports via module root and update any dependent files.
+1. Compare Styles - COMPLETED
 
-3. Isolate Streaming & Persistence Logic Into Hooks
+- Audit `frontend/src/features/writing-desk/components/WritingDeskLetterPanel.tsx` against the pre-refactor styling in `mp-writer-production` to restore tone-specific CSS tokens (pastel backgrounds, badges, hover states).
 
-- Carve out deep-research stream management (EventSource lifecycle, retry, activity feed) into `useDeepResearchStream` hook.
-- Do the same for letter composition (`useLetterComposer`) and job persistence (`useWritingDeskPersistence`), exposing clear APIs (`start`, `resume`, `reset`, state snapshots).
-- Keep side effects (EventSource setup/cleanup, retries) encapsulated inside hooks, returning status and actions for the client component.
+2. Reinstate Reasoning Feed Events
 
-4. Componentize UI Sections
+- In `backend-api/src/ai/writing-desk/letter/letter.service.ts`, forward `response.reasoning*` events (and summaries) through `send({ type: 'event', ... })` so `useLetterComposer` receives them.
 
-- Extract intake form (`WritingDeskIntakeForm`), follow-up workflow (`WritingDeskFollowUpForm`), summary panel (`WritingDeskSummary` including research panel + follow-up summary), and letter presentation (`WritingDeskLetterPanel`).
-- Pass only necessary props/state handlers from `WritingDeskClient`, ensuring state remains single-sourced in the container for now.
+3. Stream Letter Preview
 
-5. Recompose `WritingDeskClient`
+- Reintroduce incremental preview logic: parse `delta` JSON to extract `letter_content` and `subject_line_html`, build HTML via the existing `buildLetterDocumentHtml`, and emit `letter_delta` updates while persisting progress.
 
-- Rewire the client to compose the new hooks and subcomponents, trimming redundant state where hooks now manage it.
-- Confirm modals still render correctly and props remain unchanged externally.
+4. Deliver Complete Letter Metadata
 
-6. Verify & Augment Tests
+- Ensure the final `complete` payload returns the fully rendered HTML (including addresses, date, phone, references) and populate `LetterCompletePayload`/snapshot so the front end displays the full letter envelope.
 
-- Update or add component/hook tests as needed (Jest/RTL) and run `nx test frontend`.
-- Run relevant e2e (`nx e2e frontend-e2e`) or smoke checks to confirm no regression.
+5. Verify Front-End Integration
+
+- Adjust `useLetterComposer` if needed to handle the restored streaming events, reasoning feed, and letter metadata. Confirm `composeLetterHtml` usage matches server output.
+
+6. Regression Checks
+
+Regression Checks
+Run targeted unit/e2e smoke tests (nx test frontend, nx test backend-api, nx e2e frontend-e2e if time allows) focusing on the Writing Desk flow.
+
+- FURTHER POINTS TO NOTE
+stream items are displayed in the activity feed NOT the progress spinner.

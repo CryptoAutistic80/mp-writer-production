@@ -77,12 +77,15 @@ export function WritingDeskLetterPanel({
               description: '',
               icon: '✉️',
             };
+            const isSelected = selectedTone === tone;
             return (
               <button
                 key={tone}
                 type="button"
                 className="tone-option"
                 data-tone={tone}
+                data-selected={isSelected ? 'true' : undefined}
+                aria-pressed={isSelected}
                 onClick={() => onToneSelect(tone)}
               >
                 <span className="tone-option__badge" aria-hidden="true">
@@ -271,10 +274,12 @@ export function WritingDeskLetterPanel({
         .tone-option {
           --tone-bg: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
           --tone-border: rgba(148, 163, 184, 0.4);
+          --tone-border-strong: rgba(59, 130, 246, 0.55);
           --tone-heading: #1f2937;
           --tone-text: rgba(55, 65, 81, 0.85);
           --tone-badge-bg: rgba(59, 130, 246, 0.15);
           --tone-badge-fg: #1d4ed8;
+          --tone-shadow: rgba(15, 23, 42, 0.12);
           width: 100%;
           text-align: left;
           border: 1px solid var(--tone-border);
@@ -300,13 +305,22 @@ export function WritingDeskLetterPanel({
         .tone-option:hover,
         .tone-option:focus-visible {
           transform: translateY(-2px);
-          box-shadow: 0 16px 35px rgba(15, 23, 42, 0.2);
+          box-shadow: 0 18px 40px var(--tone-shadow);
           outline: none;
         }
 
         .tone-option:hover::after,
         .tone-option:focus-visible::after {
-          border-color: rgba(59, 130, 246, 0.45);
+          border-color: var(--tone-border-strong);
+        }
+
+        .tone-option[data-selected='true'] {
+          transform: translateY(-1px);
+          box-shadow: 0 20px 45px var(--tone-shadow);
+        }
+
+        .tone-option[data-selected='true']::after {
+          border-color: var(--tone-border-strong);
         }
 
         .tone-option__badge {
@@ -330,6 +344,72 @@ export function WritingDeskLetterPanel({
         .tone-option__description {
           font-size: 0.9rem;
           color: var(--tone-text);
+        }
+
+        .tone-option[data-tone='formal'] {
+          --tone-bg: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+          --tone-border: rgba(99, 102, 241, 0.35);
+          --tone-border-strong: rgba(79, 70, 229, 0.5);
+          --tone-heading: #1e3a8a;
+          --tone-text: rgba(30, 64, 175, 0.85);
+          --tone-badge-bg: rgba(59, 130, 246, 0.16);
+          --tone-badge-fg: #1d4ed8;
+          --tone-shadow: rgba(59, 130, 246, 0.18);
+        }
+
+        .tone-option[data-tone='polite_but_firm'] {
+          --tone-bg: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+          --tone-border: rgba(251, 191, 36, 0.4);
+          --tone-border-strong: rgba(245, 158, 11, 0.55);
+          --tone-heading: #92400e;
+          --tone-text: rgba(180, 83, 9, 0.85);
+          --tone-badge-bg: rgba(245, 158, 11, 0.18);
+          --tone-badge-fg: #b45309;
+          --tone-shadow: rgba(245, 158, 11, 0.18);
+        }
+
+        .tone-option[data-tone='empathetic'] {
+          --tone-bg: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+          --tone-border: rgba(236, 72, 153, 0.35);
+          --tone-border-strong: rgba(219, 39, 119, 0.5);
+          --tone-heading: #a21caf;
+          --tone-text: rgba(190, 24, 93, 0.82);
+          --tone-badge-bg: rgba(236, 72, 153, 0.18);
+          --tone-badge-fg: #db2777;
+          --tone-shadow: rgba(219, 39, 119, 0.16);
+        }
+
+        .tone-option[data-tone='urgent'] {
+          --tone-bg: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+          --tone-border: rgba(248, 113, 113, 0.4);
+          --tone-border-strong: rgba(239, 68, 68, 0.55);
+          --tone-heading: #b91c1c;
+          --tone-text: rgba(220, 38, 38, 0.82);
+          --tone-badge-bg: rgba(248, 113, 113, 0.2);
+          --tone-badge-fg: #ef4444;
+          --tone-shadow: rgba(239, 68, 68, 0.2);
+        }
+
+        .tone-option[data-tone='neutral'] {
+          --tone-bg: linear-gradient(135deg, #f5f5f5 0%, #e5e7eb 100%);
+          --tone-border: rgba(148, 163, 184, 0.45);
+          --tone-border-strong: rgba(107, 114, 128, 0.6);
+          --tone-heading: #374151;
+          --tone-text: rgba(55, 65, 81, 0.85);
+          --tone-badge-bg: rgba(107, 114, 128, 0.18);
+          --tone-badge-fg: #4b5563;
+          --tone-shadow: rgba(75, 85, 99, 0.16);
+        }
+
+        .tone-option[data-tone='highly_persuasive'] {
+          --tone-bg: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+          --tone-border: rgba(168, 85, 247, 0.35);
+          --tone-border-strong: rgba(147, 51, 234, 0.55);
+          --tone-heading: #5b21b6;
+          --tone-text: rgba(109, 40, 217, 0.82);
+          --tone-badge-bg: rgba(147, 51, 234, 0.18);
+          --tone-badge-fg: #7c3aed;
+          --tone-shadow: rgba(147, 51, 234, 0.18);
         }
 
         .research-progress {
