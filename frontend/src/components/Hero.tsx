@@ -63,7 +63,7 @@ export default function Hero() {
         <p className="value-1"><strong>Most of us never write to our MP.</strong></p>
         <p className="value-2">For years, writing to your MP meant hours of digging for facts, drafting, and editing — so important issues often went unspoken. MP Writer changes that. We pair AI-powered research with a clear drafting flow so you can deliver a persuasive, evidence-backed letter in minutes. Share what matters and we'll surface the facts, shape the message, and help it land with impact.</p>
         <p className="value-3">
-          <strong>One credit = One letter.</strong> Letters from £6.99.{' '}
+          <strong>One credit = One letter.</strong> Credit packs from £6.99.{' '}
           <button
             type="button"
             className="link-button micro-link"
