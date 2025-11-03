@@ -6,6 +6,7 @@ export interface LetterRenderInput {
   mpCounty?: string | null;
   mpPostcode?: string | null;
   date?: string | null;
+  subjectLineHtml?: string | null;
   letterContentHtml?: string | null;
   senderName?: string | null;
   senderAddress1?: string | null;
@@ -37,6 +38,11 @@ export const composeLetterHtml = (input: LetterRenderInput): string => {
   const formattedDate = formatDisplayDate(input.date);
   if (formattedDate) {
     sections.push(`<p>${escapeHtml(formattedDate)}</p>`);
+  }
+
+  const subjectLineHtml = typeof input.subjectLineHtml === 'string' ? input.subjectLineHtml.trim() : '';
+  if (subjectLineHtml.length > 0) {
+    sections.push(subjectLineHtml);
   }
 
   if (input.letterContentHtml) {

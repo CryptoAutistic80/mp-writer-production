@@ -233,7 +233,6 @@ export function useLetterComposer({
         if (payload.type === 'letter_delta') {
           if (typeof payload.html === 'string') {
             setContentHtml(payload.html);
-            setReasoningVisible(false);
           }
           return;
         }
@@ -254,6 +253,7 @@ export function useLetterComposer({
           ) {
             setSavedResponseId(null);
           }
+          setContentHtml(payload.letter.letterContent ?? '');
           setReferences(payload.letter.references ?? []);
           setResponseId(payload.letter.responseId ?? null);
           setRawJson(payload.letter.rawJson ?? null);
@@ -464,6 +464,7 @@ export function useLetterComposer({
             mpCounty: parsed.mp_county ?? '',
             mpPostcode: parsed.mp_postcode ?? '',
             date: parsed.date ?? '',
+            subjectLineHtml: parsed.subject_line_html ?? '',
             letterContentHtml: parsed.letter_content ?? '',
             senderName: parsed.sender_name ?? '',
             senderAddress1: parsed.sender_address_1 ?? '',

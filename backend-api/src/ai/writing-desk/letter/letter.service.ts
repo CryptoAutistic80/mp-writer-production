@@ -385,6 +385,7 @@ export class WritingDeskLetterService {
     let lastPersistedAt = 0;
     let responseId: string | null = resumeFromState?.responseId ?? run.responseId ?? null;
     const trackedControllers: Array<{ abort: () => void }> = [];
+    let lastPreviewHtml: string | null = null;
 
     const send = (payload: LetterStreamPayload) => {
       subject.next(payload);
@@ -449,6 +450,7 @@ export class WritingDeskLetterService {
       }
       quietPeriodTimer = setTimeout(() => {
         send({ type: 'status', status });
+        send({ type: 'event', event: { type: 'quiet_period', message: status } });
       }, 15000);
       if (typeof (quietPeriodTimer as any)?.unref === 'function') {
         (quietPeriodTimer as any).unref();
@@ -492,6 +494,60 @@ export class WritingDeskLetterService {
 
       const context = await this.resolveLetterContext(userId);
       const prompt = this.buildLetterPrompt({ job: baselineJob, tone, context, research: researchContent });
+      const feedEventTypes = new Set([
+        'response.web_search_call.searching',
+        'response.web_search_call.in_progress',
+        'response.web_search_call.completed',
+        'response.file_search_call.searching',
+        'response.file_search_call.in_progress',
+        'response.file_search_call.completed',
+        'response.code_interpreter_call.in_progress',
+        'response.code_interpreter_call.completed',
+        'response.reasoning.delta',
+        'response.reasoning.done',
+        'response.reasoning_summary.delta',
+        'response.reasoning_summary.done',
+        'response.reasoning_summary_part.added',
+        'response.reasoning_summary_part.done',
+        'response.reasoning_summary_text.delta',
+        'response.reasoning_summary_text.done',
+      ]);
+
+      const sendPreviewUpdate = async () => {
+        const previewContent = this.extractLetterPreview(jsonBuffer);
+        const previewSubject = this.extractSubjectLinePreview(jsonBuffer);
+
+        if (!previewContent && !previewSubject) {
+          return;
+        }
+
+        const previewHtml = this.buildLetterDocumentHtml({
+          mpName: context.mpName,
+          mpAddress1: context.mpAddress1,
+          mpAddress2: context.mpAddress2,
+          mpCity: context.mpCity,
+          mpCounty: context.mpCounty,
+          mpPostcode: context.mpPostcode,
+          date: context.today,
+          subjectLineHtml: previewSubject ?? undefined,
+          letterContentHtml: previewContent ?? undefined,
+          senderName: context.senderName,
+          senderAddress1: context.senderAddress1,
+          senderAddress2: context.senderAddress2,
+          senderAddress3: context.senderAddress3,
+          senderCity: context.senderCity,
+          senderCounty: context.senderCounty,
+          senderPostcode: context.senderPostcode,
+          senderTelephone: context.senderTelephone,
+          references: this.extractReferencesFromJson(jsonBuffer),
+        });
+
+        if (previewHtml && previewHtml !== lastPreviewHtml) {
+          lastPreviewHtml = previewHtml;
+          send({ type: 'letter_delta', html: previewHtml });
+          await persistProgressIfNeeded(previewHtml);
+        }
+      };
 
       if (!apiKey) {
         const stub = this.buildStubLetter({ job: baselineJob, tone, context, research: researchContent });
@@ -531,7 +587,7 @@ export class WritingDeskLetterService {
           type: 'complete',
           letter: this.toLetterCompletePayload(
             { ...stub, letter_content: stubDocument },
-            { responseId: 'dev-stub', tone, rawJson: JSON.stringify(stub) },
+            { responseId: 'dev-stub', tone, rawJson: JSON.stringify(stub), html: stubDocument },
           ),
           remainingCredits,
         });
@@ -588,6 +644,33 @@ export class WritingDeskLetterService {
       const handleStreamEvent = async (event: ResponseStreamEvent) => {
         const normalised = this.normaliseStreamEvent(event);
         const eventType = (normalised as any)?.type ?? (normalised as any)?.event_type ?? null;
+        const sequenceNumber = (event as any)?.sequence_number ?? (normalised as any)?.sequence_number ?? null;
+        if (Number.isFinite(sequenceNumber)) {
+          lastSequenceNumber = Number(sequenceNumber);
+        }
+
+        const eventCursor =
+          typeof (event as any)?.id === 'string'
+            ? (event as any).id
+            : typeof (event as any)?.cursor === 'string'
+              ? (event as any).cursor
+              : typeof (normalised as any)?.event_id === 'string'
+                ? (normalised as any).event_id
+                : typeof (normalised as any)?.cursor === 'string'
+                  ? (normalised as any).cursor
+                  : null;
+        if (eventCursor) {
+          lastCursor = eventCursor;
+        }
+
+        if ((event as any)?.response) {
+          await captureResponseId((event as any).response);
+        }
+
+        if (eventType && feedEventTypes.has(eventType)) {
+          send({ type: 'event', event: normalised });
+          return;
+        }
 
         if (eventType === 'response.refusal.delta') {
           send({
@@ -606,8 +689,6 @@ export class WritingDeskLetterService {
 
         if (eventType === 'response.created' || eventType === 'response.in_progress') {
           await captureResponseId((normalised as any)?.response);
-          lastSequenceNumber = (normalised as any)?.sequence_number ?? lastSequenceNumber;
-          lastCursor = (normalised as any)?.event_id ?? (normalised as any)?.cursor ?? lastCursor;
           if ((normalised as any)?.response?.status === 'completed') {
             run.status = 'completed';
             heartbeat({ status: 'completed', responseId: responseId ?? run.responseId });
@@ -620,6 +701,7 @@ export class WritingDeskLetterService {
             jsonBuffer += delta;
             send({ type: 'delta', text: delta });
             scheduleQuietStatus('Still drafting your letter…');
+            await sendPreviewUpdate();
           }
         }
 
@@ -628,6 +710,7 @@ export class WritingDeskLetterService {
           if (typeof text === 'string' && text.length > 0) {
             jsonBuffer = text;
             scheduleQuietStatus('Finishing letter formatting…');
+            await sendPreviewUpdate();
           }
         }
 
@@ -640,6 +723,7 @@ export class WritingDeskLetterService {
           const finalText = extractFirstText(responseObj) ?? jsonBuffer;
           if (typeof finalText === 'string' && finalText.length > 0) {
             jsonBuffer = finalText;
+            await sendPreviewUpdate();
           }
         }
       };
@@ -659,6 +743,14 @@ export class WritingDeskLetterService {
         );
 
         scheduleQuietStatus('Connection lost momentarily. Reconnecting…');
+        send({
+          type: 'event',
+          event: {
+            type: 'resume_attempt',
+            message: 'Connection lost momentarily. Reconnecting…',
+            attempt: resumeAttempts,
+          },
+        });
 
         const params: Record<string, unknown> = {
           response_id: responseId,
@@ -754,26 +846,49 @@ export class WritingDeskLetterService {
           }
 
           const parsed = this.parseLetterResult(resultJson);
-          const merged = this.mergeLetterResultWithContext(parsed, await this.resolveLetterContext(userId));
+          const contextForMerge = await this.resolveLetterContext(userId);
+          const merged = this.mergeLetterResultWithContext(parsed, contextForMerge);
           const references = this.extractReferencesFromJson(resultJson);
+          const finalDocumentHtml = this.buildLetterDocumentHtml({
+            mpName: merged.mp_name,
+            mpAddress1: merged.mp_address_1,
+            mpAddress2: merged.mp_address_2,
+            mpCity: merged.mp_city,
+            mpCounty: merged.mp_county,
+            mpPostcode: merged.mp_postcode,
+            date: merged.date,
+            subjectLineHtml: merged.subject_line_html,
+            letterContentHtml: merged.letter_content,
+            senderName: merged.sender_name,
+            senderAddress1: merged.sender_address_1,
+            senderAddress2: merged.sender_address_2,
+            senderAddress3: merged.sender_address_3,
+            senderCity: merged.sender_city,
+            senderCounty: merged.sender_county,
+            senderPostcode: merged.sender_postcode,
+            senderTelephone: merged.sender_phone,
+            references,
+          });
           await this.persistLetterResult(userId, baselineJob, {
             status: 'completed',
             tone,
             responseId,
-            content: merged.letter_content,
+            content: finalDocumentHtml,
             references,
             json: resultJson,
           });
 
           run.status = 'completed';
           _settled = true;
-          send({ type: 'letter_delta', html: merged.letter_content });
+          lastPreviewHtml = finalDocumentHtml;
+          send({ type: 'letter_delta', html: finalDocumentHtml });
           send({
             type: 'complete',
             letter: this.toLetterCompletePayload(merged, {
               responseId,
               tone,
               rawJson: resultJson,
+              html: finalDocumentHtml,
             }),
             remainingCredits,
           });
@@ -1402,7 +1517,7 @@ export class WritingDeskLetterService {
 
   private toLetterCompletePayload(
     result: WritingDeskLetterResult,
-    extras: { responseId: string | null; tone: WritingDeskLetterTone; rawJson: string },
+    extras: { responseId: string | null; tone: WritingDeskLetterTone; rawJson: string; html: string },
   ): LetterCompletePayload {
     return {
       mpName: result.mp_name ?? '',
@@ -1413,7 +1528,7 @@ export class WritingDeskLetterService {
       mpPostcode: result.mp_postcode ?? '',
       date: result.date ?? '',
       subjectLineHtml: result.subject_line_html ?? '',
-      letterContent: result.letter_content ?? '',
+      letterContent: extras.html,
       senderName: result.sender_name ?? '',
       senderAddress1: result.sender_address_1 ?? '',
       senderAddress2: result.sender_address_2 ?? '',
@@ -1936,4 +2051,3 @@ export class WritingDeskLetterService {
 type ResponseStreamLike = AsyncIterable<ResponseStreamEvent> & {
   controller?: { abort: () => void };
 };
-
