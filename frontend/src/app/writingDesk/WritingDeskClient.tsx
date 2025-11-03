@@ -14,7 +14,9 @@ import EditFollowUpsConfirmModal from '../../features/writing-desk/components/Ed
 import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
 import CreateLetterConfirmModal from '../../features/writing-desk/components/CreateLetterConfirmModal';
 import { LetterViewer } from '../../features/writing-desk/components/LetterViewer';
-import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
+import { useDeepResearchStream } from '../../features/writing-desk/hooks/useDeepResearchStream';
+import { useLetterComposer } from '../../features/writing-desk/hooks/useLetterComposer';
+import { useWritingDeskPersistence } from '../../features/writing-desk/hooks/useWritingDeskPersistence';
 import {
   ActiveWritingDeskJob,
   UpsertActiveWritingDeskJobPayload,
@@ -23,213 +25,28 @@ import {
   WritingDeskLetterTone,
   WRITING_DESK_LETTER_TONES,
 } from '../../features/writing-desk/types';
-import { fetchSavedLetters, saveLetter, startLetterComposition } from '../../features/writing-desk/api/letter';
-import { composeLetterHtml } from '../../features/writing-desk/utils/composeLetterHtml';
+import { fetchSavedLetters, saveLetter } from '../../features/writing-desk/api/letter';
+import {
+  WRITING_DESK_STEPS,
+  WRITING_DESK_INITIAL_FORM_STATE,
+  WRITING_DESK_LETTER_TONE_LABELS,
+  WRITING_DESK_FOLLOW_UP_CREDIT_COST,
+  WRITING_DESK_DEEP_RESEARCH_CREDIT_COST,
+  WRITING_DESK_LETTER_CREDIT_COST,
+  formatCredits,
+  type WritingDeskFormState,
+  type WritingDeskStepKey,
+  MAX_WRITING_DESK_LETTER_REASONING_ITEMS,
+} from '../../features/writing-desk/utils';
 import { MicButton } from '../../components/audio/MicButton';
 import { Toast } from '../../components/Toast';
 
-type StepKey = 'issueDescription';
+type StepKey = WritingDeskStepKey;
+type FormState = WritingDeskFormState;
 
-type FormState = Record<StepKey, string>;
-
-const steps: Array<{
-  key: StepKey;
-  title: string;
-  description: string;
-  placeholder: string;
-}> = [
-  {
-    key: 'issueDescription',
-    title: 'Tell us everything — feel free to vent',
-    description:
-      'This is your space to get it all out. Who is affected, what’s happened, why it matters, what you’ve tried, and what you want your MP to do. The more detail, the better.',
-    placeholder:
-      'Start from the beginning — what’s going on, how it’s affecting you or others, what you’ve already done, timelines, names or departments if relevant, and what outcome you need. If it’s easier, use the mic button to speak and we’ll transcribe…',
-  },
-];
-
-const initialFormState: FormState = {
-  issueDescription: '',
-};
-
-const LETTER_TONE_LABELS: Record<
-  WritingDeskLetterTone,
-  { label: string; description: string; icon: string }
-> = {
-  formal: {
-    label: 'Formal',
-    description: 'Traditional parliamentary tone: respectful, precise, and structured.',
-    icon: '🏛️',
-  },
-  polite_but_firm: {
-    label: 'Polite but firm',
-    description: 'Courteous but clear about expectations and urgency.',
-    icon: '🤝',
-  },
-  empathetic: {
-    label: 'Empathetic',
-    description: 'Centres the human impact with warmth and compassion.',
-    icon: '💗',
-  },
-  urgent: {
-    label: 'Urgent',
-    description: 'Direct and time-sensitive while remaining respectful.',
-    icon: '⏰',
-  },
-  neutral: {
-    label: 'Neutral',
-    description: 'Calm, factual tone that lets the evidence speak for itself.',
-    icon: '📄',
-  },
-  highly_persuasive: {
-    label: 'Highly persuasive',
-    description: 'Confident, evidence-led case designed to motivate decisive action.',
-    icon: '🎯',
-  },
-};
-
-type ResearchStatus = 'idle' | 'running' | 'completed' | 'error';
-
-type DeepResearchStreamMessage =
-  | { type: 'status'; status: string; remainingCredits?: number | null }
-  | { type: 'delta'; text: string }
-  | {
-      type: 'complete';
-      content: string;
-      responseId: string | null;
-      remainingCredits: number | null;
-      usage?: Record<string, unknown> | null;
-    }
-  | { type: 'event'; event: { type?: string; [key: string]: any } }
-  | { type: 'error'; message: string; remainingCredits?: number | null };
-
-type DeepResearchHandshakeResponse = {
-  jobId?: string | null;
-  streamPath?: string | null;
-};
-
-const MAX_RESEARCH_ACTIVITY_ITEMS = 10;
-const MAX_LETTER_REASONING_ITEMS = 3;
-
-type LetterStreamMessage =
-  | { type: 'status'; status: string; remainingCredits?: number | null }
-  | { type: 'event'; event: { type?: string; [key: string]: any } }
-  | { type: 'delta'; text: string }
-  | { type: 'letter_delta'; html: string }
-  | { type: 'complete'; letter: WritingDeskLetterPayload; remainingCredits: number | null }
-  | { type: 'error'; message: string; remainingCredits?: number | null };
-
-const createLetterRunId = () => {
-  if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
-    return window.crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-};
-
-const extractReasoningSummary = (value: unknown): string | null => {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const summary = extractReasoningSummary(item);
-      if (summary) return summary;
-    }
-    return null;
-  }
-
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const preferredKeys = [
-      'summary',
-      'text',
-      'message',
-      'content',
-      'output_text',
-      'value',
-      'delta',
-    ];
-
-    for (const key of preferredKeys) {
-      if (key in record) {
-        const summary = extractReasoningSummary(record[key]);
-        if (summary) return summary;
-      }
-    }
-
-    for (const item of Object.values(record)) {
-      const summary = extractReasoningSummary(item);
-      if (summary) return summary;
-    }
-  }
-
-  return null;
-};
-
-const describeResearchEvent = (event: { type?: string; [key: string]: any }): string | null => {
-  if (!event || typeof event.type !== 'string') return null;
-  switch (event.type) {
-    case 'response.web_search_call.searching':
-      return 'Searching the web for relevant sources…';
-    case 'response.web_search_call.in_progress':
-      return 'Reviewing a web result…';
-    case 'response.web_search_call.completed':
-      return 'Finished reviewing a web result.';
-    case 'response.file_search_call.searching':
-      return 'Searching private documents for supporting evidence…';
-    case 'response.file_search_call.completed':
-      return 'Finished reviewing private documents.';
-    case 'response.code_interpreter_call.in_progress':
-      return 'Analysing data with the code interpreter…';
-    case 'response.code_interpreter_call.completed':
-      return 'Completed data analysis via code interpreter.';
-    case 'response.reasoning.delta': {
-      const summary = extractReasoningSummary(event.delta ?? event);
-      return summary ?? null;
-    }
-    case 'response.reasoning.done': {
-      const summary = extractReasoningSummary(event.reasoning ?? event.delta ?? event);
-      return summary ?? 'Reasoning summary updated.';
-    }
-    case 'response.reasoning_summary.delta':
-    case 'response.reasoning_summary_text.delta':
-    case 'response.reasoning_summary_part.added':
-      return null;
-    case 'response.reasoning_summary.done':
-    case 'response.reasoning_summary_text.done': {
-      const summary = extractReasoningSummary(event.text ?? event.summary ?? event.delta ?? event);
-      if (!summary) return null;
-      const trimmed = summary.trim();
-      return trimmed.length > 3 ? trimmed : null;
-    }
-    case 'response.reasoning_summary_part.done': {
-      const summary = extractReasoningSummary(event.part ?? event);
-      if (!summary) return null;
-      const trimmed = summary.trim();
-      return trimmed.length > 3 ? trimmed : null;
-    }
-    case 'resume_attempt': {
-      // Handle our humorous resume attempt messages
-      const message = event.message;
-      if (typeof message === 'string' && message.trim().length > 0) {
-        return message.trim();
-      }
-      return null;
-    }
-    case 'quiet_period': {
-      // Handle quiet period status messages
-      const message = event.message;
-      if (typeof message === 'string' && message.trim().length > 0) {
-        return message.trim();
-      }
-      return null;
-    }
-    default:
-      return null;
-  }
-};
+const steps = WRITING_DESK_STEPS;
+const initialFormState = WRITING_DESK_INITIAL_FORM_STATE;
+const LETTER_TONE_LABELS = WRITING_DESK_LETTER_TONE_LABELS;
 
 export default function WritingDeskClient() {
   const [form, setForm] = useState<FormState>(initialFormState);
@@ -246,53 +63,16 @@ export default function WritingDeskClient() {
   const [showSummaryDetails, setShowSummaryDetails] = useState(false);
   const [ellipsisCount, setEllipsisCount] = useState(0);
   const [availableCredits, setAvailableCredits] = useState<number | null>(null);
-  const {
-    activeJob,
-    isLoading: isActiveJobLoading,
-    saveJob,
-    isSaving: isSavingJob,
-    clearJob,
-    isClearing: isClearingJob,
-    error: activeJobError,
-  } = useActiveWritingDeskJob();
   const router = useRouter();
   const [jobId, setJobId] = useState<string | null>(null);
   const [hasHandledInitialJob, setHasHandledInitialJob] = useState(false);
   const [pendingJob, setPendingJob] = useState<ActiveWritingDeskJob | null>(null);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
   const [persistenceEnabled, setPersistenceEnabled] = useState(false);
-  const lastPersistedRef = useRef<string | null>(null);
   const [jobSaveError, setJobSaveError] = useState<string | null>(null);
   const [editIntakeModalOpen, setEditIntakeModalOpen] = useState(false);
   const [startOverConfirmOpen, setStartOverConfirmOpen] = useState(false);
-  const [researchContent, setResearchContent] = useState<string>('');
-  const [researchResponseId, setResearchResponseId] = useState<string | null>(null);
-  const [researchStatus, setResearchStatus] = useState<ResearchStatus>('idle');
-  const [researchActivities, setResearchActivities] = useState<Array<{ id: string; text: string }>>([]);
-  const [researchError, setResearchError] = useState<string | null>(null);
-  const [pendingAutoResume, setPendingAutoResume] = useState(false);
-  const [isResearchBackgroundPolling, setIsResearchBackgroundPolling] = useState(false);
-  const researchSourceRef = useRef<EventSource | null>(null);
   const previousPhaseRef = useRef<'initial' | 'generating' | 'followup' | 'summary' | null>(null);
-  const lastResearchEventRef = useRef<number>(0);
-  const lastResearchResumeAttemptRef = useRef<number>(0);
-  const [letterStatus, setLetterStatus] = useState<WritingDeskLetterStatus>('idle');
-  const [letterPhase, setLetterPhase] = useState<'idle' | 'tone' | 'streaming' | 'completed' | 'error'>('idle');
-  const [selectedTone, setSelectedTone] = useState<WritingDeskLetterTone | null>(null);
-  const [letterContentHtml, setLetterContentHtml] = useState<string>('');
-  const [letterReferences, setLetterReferences] = useState<string[]>([]);
-  const [letterResponseId, setLetterResponseId] = useState<string | null>(null);
-  const [letterRawJson, setLetterRawJson] = useState<string | null>(null);
-  const [letterError, setLetterError] = useState<string | null>(null);
-  const [letterEvents, setLetterEvents] = useState<Array<{ id: string; text: string }>>([]);
-  const [letterStatusMessage, setLetterStatusMessage] = useState<string | null>(null);
-  const [_letterRemainingCredits, setLetterRemainingCredits] = useState<number | null>(null);
-  const [letterReasoningVisible, setLetterReasoningVisible] = useState(true);
-  const [letterMetadata, setLetterMetadata] = useState<WritingDeskLetterPayload | null>(null);
-  const [letterPendingAutoResume, setLetterPendingAutoResume] = useState(false);
-  const [isSavingLetter, setIsSavingLetter] = useState(false);
-  const [letterSaveError, setLetterSaveError] = useState<string | null>(null);
-  const [savedLetterResponseId, setSavedLetterResponseId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
   const [createLetterConfirmOpen, setCreateLetterConfirmOpen] = useState(false);
@@ -301,10 +81,6 @@ export default function WritingDeskClient() {
   const [editFollowUpsConfirmOpen, setEditFollowUpsConfirmOpen] = useState(false);
   const [initialFollowUpsConfirmOpen, setInitialFollowUpsConfirmOpen] = useState(false);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
-  const letterSourceRef = useRef<EventSource | null>(null);
-  const letterJsonBufferRef = useRef<string>('');
-  const lastLetterEventRef = useRef<number>(0);
-  const lastLetterResumeAttemptRef = useRef<number>(0);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEditingFollowUpsFromSummary = useRef<boolean>(false);
   const pendingEditFollowUpIndexRef = useRef<number | null>(null);
@@ -328,51 +104,10 @@ export default function WritingDeskClient() {
     }, 3500);
   }, []);
 
-  const letterIsSaved = useMemo(
-    () => !!(letterResponseId && savedLetterResponseId === letterResponseId),
-    [letterResponseId, savedLetterResponseId],
-  );
-
-  useEffect(() => () => {
-    clearToast();
-  }, [clearToast]);
-
-  useEffect(() => {
-    const responseIds = [letterResponseId, letterMetadata?.responseId].filter(
-      (id): id is string => typeof id === 'string' && id.trim().length > 0,
-    );
-    if (!hasHandledInitialJob) return;
-    if (!Array.isArray(responseIds) || responseIds.length === 0) return;
-    const uniqueIds = Array.from(new Set(responseIds));
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const existing = await fetchSavedLetters(uniqueIds);
-        if (cancelled) return;
-        const matched = existing.some((letter) => uniqueIds.includes(letter.responseId));
-        if (matched) {
-          setSavedLetterResponseId(letterResponseId ?? letterMetadata?.responseId ?? null);
-        }
-      } catch (error) {
-        console.warn('Failed to verify saved letter state', error);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [hasHandledInitialJob, letterMetadata?.responseId, letterResponseId]);
-
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
-  const followUpCreditCost = 0.1;
-  const deepResearchCreditCost = 0.7;
-  const letterCreditCost = 0.2;
-  const formatCredits = (value: number) => {
-    const rounded = Math.round(value * 100) / 100;
-    return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
-  };
+  const followUpCreditCost = WRITING_DESK_FOLLOW_UP_CREDIT_COST;
+  const deepResearchCreditCost = WRITING_DESK_DEEP_RESEARCH_CREDIT_COST;
+  const letterCreditCost = WRITING_DESK_LETTER_CREDIT_COST;
   const refreshCredits = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me', { cache: 'no-store' });
@@ -401,78 +136,99 @@ export default function WritingDeskClient() {
     [refreshCredits, showToast],
   );
 
-  const closeResearchStream = useCallback(() => {
-    if (researchSourceRef.current) {
-      researchSourceRef.current.close();
-      researchSourceRef.current = null;
-    }
-    setIsResearchBackgroundPolling(false);
-  }, []);
-
-  const closeLetterStream = useCallback(() => {
-    if (letterSourceRef.current) {
-      letterSourceRef.current.close();
-      letterSourceRef.current = null;
-    }
-  }, []);
-
-  const resetLetter = useCallback(() => {
-    closeLetterStream();
-    setLetterStatus('idle');
-    setLetterPhase('idle');
-    setSelectedTone(null);
-    setLetterContentHtml('');
-    setLetterReferences([]);
-    setLetterResponseId(null);
-    setLetterRawJson(null);
-    setLetterError(null);
-    setLetterEvents([]);
-    setLetterStatusMessage(null);
-    setLetterRemainingCredits(null);
-    setLetterReasoningVisible(true);
-    setLetterMetadata(null);
-    setLetterSaveError(null);
-    setSavedLetterResponseId(null);
-    setIsSavingLetter(false);
-    clearToast();
-    setRecomposeConfirmOpen(false);
-    letterJsonBufferRef.current = '';
-    setLetterPendingAutoResume(false);
-  }, [clearToast, closeLetterStream]);
-
-  const resetResearch = useCallback(() => {
-    closeResearchStream();
-    setResearchContent('');
-    setResearchResponseId(null);
-    setResearchStatus('idle');
-    setResearchActivities([]);
-    setResearchError(null);
-    setPendingAutoResume(false);
-    setIsResearchBackgroundPolling(false);
-    lastResearchEventRef.current = 0;
-  }, [closeResearchStream]);
-
-  const appendResearchActivity = useCallback((text: string) => {
-    setResearchActivities((prev) => {
-      const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text };
-      const next = [entry, ...prev];
-      return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
-    });
-  }, []);
-
-  const appendLetterEvent = useCallback((text: string) => {
-    setLetterEvents((prev) => {
-      const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text };
-      const next = [entry, ...prev];
-      return next.slice(0, MAX_RESEARCH_ACTIVITY_ITEMS);
-    });
-  }, []);
-
-  const updateCreditsFromStream = useCallback((value: number | null | undefined) => {
+  const handleStreamCredits = useCallback((value: number | null | undefined) => {
     if (typeof value === 'number' && Number.isFinite(value)) {
       setAvailableCredits(Math.round(value * 100) / 100);
     }
   }, []);
+
+  const {
+    content: researchContent,
+    responseId: researchResponseId,
+    status: researchStatus,
+    activities: researchActivities,
+    error: researchError,
+    start: startDeepResearch,
+    reset: resetResearch,
+    applySnapshot: applyResearchSnapshot,
+  } = useDeepResearchStream({
+    jobId,
+    onJobIdChange: setJobId,
+    onCreditsChange: handleStreamCredits,
+    reportRefundedFailure,
+    canAutoResume: hasHandledInitialJob,
+  });
+
+  const {
+    status: letterStatus,
+    phase: letterPhase,
+    selectedTone,
+    contentHtml: letterContentHtml,
+    references: letterReferences,
+    responseId: letterResponseId,
+    rawJson: letterRawJson,
+    error: letterError,
+    events: letterEvents,
+    statusMessage: letterStatusMessage,
+    reasoningVisible: letterReasoningVisible,
+    metadata: letterMetadata,
+    isSaving: isSavingLetter,
+    saveError: letterSaveError,
+    savedResponseId: savedLetterResponseId,
+    reset: resetLetter,
+    begin: beginLetterComposition,
+    resume: resumeLetterComposition,
+    applySnapshot: applyLetterSnapshot,
+    enterToneSelection,
+    setPhase: setLetterPhase,
+    setIsSaving: setIsSavingLetter,
+    setSaveError: setLetterSaveError,
+    setSavedResponseId,
+  } = useLetterComposer({
+    jobId,
+    onJobIdChange: setJobId,
+    onCreditsChange: handleStreamCredits,
+    reportRefundedFailure,
+    clearToast,
+    canAutoResume: hasHandledInitialJob,
+  });
+
+  const letterIsSaved = useMemo(
+    () => !!(letterResponseId && savedLetterResponseId === letterResponseId),
+    [letterResponseId, savedLetterResponseId],
+  );
+
+  useEffect(() => () => {
+    clearToast();
+  }, [clearToast]);
+
+  useEffect(() => {
+    const responseIds = [letterResponseId, letterMetadata?.responseId].filter(
+      (id): id is string => typeof id === 'string' && id.trim().length > 0,
+    );
+    if (!hasHandledInitialJob) return;
+    if (responseIds.length === 0) return;
+    const uniqueIds = Array.from(new Set(responseIds));
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const existing = await fetchSavedLetters(uniqueIds);
+        if (cancelled) return;
+        const matched = existing.some((letter) => uniqueIds.includes(letter.responseId));
+        if (matched) {
+          setSavedResponseId(letterResponseId ?? letterMetadata?.responseId ?? null);
+        }
+      } catch (error) {
+        console.warn('Failed to verify saved letter state', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasHandledInitialJob, letterMetadata?.responseId, letterResponseId, setSavedResponseId]);
 
   const totalFollowUpSteps = followUps.length > 0 ? followUps.length : 1;
   const totalSteps = steps.length + totalFollowUpSteps;
@@ -507,7 +263,7 @@ export default function WritingDeskClient() {
       : `You have ${formatCredits(availableCredits)} credits available`;
 
   const visibleLetterEvents = useMemo(
-    () => letterEvents.slice(0, MAX_LETTER_REASONING_ITEMS),
+    () => letterEvents.slice(0, MAX_WRITING_DESK_LETTER_REASONING_ITEMS),
     [letterEvents],
   );
 
@@ -562,18 +318,6 @@ export default function WritingDeskClient() {
     };
   }, [refreshCredits]);
 
-  useEffect(() => {
-    return () => {
-      closeResearchStream();
-    };
-  }, [closeResearchStream]);
-
-  useEffect(() => {
-    return () => {
-      closeLetterStream();
-    };
-  }, [closeLetterStream]);
-
   const generatingMessage = `Generating follow-up questions${'.'.repeat((ellipsisCount % 5) + 1)}`;
 
   const resetFollowUps = useCallback(() => {
@@ -599,493 +343,11 @@ export default function WritingDeskClient() {
     resetLetter();
   }, [resetFollowUps, resetLetter]);
 
-  const startDeepResearch = useCallback(
-    async (options?: { resume?: boolean }) => {
-      const resume = options?.resume === true;
-      if (!resume && researchStatus === 'running') return;
-
-      closeResearchStream();
-      setPendingAutoResume(false);
-      setResearchStatus('running');
-      setResearchError(null);
-      setIsResearchBackgroundPolling(false);
-      if (!resume) {
-        setResearchContent('');
-        setResearchResponseId(null);
-        setResearchActivities([]);
-      }
-
-      try {
-        const payload: Record<string, unknown> = {};
-        if (jobId) payload.jobId = jobId;
-        if (resume) payload.resume = true;
-
-        let handshake: DeepResearchHandshakeResponse | null = null;
-        try {
-          handshake = await apiClient.post<DeepResearchHandshakeResponse | null>(
-            '/api/writing-desk/jobs/active/research/start',
-            payload,
-          );
-        } catch (error) {
-          const message =
-            error instanceof Error && typeof error.message === 'string' && error.message.trim().length > 0
-              ? error.message
-              : 'We could not start deep research. Please try again.';
-          throw new Error(message);
-        }
-
-        const streamPath =
-          handshake && typeof handshake.streamPath === 'string' && handshake.streamPath.trim().length > 0
-            ? handshake.streamPath.trim()
-            : '/api/ai/writing-desk/deep-research';
-        const endpoint = new URL(streamPath, window.location.origin);
-        const resolvedJobId =
-          handshake && typeof handshake.jobId === 'string' && handshake.jobId.trim().length > 0
-            ? handshake.jobId.trim()
-            : jobId;
-        if (resolvedJobId && !endpoint.searchParams.has('jobId')) {
-          endpoint.searchParams.set('jobId', resolvedJobId);
-        }
-
-        if (resolvedJobId && resolvedJobId !== jobId) {
-          setJobId(resolvedJobId);
-        }
-
-        const source = new EventSource(endpoint.toString(), { withCredentials: true });
-        researchSourceRef.current = source;
-
-        const markResearchActivity = () => {
-          lastResearchEventRef.current = Date.now();
-        };
-
-        source.onmessage = (event) => {
-          let payload: DeepResearchStreamMessage | null = null;
-          try {
-            payload = JSON.parse(event.data) as DeepResearchStreamMessage;
-          } catch {
-            return;
-          }
-          if (!payload) return;
-
-          markResearchActivity();
-
-          if (payload.type === 'status') {
-            if (payload.status === 'background_polling') {
-              setIsResearchBackgroundPolling(true);
-            }
-            updateCreditsFromStream(payload.remainingCredits);
-            const statusMessage: Record<string, string> = {
-              starting: 'Preparing the research brief…',
-              charged: 'Credits deducted. Research is starting…',
-              queued: 'Deep research queued…',
-              in_progress: 'Gathering evidence…',
-              background_polling: 'Research continuing in the background…',
-            };
-            const descriptor = typeof payload.status === 'string' ? statusMessage[payload.status] : undefined;
-            if (descriptor) appendResearchActivity(descriptor);
-          } else if (payload.type === 'delta') {
-            setIsResearchBackgroundPolling(false);
-            lastResearchEventRef.current = Date.now();
-            if (typeof payload.text === 'string') {
-              setResearchContent((prev) => {
-                // Clear activity feed when content starts streaming
-                if (prev.length === 0) {
-                  setResearchActivities([]);
-                }
-                return prev + payload.text;
-              });
-            }
-          } else if (payload.type === 'event') {
-            setIsResearchBackgroundPolling(false);
-            lastResearchEventRef.current = Date.now();
-            const descriptor = describeResearchEvent(payload.event);
-            if (descriptor) appendResearchActivity(descriptor);
-          } else if (payload.type === 'complete') {
-            setIsResearchBackgroundPolling(false);
-            lastResearchEventRef.current = Date.now();
-            closeResearchStream();
-            setResearchStatus('completed');
-            setResearchContent(payload.content ?? '');
-            setResearchResponseId(payload.responseId ?? null);
-            updateCreditsFromStream(payload.remainingCredits);
-            appendResearchActivity('Deep research completed.');
-            setPendingAutoResume(false);
-        } else if (payload.type === 'error') {
-          setIsResearchBackgroundPolling(false);
-          lastResearchEventRef.current = Date.now();
-          closeResearchStream();
-          setResearchStatus('error');
-          setResearchError(payload.message || 'Deep research failed. Please try again.');
-          updateCreditsFromStream(payload.remainingCredits);
-          appendResearchActivity('Deep research encountered an error.');
-          setPendingAutoResume(false);
-          void reportRefundedFailure('deep research ran into a problem');
-        }
-      };
-
-      source.onerror = () => {
-        setIsResearchBackgroundPolling(false);
-        lastResearchEventRef.current = Date.now();
-        closeResearchStream();
-        setResearchStatus('error');
-        setResearchError('The research stream was interrupted. Please try again.');
-        appendResearchActivity('Connection lost during deep research.');
-        setPendingAutoResume(false);
-        void reportRefundedFailure('deep research connection dropped');
-      };
-
-        lastResearchEventRef.current = Date.now();
-      } catch (err) {
-        setIsResearchBackgroundPolling(false);
-        closeResearchStream();
-        setResearchStatus('error');
-        const message =
-          err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
-        setResearchError(message);
-        appendResearchActivity('Unable to start deep research.');
-        setPendingAutoResume(false);
-        void reportRefundedFailure('deep research could not start');
-      }
-    },
-    [appendResearchActivity, closeResearchStream, jobId, reportRefundedFailure, researchStatus, updateCreditsFromStream],
-  );
-
-  useEffect(() => {
-    if (!pendingAutoResume) return;
-    if (!hasHandledInitialJob) return;
-    if (researchSourceRef.current) {
-      setPendingAutoResume(false);
-      return;
-    }
-    setPendingAutoResume(false);
-    void startDeepResearch({ resume: true });
-  }, [hasHandledInitialJob, pendingAutoResume, startDeepResearch]);
-
-  useEffect(() => {
-    if (researchStatus !== 'running') return undefined;
-
-    const interval = window.setInterval(() => {
-      const source = researchSourceRef.current;
-      if (!source) return;
-
-      if (isResearchBackgroundPolling) {
-        return;
-      }
-
-      const now = Date.now();
-      const lastEventAt = lastResearchEventRef.current || 0;
-      if (now - lastEventAt < 45000) return;
-
-      const lastAttemptAt = lastResearchResumeAttemptRef.current || 0;
-      if (now - lastAttemptAt < 15000) return;
-
-      lastResearchResumeAttemptRef.current = now;
-      appendResearchActivity('Connection quiet — attempting to resume the research stream…');
-      closeResearchStream();
-      void startDeepResearch({ resume: true });
-    }, 10000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [appendResearchActivity, closeResearchStream, isResearchBackgroundPolling, researchStatus, startDeepResearch]);
-
-  const openLetterStream = useCallback(
-    (streamPath: string) => {
-      closeLetterStream();
-      setLetterStatus('generating');
-      setLetterPhase('streaming');
-      setLetterStatusMessage('Composing your letter…');
-      setLetterError(null);
-      setLetterContentHtml('');
-      setLetterReferences([]);
-      setLetterResponseId(null);
-      setLetterRawJson(null);
-      setLetterRemainingCredits(null);
-      setLetterReasoningVisible(true);
-      setLetterMetadata(null);
-      setLetterSaveError(null);
-      setIsSavingLetter(false);
-      clearToast();
-      letterJsonBufferRef.current = '';
-      setLetterPendingAutoResume(false);
-      let resolvedPath = streamPath;
-      if (typeof window !== 'undefined') {
-        try {
-          const url = new URL(streamPath, window.location.origin);
-          url.searchParams.set('runId', createLetterRunId());
-          resolvedPath = url.toString();
-        } catch {
-          // ignore malformed paths and fall back to the provided value
-        }
-      }
-      const source = new EventSource(resolvedPath, { withCredentials: true });
-      letterSourceRef.current = source;
-
-      const markLetterActivity = () => {
-        lastLetterEventRef.current = Date.now();
-      };
-
-      source.onmessage = (event) => {
-        markLetterActivity();
-        let payload: LetterStreamMessage | null = null;
-        try {
-          payload = JSON.parse(event.data) as LetterStreamMessage;
-        } catch {
-          return;
-        }
-        if (!payload) return;
-
-        if (payload.type === 'status') {
-          setLetterStatusMessage(payload.status);
-          updateCreditsFromStream(payload.remainingCredits);
-          if (typeof payload.remainingCredits === 'number') {
-            setLetterRemainingCredits(Math.round(payload.remainingCredits * 100) / 100);
-          }
-          return;
-        }
-
-        if (payload.type === 'event') {
-          const summary = describeResearchEvent(payload.event);
-          if (summary) {
-            appendLetterEvent(summary);
-          }
-          return;
-        }
-
-        if (payload.type === 'delta') {
-          if (typeof payload.text === 'string') {
-            letterJsonBufferRef.current += payload.text;
-            setLetterRawJson(letterJsonBufferRef.current);
-          }
-          return;
-        }
-
-        if (payload.type === 'letter_delta') {
-          if (typeof payload.html === 'string') {
-            setLetterContentHtml(payload.html);
-            setLetterReasoningVisible(false);
-          }
-          return;
-        }
-
-        if (payload.type === 'complete') {
-          updateCreditsFromStream(payload.remainingCredits);
-          if (typeof payload.remainingCredits === 'number') {
-            setLetterRemainingCredits(Math.round(payload.remainingCredits * 100) / 100);
-          }
-          setLetterReasoningVisible(false);
-          setLetterStatus('completed');
-          setLetterPhase('completed');
-          setLetterStatusMessage('Letter ready');
-          setIsSavingLetter(false);
-          setLetterSaveError(null);
-          clearToast();
-          if (
-            savedLetterResponseId &&
-            payload.letter.responseId &&
-            payload.letter.responseId !== savedLetterResponseId
-          ) {
-            setSavedLetterResponseId(null);
-          }
-          // Don't overwrite letterContentHtml - it should already contain the final HTML from letter_delta events
-          setLetterReferences(payload.letter.references ?? []);
-          setLetterResponseId(payload.letter.responseId ?? null);
-          setLetterRawJson(payload.letter.rawJson ?? null);
-          setSelectedTone(payload.letter.tone ?? null);
-          setLetterMetadata(payload.letter);
-          letterJsonBufferRef.current = payload.letter.rawJson ?? '';
-          setLetterError(null);
-          closeLetterStream();
-          return;
-        }
-
-        if (payload.type === 'error') {
-          updateCreditsFromStream(payload.remainingCredits);
-          if (typeof payload.remainingCredits === 'number') {
-            setLetterRemainingCredits(Math.round(payload.remainingCredits * 100) / 100);
-          }
-          setLetterStatus('error');
-          setLetterPhase('error');
-          setLetterError(payload.message);
-          setLetterStatusMessage(null);
-          setLetterMetadata(null);
-          setIsSavingLetter(false);
-          setLetterSaveError(null);
-          clearToast();
-          closeLetterStream();
-          void reportRefundedFailure('letter composition ran into a problem').then((latest) => {
-            if (typeof latest === 'number') {
-              setLetterRemainingCredits(Math.round(latest * 100) / 100);
-            }
-          });
-        }
-      };
-
-      source.onerror = () => {
-        closeLetterStream();
-        setLetterStatus('error');
-        setLetterPhase('error');
-        setLetterError('The letter stream disconnected. Please try again.');
-        setLetterStatusMessage(null);
-        setIsSavingLetter(false);
-        setLetterSaveError(null);
-        clearToast();
-        void reportRefundedFailure('letter composition connection dropped').then((latest) => {
-          if (typeof latest === 'number') {
-            setLetterRemainingCredits(Math.round(latest * 100) / 100);
-          }
-        });
-      };
-
-      lastLetterEventRef.current = Date.now();
-  },
-    [
-      appendLetterEvent,
-      clearToast,
-      closeLetterStream,
-      reportRefundedFailure,
-      savedLetterResponseId,
-      setLetterMetadata,
-      setLetterSaveError,
-      setSavedLetterResponseId,
-      updateCreditsFromStream,
-    ],
-  );
-
-  const beginLetterComposition = useCallback(
-    async (tone: WritingDeskLetterTone) => {
-      setLetterStatus('generating');
-      setLetterPhase('streaming');
-      setLetterStatusMessage('Preparing your letter request…');
-      setLetterError(null);
-      setSelectedTone(tone);
-      setLetterEvents([]);
-      setLetterRemainingCredits(null);
-      setLetterReasoningVisible(true);
-      letterJsonBufferRef.current = '';
-      setSavedLetterResponseId(null);
-      setLetterSaveError(null);
-      setIsSavingLetter(false);
-      clearToast();
-
-      try {
-        const handshake = await startLetterComposition({ jobId: jobId ?? undefined, tone });
-        if (handshake?.jobId) {
-          setJobId(handshake.jobId);
-        }
-        const url = new URL(handshake.streamPath, window.location.origin);
-        if (!url.searchParams.has('jobId') && (jobId ?? handshake?.jobId)) {
-          url.searchParams.set('jobId', (jobId ?? handshake.jobId) as string);
-        }
-        openLetterStream(url.toString());
-      } catch (error: any) {
-        setLetterStatus('error');
-        setLetterPhase('error');
-        setLetterError(error?.message || 'We could not start letter composition. Please try again.');
-        setLetterStatusMessage(null);
-        void reportRefundedFailure('letter composition could not start').then((latest) => {
-          if (typeof latest === 'number') {
-            setLetterRemainingCredits(Math.round(latest * 100) / 100);
-          }
-        });
-      }
-    },
-    [clearToast, jobId, openLetterStream, reportRefundedFailure, setJobId],
-  );
-
-  const resumeLetterComposition = useCallback(async () => {
-    setLetterPendingAutoResume(false);
-    if (!selectedTone) {
-      setLetterStatus('error');
-      setLetterPhase('error');
-      setLetterError('We could not resume letter composition. Start again when ready.');
-      setLetterStatusMessage(null);
-      return;
-    }
-
-    setLetterStatus('generating');
-    setLetterPhase('streaming');
-    setLetterStatusMessage('Reconnecting to your letter…');
-    setLetterError(null);
-    setLetterEvents([]);
-    setLetterRemainingCredits(null);
-    setLetterReasoningVisible(true);
-    letterJsonBufferRef.current = '';
-    setLetterSaveError(null);
-    setIsSavingLetter(false);
-    clearToast();
-
-    try {
-      const handshake = await startLetterComposition({
-        jobId: jobId ?? undefined,
-        tone: selectedTone,
-        resume: true,
-      });
-      if (handshake?.jobId) {
-        setJobId(handshake.jobId);
-      }
-      const url = new URL(handshake.streamPath, window.location.origin);
-      if (!url.searchParams.has('jobId') && (jobId ?? handshake.jobId)) {
-        url.searchParams.set('jobId', (jobId ?? handshake.jobId) as string);
-      }
-      openLetterStream(url.toString());
-    } catch (error: any) {
-      setLetterStatus('error');
-      setLetterPhase('error');
-      const message =
-        error?.message && typeof error.message === 'string'
-          ? error.message
-          : 'We could not resume letter composition. Start again when ready.';
-      setLetterError(message);
-      setLetterStatusMessage(null);
-      void reportRefundedFailure('letter composition could not resume').then((latest) => {
-        if (typeof latest === 'number') {
-          setLetterRemainingCredits(Math.round(latest * 100) / 100);
-        }
-      });
-    }
-  }, [clearToast, jobId, openLetterStream, reportRefundedFailure, selectedTone, setJobId]);
-
-  useEffect(() => {
-    if (!letterPendingAutoResume) return;
-    if (!hasHandledInitialJob) return;
-    if (letterSourceRef.current) {
-      setLetterPendingAutoResume(false);
-      return;
-    }
-    void resumeLetterComposition();
-  }, [hasHandledInitialJob, letterPendingAutoResume, resumeLetterComposition]);
-
-  useEffect(() => {
-    if (letterStatus !== 'generating') return undefined;
-
-    const interval = window.setInterval(() => {
-      const source = letterSourceRef.current;
-      if (!source) return;
-
-      const now = Date.now();
-      const lastEventAt = lastLetterEventRef.current || 0;
-      if (now - lastEventAt < 45000) return;
-
-      const lastAttemptAt = lastLetterResumeAttemptRef.current || 0;
-      if (now - lastAttemptAt < 15000) return;
-
-      lastLetterResumeAttemptRef.current = now;
-      appendLetterEvent('Connection quiet — attempting to resume letter composition…');
-      closeLetterStream();
-      void resumeLetterComposition();
-    }, 10000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [appendLetterEvent, closeLetterStream, letterStatus, resumeLetterComposition]);
+  // Deep research stream handled via useDeepResearchStream hook.
 
   const applySnapshot = useCallback(
     (job: ActiveWritingDeskJob) => {
-      closeResearchStream();
-      setSavedLetterResponseId(null);
+            setSavedResponseId(null);
       setLetterSaveError(null);
       setIsSavingLetter(false);
       clearToast();
@@ -1103,123 +365,26 @@ export default function WritingDeskClient() {
       setFollowUpIndex(nextFollowUpIndex);
       setNotes(job.notes ?? null);
       setResponseId(job.responseId ?? null);
-      const existingResearch = job.researchContent ?? '';
-      setResearchContent(existingResearch);
-      setResearchResponseId(job.researchResponseId ?? null);
-      const nextStatus = job.researchStatus ?? (existingResearch.trim().length > 0 ? 'completed' : 'idle');
-      setResearchStatus(nextStatus === 'running' ? 'running' : nextStatus);
-      setPendingAutoResume(nextStatus === 'running');
-      setIsResearchBackgroundPolling(false);
-      lastResearchEventRef.current = 0;
-      setResearchActivities([]);
-      setResearchError(null);
+      applyResearchSnapshot({
+        researchContent: job.researchContent ?? '',
+        researchResponseId: job.researchResponseId ?? null,
+        researchStatus: job.researchStatus ?? null,
+      });
       setError(null);
       setServerError(null);
       setShowSummaryDetails(false);
       setLoading(false);
       setJobSaveError(null);
-      const nextLetterStatus = job.letterStatus ?? 'idle';
-      setLetterStatus(nextLetterStatus);
-      setSelectedTone(job.letterTone ?? null);
-      setLetterReferences(Array.isArray(job.letterReferences) ? [...job.letterReferences] : []);
-      setLetterResponseId(job.letterResponseId ?? null);
-      setLetterRawJson(job.letterJson ?? null);
-      letterJsonBufferRef.current = '';
-      let resumeLetterHtml: string | null = null;
-      if (job.letterJson) {
-        try {
-          const parsed = JSON.parse(job.letterJson) as Record<string, any>;
-          const parsedReferences = Array.isArray(parsed.references) ? parsed.references : [];
-          resumeLetterHtml = composeLetterHtml({
-            mpName: parsed.mp_name ?? '',
-            mpAddress1: parsed.mp_address_1 ?? '',
-            mpAddress2: parsed.mp_address_2 ?? '',
-            mpCity: parsed.mp_city ?? '',
-            mpCounty: parsed.mp_county ?? '',
-            mpPostcode: parsed.mp_postcode ?? '',
-            date: parsed.date ?? '',
-            letterContentHtml: parsed.letter_content ?? '',
-            senderName: parsed.sender_name ?? '',
-            senderAddress1: parsed.sender_address_1 ?? '',
-            senderAddress2: parsed.sender_address_2 ?? '',
-            senderAddress3: parsed.sender_address_3 ?? '',
-            senderCity: parsed.sender_city ?? '',
-            senderCounty: parsed.sender_county ?? '',
-            senderPostcode: parsed.sender_postcode ?? '',
-            senderTelephone: parsed.sender_phone ?? '',
-            references: parsedReferences,
-          });
-          setLetterMetadata({
-            mpName: parsed.mp_name ?? '',
-            mpAddress1: parsed.mp_address_1 ?? '',
-            mpAddress2: parsed.mp_address_2 ?? '',
-            mpCity: parsed.mp_city ?? '',
-            mpCounty: parsed.mp_county ?? '',
-            mpPostcode: parsed.mp_postcode ?? '',
-            date: parsed.date ?? '',
-            letterContent: resumeLetterHtml ?? parsed.letter_content ?? '',
-            senderName: parsed.sender_name ?? '',
-            senderAddress1: parsed.sender_address_1 ?? '',
-            senderAddress2: parsed.sender_address_2 ?? '',
-            senderAddress3: parsed.sender_address_3 ?? '',
-            senderCity: parsed.sender_city ?? '',
-            senderCounty: parsed.sender_county ?? '',
-            senderPostcode: parsed.sender_postcode ?? '',
-            senderTelephone: parsed.sender_phone ?? '',
-            references: parsedReferences,
-            responseId: job.letterResponseId ?? null,
-            tone: job.letterTone ?? null,
-            rawJson: job.letterJson ?? '',
-            subjectLineHtml: parsed.subject_line_html ?? '',
-          });
-        } catch {
-          setLetterMetadata(null);
-        }
-      } else {
-        setLetterMetadata(null);
-      }
-      const resolvedLetterContent =
-        typeof job.letterContent === 'string' && job.letterContent.trim().length > 0
-          ? job.letterContent
-          : resumeLetterHtml ?? '';
-      setLetterPendingAutoResume(false);
-
-      if (nextLetterStatus === 'completed') {
-        setLetterContentHtml(resolvedLetterContent);
-        setLetterPhase('completed');
-        setLetterError(null);
-        setLetterStatusMessage(null);
-        setLetterRemainingCredits(null);
-        setLetterReasoningVisible(false);
-      } else if (nextLetterStatus === 'generating') {
-        setLetterContentHtml(resumeLetterHtml ?? '');
-        setLetterPhase('streaming');
-        setLetterError(null);
-        setLetterStatusMessage('Composing your letter…');
-        setLetterRemainingCredits(null);
-        setLetterReasoningVisible(true);
-        setLetterMetadata(null);
-        setLetterEvents([]);
-        setLetterPendingAutoResume(true);
-      } else if (nextLetterStatus === 'error') {
-        setLetterContentHtml(resolvedLetterContent);
-        setLetterPhase('error');
-        setLetterError('Letter drafting did not finish. Start again when ready.');
-        setLetterReasoningVisible(true);
-        setLetterMetadata(null);
-        setLetterStatusMessage(null);
-      } else {
-        setLetterContentHtml(resolvedLetterContent);
-        setLetterPhase('idle');
-        setLetterError(null);
-        setLetterStatusMessage(null);
-        setLetterReasoningVisible(true);
-        if (!job.letterJson) {
-          setLetterMetadata(null);
-        }
-      }
+      applyLetterSnapshot({
+        letterStatus: job.letterStatus ?? null,
+        letterTone: job.letterTone ?? null,
+        letterResponseId: job.letterResponseId ?? null,
+        letterContent: job.letterContent ?? null,
+        letterReferences: job.letterReferences ?? null,
+        letterJson: job.letterJson ?? null,
+      });
     },
-    [clearToast, closeResearchStream, resetFollowUps],
+    [applyLetterSnapshot, applyResearchSnapshot, clearToast],
   );
 
   const resourceToPayload = useCallback(
@@ -1291,92 +456,32 @@ export default function WritingDeskClient() {
     ],
   );
 
-  const signatureForPayload = useCallback(
-    (payload: UpsertActiveWritingDeskJobPayload, resolvedJobId?: string | null) =>
-      JSON.stringify({
-        ...payload,
-        jobId: resolvedJobId ?? payload.jobId ?? null,
-      }),
-    [],
-  );
+  const getSnapshot = useCallback(() => buildSnapshotPayload(), [buildSnapshotPayload]);
 
-  useEffect(() => {
-    if (hasHandledInitialJob || isActiveJobLoading) return;
-    if (activeJob) {
-      setPendingJob(activeJob);
-      setResumeModalOpen(true);
-    } else {
-      resetLocalState();
-      setHasHandledInitialJob(true);
-      setJobId(null);
-      lastPersistedRef.current = null;
-    }
-  }, [activeJob, hasHandledInitialJob, isActiveJobLoading, resetLocalState]);
+  const {
+    saveJob,
+    clearJob,
+    isClearingJob,
+    handleResumeExistingJob,
+    handleDiscardExistingJob,
+    markSnapshotSaved,
+  } = useWritingDeskPersistence({
+    jobId,
+    setJobId,
+    hasHandledInitialJob,
+    setHasHandledInitialJob,
+    pendingJob,
+    setPendingJob,
+    setResumeModalOpen,
+    persistenceEnabled,
+    setPersistenceEnabled,
+    setJobSaveError,
+    getSnapshot,
+    serializeJob: resourceToPayload,
+    onApplySnapshot: applySnapshot,
+    onResetLocalState: resetLocalState,
+  });
 
-  useEffect(() => {
-    if (!activeJobError) return;
-    setJobSaveError('We could not load your saved letter. You can start a new one.');
-    resetLocalState();
-    setHasHandledInitialJob(true);
-    setJobId(null);
-    lastPersistedRef.current = null;
-    setPendingJob(null);
-    setResumeModalOpen(false);
-  }, [activeJobError, resetLocalState]);
-
-  const handleResumeExistingJob = useCallback(() => {
-    if (!pendingJob) return;
-    applySnapshot(pendingJob);
-    setJobId(pendingJob.jobId);
-    const payload = resourceToPayload(pendingJob);
-    lastPersistedRef.current = signatureForPayload(payload, pendingJob.jobId);
-    setResumeModalOpen(false);
-    setPendingJob(null);
-    setHasHandledInitialJob(true);
-    setPersistenceEnabled(true);
-    setJobSaveError(null);
-  }, [applySnapshot, pendingJob, resourceToPayload, signatureForPayload]);
-
-  const handleDiscardExistingJob = useCallback(async () => {
-    setJobSaveError(null);
-    setPersistenceEnabled(false);
-    lastPersistedRef.current = null;
-    setJobId(null);
-    try {
-      await clearJob();
-      resetLocalState();
-      setPendingJob(null);
-      setResumeModalOpen(false);
-      setHasHandledInitialJob(true);
-    } catch {
-      setJobSaveError('We could not clear your saved letter. Please try again.');
-    }
-  }, [clearJob, resetLocalState]);
-
-  const currentSnapshot = useMemo(() => buildSnapshotPayload(), [buildSnapshotPayload]);
-
-  useEffect(() => {
-    if (!persistenceEnabled) return;
-    if (isSavingJob) return;
-    const signature = signatureForPayload(currentSnapshot, jobId);
-    if (lastPersistedRef.current === signature) return;
-
-    const timeout = window.setTimeout(() => {
-      saveJob(currentSnapshot)
-        .then((job) => {
-          setJobId(job.jobId);
-          lastPersistedRef.current = signatureForPayload(currentSnapshot, job.jobId);
-          setJobSaveError(null);
-        })
-        .catch(() => {
-          setJobSaveError('We could not save your progress. We will keep trying automatically.');
-        });
-    }, 500);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [currentSnapshot, isSavingJob, jobId, persistenceEnabled, saveJob, signatureForPayload]);
 
   const handleInitialChange = (value: string) => {
     if (!currentStep) return;
@@ -1446,7 +551,7 @@ export default function WritingDeskClient() {
       try {
         const savedJob = await saveJob(payload);
         setJobId(savedJob.jobId);
-        lastPersistedRef.current = signatureForPayload(payload, savedJob.jobId);
+        markSnapshotSaved(payload, savedJob.jobId);
         setJobSaveError(null);
       } catch {
         setJobSaveError('We could not save your progress. We will keep trying automatically.');
@@ -1616,7 +721,6 @@ export default function WritingDeskClient() {
   const handleStartOver = useCallback(async () => {
     setJobSaveError(null);
     setPersistenceEnabled(false);
-    lastPersistedRef.current = null;
     setJobId(null);
     setHasHandledInitialJob(true);
     setPendingJob(null);
@@ -1716,14 +820,9 @@ export default function WritingDeskClient() {
   }, []);
 
   const handleShowToneSelection = useCallback(() => {
-    if (letterStatus !== 'idle') {
-      resetLetter();
-    }
-    setLetterPhase('tone');
-    setLetterStatusMessage(null);
-    setLetterError(null);
+    enterToneSelection();
     setShowSummaryDetails(false);
-  }, [letterStatus, resetLetter]);
+  }, [enterToneSelection]);
 
   const handleRequestCreateLetter = useCallback(() => {
     if (letterCreditState !== 'ok') return;
@@ -1820,7 +919,7 @@ export default function WritingDeskClient() {
         letterHtml: letterContentHtml,
         metadata,
       });
-      setSavedLetterResponseId(saved.responseId || letterResponseId);
+      setSavedResponseId(saved.responseId || letterResponseId);
       showToast('Letter saved to My letters.');
     } catch (error: any) {
       const message =

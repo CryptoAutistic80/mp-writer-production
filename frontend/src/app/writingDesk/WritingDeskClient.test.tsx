@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import WritingDeskClient from './WritingDeskClient';
-import { useActiveWritingDeskJob } from '../../features/writing-desk/hooks/useActiveWritingDeskJob';
+import { useWritingDeskPersistence } from '../../features/writing-desk/hooks/useWritingDeskPersistence';
 
-jest.mock('../../features/writing-desk/hooks/useActiveWritingDeskJob');
+jest.mock('../../features/writing-desk/hooks/useWritingDeskPersistence');
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
     push: jest.fn(),
@@ -49,8 +49,8 @@ class MockEventSource {
   }
 }
 
-const mockUseActiveWritingDeskJob = useActiveWritingDeskJob as jest.MockedFunction<
-  typeof useActiveWritingDeskJob
+const mockUseWritingDeskPersistence = useWritingDeskPersistence as jest.MockedFunction<
+  typeof useWritingDeskPersistence
 >;
 
 const createJsonResponse = (payload: any): ResponseLike => ({
@@ -65,7 +65,6 @@ describe('WritingDeskClient', () => {
   const originalEventSource = window.EventSource;
   const saveJobMock = jest.fn();
   const clearJobMock = jest.fn();
-  const refetchMock = jest.fn(async () => null);
   const followUpQueue: FollowUpResponse[] = [];
   let mockCredits = 1;
   let fetchMock: jest.Mock<Promise<ResponseLike>, FetchArgs>;
@@ -149,17 +148,14 @@ describe('WritingDeskClient', () => {
     followUpQueue.length = 0;
     mockCredits = 1;
     setupFetchMock();
-    refetchMock.mockClear();
     MockEventSource.reset();
-    mockUseActiveWritingDeskJob.mockReturnValue({
-      activeJob: null,
-      isLoading: false,
-      refetch: refetchMock,
+    mockUseWritingDeskPersistence.mockReturnValue({
       saveJob: saveJobMock,
-      isSaving: false,
       clearJob: clearJobMock,
-      isClearing: false,
-      error: null,
+      isClearingJob: false,
+      handleResumeExistingJob: jest.fn(),
+      handleDiscardExistingJob: jest.fn(async () => {}),
+      markSnapshotSaved: jest.fn(),
     } as any);
   });
 
