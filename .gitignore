@@ -64,6 +64,7 @@ frontend/.env.local
 frontend/.env.*.local
 frontend/.env.*
 !frontend/.env.example
+backup.env.txt
 
 # TypeScript
 *.tsbuildinfo
