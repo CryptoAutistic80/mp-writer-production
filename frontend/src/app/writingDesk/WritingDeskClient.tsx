@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import ReactMarkdown from 'react-markdown';
 import { apiClient } from '../../lib/api-client';
 import ActiveJobResumeModal from '../../features/writing-desk/components/ActiveJobResumeModal';
 import EditIntakeConfirmModal from '../../features/writing-desk/components/EditIntakeConfirmModal';
@@ -13,9 +12,12 @@ import FollowUpsConfirmModal from '../../features/writing-desk/components/Follow
 import EditFollowUpsConfirmModal from '../../features/writing-desk/components/EditFollowUpsConfirmModal';
 import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
 import CreateLetterConfirmModal from '../../features/writing-desk/components/CreateLetterConfirmModal';
-import { LetterViewer } from '../../features/writing-desk/components/LetterViewer';
 import { useDeepResearchStream } from '../../features/writing-desk/hooks/useDeepResearchStream';
 import { useLetterComposer } from '../../features/writing-desk/hooks/useLetterComposer';
+import { WritingDeskIntakeForm } from '../../features/writing-desk/components/WritingDeskIntakeForm';
+import { WritingDeskFollowUpForm } from '../../features/writing-desk/components/WritingDeskFollowUpForm';
+import { WritingDeskSummary } from '../../features/writing-desk/components/WritingDeskSummary';
+import type { WritingDeskLetterPanelProps } from '../../features/writing-desk/components/WritingDeskLetterPanel';
 import { useWritingDeskPersistence } from '../../features/writing-desk/hooks/useWritingDeskPersistence';
 import {
   ActiveWritingDeskJob,
@@ -38,8 +40,6 @@ import {
   type WritingDeskStepKey,
   MAX_WRITING_DESK_LETTER_REASONING_ITEMS,
 } from '../../features/writing-desk/utils';
-import { MicButton } from '../../components/audio/MicButton';
-import { Toast } from '../../components/Toast';
 
 type StepKey = WritingDeskStepKey;
 type FormState = WritingDeskFormState;
@@ -940,6 +940,29 @@ export default function WritingDeskClient() {
     showToast,
   ]);
 
+  const letterPanelProps: WritingDeskLetterPanelProps = {
+    phase: letterPhase,
+    status: letterStatus,
+    statusMessage: letterStatusMessage,
+    reasoningVisible: letterReasoningVisible,
+    events: visibleLetterEvents,
+    letterHtml: letterContentHtml,
+    onToneSelect: handleToneSelect,
+    onBackToSummary: () => setLetterPhase('idle'),
+    onSaveLetter: handleSaveLetter,
+    isSaving: isSavingLetter,
+    responseId: letterResponseId,
+    metadata: letterMetadata,
+    savedResponseId: savedLetterResponseId,
+    onRecompose: handleRequestRecompose,
+    onExit: handleRequestExit,
+    letterCreditState,
+    letterError,
+    onTryAgain: handleShowToneSelection,
+    toastMessage,
+    selectedTone,
+  };
+
   return (
     <>
       <StartOverConfirmModal
@@ -1055,92 +1078,25 @@ export default function WritingDeskClient() {
         )}
 
         {phase === 'initial' && currentStep && (
-          <form className="form-grid" onSubmit={(e) => { e.preventDefault(); void handleInitialNext(); }}>
-            <div className="field">
-              <label htmlFor={`writing-step-${currentStep.key}`} className="label">{currentStep.title}</label>
-              <p className="label-sub">{currentStep.description}</p>
-              <div className="input-with-mic">
-                <textarea
-                  id={`writing-step-${currentStep.key}`}
-                  className="input"
-                  rows={6}
-                  value={form[currentStep.key]}
-                  onChange={(e) => handleInitialChange(e.target.value)}
-                  placeholder={currentStep.placeholder}
-                  aria-invalid={!!error && !form[currentStep.key].trim()}
-                  disabled={loading}
-                />
-                <div className="input-mic-button">
-                  <MicButton
-                    onTranscriptionComplete={handleTranscriptionComplete}
-                    disabled={loading}
-                    size="sm"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {error && (
-              <div className="status" aria-live="assertive">
-                <p style={{ color: '#b91c1c' }}>{error}</p>
-              </div>
-            )}
-
-            {serverError && (
-              <div className="status" aria-live="assertive">
-                <p style={{ color: '#b91c1c' }}>{serverError}</p>
-              </div>
-            )}
-
-            <div
-              className={`actions${stepIndex === 0 ? ' actions--primary-only' : ''}`}
-              style={{
-                marginTop: 12,
-                gap: 12,
-                display: 'flex',
-              }}
-            >
-              {stepIndex > 0 && (
-                <button
-                  type="button"
-                  className="btn-link"
-                  onClick={handleInitialBack}
-                  disabled={loading}
-                >
-                  Back
-                </button>
-              )}
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={
-                  loading
-                  ||
-                  (stepIndex === steps.length - 1
-                    && followUps.length === 0
-                    && creditState !== 'ok')
-                }
-              >
-                {loading
-                  ? 'Thinking…'
-                  : stepIndex === steps.length - 1
-                    ? followUps.length > 0
-                      ? 'Next'
-                      : 'Generate follow-up questions'
-                    : 'Next'}
-              </button>
-            </div>
-            {stepIndex === steps.length - 1
-              && followUps.length === 0
-              && availableCredits !== null
-              && availableCredits < followUpCreditCost && (
-              <div className="status" aria-live="polite" style={{ marginTop: 8 }}>
-                <p style={{ color: '#2563eb' }}>
-                  Generating follow-up questions costs {formatCredits(followUpCreditCost)} credits. Please top up to continue.
-                </p>
-              </div>
-            )}
-          </form>
+          <WritingDeskIntakeForm
+            step={currentStep}
+            value={form[currentStep.key]}
+            loading={loading}
+            error={error}
+            serverError={serverError}
+            stepIndex={stepIndex}
+            isFirstStep={stepIndex === 0}
+            isLastStep={stepIndex === steps.length - 1}
+            hasFollowUps={followUps.length > 0}
+            creditState={creditState}
+            availableCredits={availableCredits}
+            followUpCreditCost={followUpCreditCost}
+            formatCredits={formatCredits}
+            onChange={handleInitialChange}
+            onTranscriptionComplete={handleTranscriptionComplete}
+            onBack={handleInitialBack}
+            onSubmit={handleInitialNext}
+          />
         )}
 
         {phase === 'generating' && (
@@ -1163,476 +1119,60 @@ export default function WritingDeskClient() {
         )}
 
         {phase === 'followup' && followUps.length > 0 && (
-          <form className="form-grid" onSubmit={(e) => { e.preventDefault(); void handleFollowUpNext(); }}>
-            <div className="field">
-              <label htmlFor={`followup-${followUpIndex}`} className="label">Follow-up question {followUpIndex + 1} of {followUps.length}</label>
-              <p className="label-sub">{followUps[followUpIndex]}</p>
-              <div className="input-with-mic">
-                <textarea
-                  id={`followup-${followUpIndex}`}
-                  className="input"
-                  rows={5}
-                  value={followUpAnswers[followUpIndex] ?? ''}
-                  onChange={(e) => handleFollowUpChange(e.target.value)}
-                  placeholder="Type your answer here"
-                  aria-invalid={!!error && !(followUpAnswers[followUpIndex]?.trim?.())}
-                  disabled={loading}
-                />
-                <div className="input-mic-button">
-                  <MicButton
-                    onTranscriptionComplete={handleFollowUpTranscriptionComplete}
-                    disabled={loading}
-                    size="sm"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {notes && followUpIndex === 0 && (
-              <div className="status" aria-live="polite">
-                <p style={{ color: '#2563eb', fontStyle: 'italic' }}>{notes}</p>
-              </div>
-            )}
-
-            {error && (
-              <div className="status" aria-live="assertive">
-                <p style={{ color: '#b91c1c' }}>{error}</p>
-              </div>
-            )}
-
-            {serverError && (
-              <div className="status" aria-live="assertive">
-                <p style={{ color: '#b91c1c' }}>{serverError}</p>
-              </div>
-            )}
-
-            <div className={`actions${followUpIndex === 0 && isEditingFollowUpsFromSummary.current ? ' actions--primary-only' : ''}`} style={{ marginTop: 12, display: 'flex', gap: 12 }}>
-              {!(followUpIndex === 0 && isEditingFollowUpsFromSummary.current) && (
-                <button
-                  type="button"
-                  className="btn-link"
-                  onClick={handleFollowUpBack}
-                  disabled={loading}
-                >
-                  Back
-                </button>
-              )}
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={loading}
-              >
-                {loading
-                  ? 'Saving…'
-                  : followUpIndex === followUps.length - 1
-                    ? isEditingFollowUpsFromSummary.current
-                      ? 'Back to research'
-                      : 'Save answers'
-                    : 'Next'}
-              </button>
-            </div>
-          </form>
+          <WritingDeskFollowUpForm
+            question={followUps[followUpIndex]}
+            followUpIndex={followUpIndex}
+            totalFollowUps={followUps.length}
+            value={followUpAnswers[followUpIndex] ?? ''}
+            notes={notes}
+            loading={loading}
+            error={error}
+            serverError={serverError}
+            showBack={!(followUpIndex === 0 && isEditingFollowUpsFromSummary.current)}
+            isEditingFromSummary={isEditingFollowUpsFromSummary.current}
+            onChange={handleFollowUpChange}
+            onTranscriptionComplete={handleFollowUpTranscriptionComplete}
+            onBack={handleFollowUpBack}
+            onSubmit={handleFollowUpNext}
+          />
         )}
 
         {phase === 'summary' && (
-          <div className="result" aria-live="polite">
-            {letterPhase === 'idle' && (
-              <>
-                <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
-                <p className="section-sub">Thanks for the detail. When you’re ready, start the research to gather supporting evidence.</p>
-
-                {serverError && (
-                  <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
-                    <p style={{ color: '#b91c1c' }}>{serverError}</p>
-                  </div>
-                )}
-
-                <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                  <h4 className="section-title" style={{ fontSize: '1rem' }}>Research evidence</h4>
-                  {!hasResearchContent && researchStatus !== 'running' && (
-                    <p style={{ marginTop: 8 }}>
-                      Run research to gather cited evidence that supports your letter. The findings feed straight into your draft.
-                    </p>
-                  )}
-                  {researchStatus === 'error' && researchError && (
-                    <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
-                      <p style={{ color: '#b91c1c' }}>{researchError}</p>
-                    </div>
-                  )}
-                  <div style={{ marginTop: 12 }}>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={handleRequestResearch}
-                      disabled={researchButtonDisabled}
-                    >
-                      {researchButtonLabel}
-                    </button>
-                    {researchCreditState === 'low' && (
-                      <p style={{ marginTop: 8, color: '#b91c1c' }}>
-                        You need at least {formatCredits(deepResearchCreditCost)} credits to run deep research.
-                      </p>
-                    )}
-                    {researchCreditState === 'loading' && (
-                      <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
-                    )}
-                  </div>
-                  {researchStatus === 'running' && (
-                    <div className="research-progress" role="status" aria-live="polite">
-                      <span className="research-progress__spinner" aria-hidden="true" />
-                      <div className="research-progress__content">
-                        <p>Gathering evidence — this can take approximately 15-30 minutes while we trace reliable sources.</p>
-                        <p>We&apos;ll post updates in the activity feed below while the research continues.</p>
-                      </div>
-                    </div>
-                  )}
-                  {researchStatus === 'running' && researchActivities.length > 0 && (
-                    <div style={{ marginTop: 12 }}>
-                      <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Latest activity</h5>
-                      <ul style={{ paddingLeft: 18, margin: 0 }}>
-                        {researchActivities.map((activity) => (
-                          <li key={activity.id} style={{ marginBottom: 4 }}>
-                            {activity.text}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {(hasResearchContent || researchStatus === 'running') && (
-                    <div style={{ marginTop: 12 }}>
-                      <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Research notes</h5>
-                      <div className="research-notes">
-                        {researchContent ? (
-                          <ReactMarkdown
-                            skipHtml
-                            components={{
-                              a: ({ node: _node, ...props }) => (
-                                <a {...props} target="_blank" rel="noreferrer noopener" />
-                              ),
-                            }}
-                          >
-                            {researchContent}
-                          </ReactMarkdown>
-                        ) : (
-                          <p className="research-notes__placeholder">Collecting evidence…</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {researchResponseId && (
-                    <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>
-                      Research reference ID: {researchResponseId}
-                    </p>
-                  )}
-                </div>
-
-                <div
-                  style={{
-                    marginTop: 12,
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    gap: 12,
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="btn-link"
-                    onClick={() => setShowSummaryDetails((prev) => !prev)}
-                    disabled={loading}
-                  >
-                    {showSummaryDetails ? 'Hide intake details' : 'Show intake details'}
-                  </button>
-                  {responseId && !showSummaryDetails && (
-                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</span>
-                  )}
-                </div>
-
-                {showSummaryDetails && (
-                  <>
-                    <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                      <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
-                      <div className="stack" style={{ marginTop: 12 }}>
-                        {steps.map((step) => (
-                          <div key={step.key} style={{ marginBottom: 16 }}>
-                            <div>
-                              <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
-                            </div>
-                            <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                      <h4 className="section-title" style={{ fontSize: '1rem' }}>Follow-up questions</h4>
-                      {followUps.length > 0 ? (
-                        <ol style={{ marginTop: 8, paddingLeft: 20 }}>
-                          {followUps.map((q, idx) => (
-                            <li key={idx} style={{ marginBottom: 12 }}>
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'flex-start',
-                                  gap: 12,
-                                }}
-                              >
-                                <p style={{ marginBottom: 4 }}>{q}</p>
-                                <button
-                                  type="button"
-                                  className="btn-link"
-                                  onClick={() => handleRequestEditFollowUps(idx)}
-                                  aria-label={`Edit answer for follow-up question ${idx + 1}`}
-                                  disabled={loading}
-                                >
-                                  Edit answer
-                                </button>
-                              </div>
-                              <p style={{ margin: 0, fontWeight: 600 }}>Your answer:</p>
-                              <p style={{ margin: '4px 0 0 0' }}>{followUpAnswers[idx]}</p>
-                            </li>
-                          ))}
-                        </ol>
-                      ) : (
-                        <p style={{ marginTop: 8 }}>No additional questions needed — we have enough detail for the next step.</p>
-                      )}
-                      {followUps.length > 0 && (
-                        <>
-                          <div className="actions" style={{ marginTop: 12 }}>
-                            <button
-                              type="button"
-                              className="btn-link"
-                              onClick={handleRequestRegenerateFollowUps}
-                              disabled={loading || creditState !== 'ok'}
-                              style={{ opacity: loading || creditState !== 'ok' ? 0.5 : 1 }}
-                            >
-                              Ask for new follow-up questions
-                            </button>
-                          </div>
-                          {creditState === 'low' && (
-                            <p style={{ marginTop: 8, color: '#b91c1c' }}>
-                              You need at least {formatCredits(followUpCreditCost)} credits to generate new follow-up
-                              questions.
-                            </p>
-                          )}
-                          {creditState === 'loading' && (
-                            <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
-                          )}
-                        </>
-                      )}
-                      {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
-                      {responseId && (
-                        <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                <div
-                  className="actions"
-                  style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}
-                >
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => setStartOverConfirmOpen(true)}
-                    disabled={loading}
-                  >
-                    Start again
-                  </button>
-                  {followUps.length > 0 && (
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => handleRequestEditFollowUps(0)}
-                      disabled={loading || researchStatus === 'running'}
-                    >
-                      Review / Edit Follow up answers
-                    </button>
-                  )}
-                  {researchStatus === 'completed' && (
-                    <button
-                      type="button"
-                      className="btn-primary create-letter-button"
-                      onClick={handleRequestCreateLetter}
-                      disabled={loading || letterCreditState !== 'ok'}
-                    >
-                      Create my letter
-                    </button>
-                  )}
-                  {researchStatus === 'completed' && letterCreditState === 'low' && (
-                    <p style={{ marginTop: 8, color: '#b91c1c' }}>
-                      You need at least {formatCredits(letterCreditCost)} credits to create your letter.
-                    </p>
-                  )}
-                  {researchStatus === 'completed' && letterCreditState === 'loading' && (
-                    <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
-                  )}
-                </div>
-              </>
-            )}
-
-            {letterPhase === 'tone' && (
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Choose a tone for your letter</h4>
-                <p className="section-sub">
-                  Pick the style you want the drafted MP letter to use. You can always compose another letter later in a different tone.
-                </p>
-                <div className="tone-grid">
-                  {WRITING_DESK_LETTER_TONES.map((tone) => {
-                    const toneInfo = LETTER_TONE_LABELS[tone];
-                    return (
-                      <button
-                        key={tone}
-                        type="button"
-                        className="tone-option"
-                        data-tone={tone}
-                        onClick={() => handleToneSelect(tone)}
-                      >
-                        <span className="tone-option__badge" aria-hidden="true">
-                          {toneInfo.icon}
-                        </span>
-                        <span className="tone-option__label">{toneInfo.label}</span>
-                        <span className="tone-option__description">{toneInfo.description}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="actions" style={{ marginTop: 16, display: 'flex', gap: 12 }}>
-                  <button type="button" className="btn-secondary" onClick={() => setLetterPhase('idle')}>
-                    Back to summary
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {letterPhase === 'streaming' && (
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Drafting your letter</h4>
-                {letterStatus === 'generating' && letterStatusMessage && (
-                  <div
-                    className="research-progress"
-                    role="status"
-                    aria-live="polite"
-                    style={{ marginTop: 16 }}
-                  >
-                    <span className="research-progress__spinner" aria-hidden="true" />
-                    <div className="research-progress__content">
-                      <p>{letterStatusMessage}</p>
-                      <p>We’ll keep posting updates in the reasoning feed while the letter takes shape.</p>
-                    </div>
-                  </div>
-                )}
-                {letterReasoningVisible && (
-                  <div style={{ marginTop: 16 }}>
-                    <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Reasoning feed</h5>
-                    {visibleLetterEvents.length > 0 ? (
-                      <ul style={{ margin: 0, paddingLeft: 18 }}>
-                        {visibleLetterEvents.map((event) => (
-                          <li key={event.id} style={{ marginBottom: 4 }}>{event.text}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p style={{ margin: 0, color: '#6b7280' }}>The assistant is planning the letter…</p>
-                    )}
-                  </div>
-                )}
-                <div style={{ marginTop: 16 }}>
-                  <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Letter preview</h5>
-                  <div
-                    className="letter-preview"
-                    dangerouslySetInnerHTML={{ __html: letterContentHtml || '<p>Drafting the opening paragraph…</p>' }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {letterPhase === 'completed' && letterMetadata && (
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Your drafted letter</h4>
-                <p className="section-sub">
-                  Tone: {selectedTone ? LETTER_TONE_LABELS[selectedTone].label : 'Not specified'} · Date {letterMetadata.date || new Date().toISOString().slice(0, 10)}
-                </p>
-                {letterResponseId && (
-                  <p style={{ marginTop: 4, fontSize: '0.85rem', color: '#6b7280' }}>Letter reference ID: {letterResponseId}</p>
-                )}
-                <div style={{ marginTop: 16 }}>
-                  <LetterViewer
-                    letterHtml={letterContentHtml}
-                    metadata={letterMetadata}
-                    leadingActions={
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={handleSaveLetter}
-                        disabled={
-                          isSavingLetter ||
-                          !letterResponseId ||
-                          !letterMetadata ||
-                          !letterContentHtml ||
-                          (savedLetterResponseId !== null && savedLetterResponseId === letterResponseId)
-                        }
-                        aria-busy={isSavingLetter}
-                      >
-                        {isSavingLetter
-                          ? 'Saving…'
-                          : savedLetterResponseId === letterResponseId
-                            ? 'Saved to my letters'
-                            : 'Save to my letters'}
-                      </button>
-                    }
-                    trailingActions={
-                      <>
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={handleRequestRecompose}
-                          disabled={letterCreditState !== 'ok'}
-                          style={{ opacity: letterCreditState !== 'ok' ? 0.6 : 1 }}
-                        >
-                          Recompose this letter
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={handleRequestExit}
-                          style={{
-                            backgroundColor: '#fee2e2',
-                            color: '#991b1b',
-                            border: '1px solid #fecaca'
-                          }}
-                        >
-                          Exit writing desk
-                        </button>
-                      </>
-                    }
-                  />
-                </div>
-                {letterSaveError && (
-                  <p role="alert" aria-live="polite" style={{ marginTop: 8, color: '#b91c1c' }}>
-                    {letterSaveError}
-                  </p>
-                )}
-                {toastMessage && <Toast>{toastMessage}</Toast>}
-              </div>
-            )}
-
-            {letterPhase === 'error' && (
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                <h4 className="section-title" style={{ fontSize: '1.1rem', color: '#b91c1c' }}>We couldn&apos;t finish your letter</h4>
-                {letterError && <p style={{ marginTop: 8 }}>{letterError}</p>}
-                <div className="actions" style={{ marginTop: 16, display: 'flex', gap: 12 }}>
-                  <button type="button" className="btn-primary" onClick={handleShowToneSelection}>
-                    Try again
-                  </button>
-                  <button type="button" className="btn-secondary" onClick={() => setLetterPhase('idle')}>
-                    Back to summary
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <WritingDeskSummary
+            letterPhase={letterPhase}
+            serverError={serverError}
+            hasResearchContent={hasResearchContent}
+            researchStatus={researchStatus}
+            researchError={researchError}
+            researchActivities={researchActivities}
+            researchContent={researchContent}
+            researchResponseId={researchResponseId}
+            researchButtonDisabled={researchButtonDisabled}
+            researchButtonLabel={researchButtonLabel}
+            researchCreditState={researchCreditState}
+            deepResearchCreditCost={deepResearchCreditCost}
+            formatCredits={formatCredits}
+            onRequestResearch={handleRequestResearch}
+            showSummaryDetails={showSummaryDetails}
+            onToggleSummaryDetails={() => setShowSummaryDetails((prev) => !prev)}
+            steps={steps}
+            form={form}
+            followUps={followUps}
+            followUpAnswers={followUpAnswers}
+            onEditFollowUp={handleRequestEditFollowUps}
+            onRegenerateFollowUps={handleRequestRegenerateFollowUps}
+            creditState={creditState}
+            followUpCreditCost={followUpCreditCost}
+            notes={notes}
+            responseId={responseId}
+            loading={loading}
+            onStartOver={() => setStartOverConfirmOpen(true)}
+            onReviewFollowUps={() => handleRequestEditFollowUps(0)}
+            letterCreditState={letterCreditState}
+            letterCreditCost={letterCreditCost}
+            onCreateLetter={handleRequestCreateLetter}
+            letterPanelProps={letterPanelProps}
+          />
         )}
       </div>
       </section>
