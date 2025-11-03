@@ -1,6 +1,7 @@
 interface CreateLetterConfirmModalProps {
   open: boolean;
   creditCost: string;
+  toneLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -8,10 +9,13 @@ interface CreateLetterConfirmModalProps {
 export default function CreateLetterConfirmModal({
   open,
   creditCost,
+  toneLabel,
   onConfirm,
   onCancel,
 }: CreateLetterConfirmModalProps) {
   if (!open) return null;
+
+  const toneDescription = toneLabel.trim().length > 0 ? `${toneLabel} tone` : 'selected tone';
 
   return (
     <div
@@ -40,13 +44,13 @@ export default function CreateLetterConfirmModal({
         }}
       >
         <h2 id="create-letter-confirm-title" style={{ fontSize: 24, lineHeight: 1.2, marginBottom: 12 }}>
-          Draft your letter now?
+          Lock in this tone?
         </h2>
         <p style={{ marginBottom: 16, color: '#334155', lineHeight: 1.6 }}>
-          Composing your letter will spend <strong>{creditCost} credits</strong>. We&apos;ll guide you through tone
-          selection next.
+          Selecting the <strong>{toneDescription}</strong> will spend <strong>{creditCost} credits</strong> and immediately
+          begin drafting your letter.
         </p>
-        <p style={{ marginBottom: 20, color: '#475569' }}>Do you want to continue?</p>
+        <p style={{ marginBottom: 20, color: '#475569' }}>Once drafting starts, your tone choice is locked for this letter.</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <button
             type="button"
@@ -62,7 +66,7 @@ export default function CreateLetterConfirmModal({
               cursor: 'pointer',
             }}
           >
-            Yes, create my letter
+            Yes, start my letter
           </button>
           <button
             type="button"
@@ -78,7 +82,7 @@ export default function CreateLetterConfirmModal({
               cursor: 'pointer',
             }}
           >
-            Not yet
+            I&apos;ll choose another tone
           </button>
         </div>
       </div>

@@ -33,6 +33,7 @@ import {
   WRITING_DESK_FOLLOW_UP_CREDIT_COST,
   WRITING_DESK_DEEP_RESEARCH_CREDIT_COST,
   WRITING_DESK_LETTER_CREDIT_COST,
+  WRITING_DESK_LETTER_TONE_LABELS,
   formatCredits,
   type WritingDeskFormState,
   type WritingDeskStepKey,
@@ -72,6 +73,7 @@ export default function WritingDeskClient() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [recomposeConfirmOpen, setRecomposeConfirmOpen] = useState(false);
   const [createLetterConfirmOpen, setCreateLetterConfirmOpen] = useState(false);
+  const [pendingTone, setPendingTone] = useState<WritingDeskLetterTone | null>(null);
   const [researchConfirmOpen, setResearchConfirmOpen] = useState(false);
   const [followUpsConfirmOpen, setFollowUpsConfirmOpen] = useState(false);
   const [editFollowUpsConfirmOpen, setEditFollowUpsConfirmOpen] = useState(false);
@@ -816,29 +818,39 @@ export default function WritingDeskClient() {
   }, []);
 
   const handleShowToneSelection = useCallback(() => {
+    setPendingTone(null);
     enterToneSelection();
     setShowSummaryDetails(false);
   }, [enterToneSelection]);
 
   const handleRequestCreateLetter = useCallback(() => {
     if (letterCreditState !== 'ok') return;
-    setCreateLetterConfirmOpen(true);
-  }, [letterCreditState]);
+    handleShowToneSelection();
+  }, [handleShowToneSelection, letterCreditState]);
 
   const handleConfirmCreateLetter = useCallback(() => {
+    if (!pendingTone) {
+      setCreateLetterConfirmOpen(false);
+      return;
+    }
     setCreateLetterConfirmOpen(false);
-    handleShowToneSelection();
-  }, [handleShowToneSelection]);
+    const toneToUse = pendingTone;
+    setPendingTone(null);
+    void beginLetterComposition(toneToUse);
+  }, [beginLetterComposition, pendingTone]);
 
   const handleCancelCreateLetter = useCallback(() => {
     setCreateLetterConfirmOpen(false);
+    setPendingTone(null);
   }, []);
 
   const handleToneSelect = useCallback(
     (tone: WritingDeskLetterTone) => {
-      void beginLetterComposition(tone);
+      if (letterCreditState !== 'ok') return;
+      setPendingTone(tone);
+      setCreateLetterConfirmOpen(true);
     },
-    [beginLetterComposition],
+    [letterCreditState],
   );
 
   const handleRequestRecompose = useCallback(() => {
@@ -956,8 +968,13 @@ export default function WritingDeskClient() {
     letterError,
     onTryAgain: handleShowToneSelection,
     toastMessage,
-    selectedTone,
+    selectedTone: pendingTone ?? selectedTone,
   };
+
+  const pendingToneLabel =
+    pendingTone && WRITING_DESK_LETTER_TONE_LABELS[pendingTone]
+      ? WRITING_DESK_LETTER_TONE_LABELS[pendingTone].label
+      : pendingTone ?? '';
 
   return (
     <>
@@ -973,8 +990,9 @@ export default function WritingDeskClient() {
         letterIsSaved={letterIsSaved}
       />
       <CreateLetterConfirmModal
-        open={createLetterConfirmOpen}
+        open={createLetterConfirmOpen && pendingTone !== null}
         creditCost={formatCredits(letterCreditCost)}
+        toneLabel={pendingToneLabel}
         onConfirm={handleConfirmCreateLetter}
         onCancel={handleCancelCreateLetter}
       />
