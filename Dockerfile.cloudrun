@@ -1,0 +1,98 @@
+# syntax=docker/dockerfile:1
+
+# ============================================================================
+# Multi-stage Dockerfile for Cloud Run deployment
+# Runs both backend API and Next.js frontend in a single container
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Stage 1: Base - Install all dependencies
+# ----------------------------------------------------------------------------
+FROM node:20-alpine AS base
+RUN apk add --no-cache libc6-compat
+WORKDIR /workspace
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Copy package files and install all dependencies
+COPY package.json package-lock.json ./
+RUN npm ci --legacy-peer-deps
+
+# Copy the entire monorepo
+COPY . .
+
+# ----------------------------------------------------------------------------
+# Stage 2: Build Backend
+# ----------------------------------------------------------------------------
+FROM base AS backend-build
+RUN npx nx run backend-api:prune
+
+# ----------------------------------------------------------------------------
+# Stage 3: Build Frontend
+# ----------------------------------------------------------------------------
+FROM base AS frontend-build
+# Set backend origin for build-time rewrites
+ENV NEXT_BACKEND_ORIGIN=http://localhost:4000
+RUN npx nx build frontend --configuration=production
+
+# ----------------------------------------------------------------------------
+# Stage 4: Production Runtime - Combined Service
+# ----------------------------------------------------------------------------
+FROM node:20-alpine AS runtime
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    libc6-compat \
+    dumb-init \
+    curl \
+    netcat-openbsd
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+WORKDIR /app
+
+# Copy backend from build stage
+COPY --from=backend-build --chown=nodejs:nodejs /workspace/dist/backend-api ./backend
+# Install backend production dependencies
+WORKDIR /app/backend
+RUN npm ci --omit=dev --legacy-peer-deps
+
+# Copy frontend from build stage
+WORKDIR /app
+COPY --from=frontend-build --chown=nodejs:nodejs /workspace/package.json ./package.json
+COPY --from=frontend-build --chown=nodejs:nodejs /workspace/package-lock.json ./package-lock.json
+COPY --from=frontend-build --chown=nodejs:nodejs /workspace/node_modules ./node_modules
+COPY --from=frontend-build --chown=nodejs:nodejs /workspace/frontend ./frontend
+# Clean up frontend dev dependencies
+RUN rm -rf ./frontend/node_modules
+
+# Copy startup script
+COPY --chown=nodejs:nodejs scripts/start-cloudrun.sh ./start-cloudrun.sh
+RUN chmod +x ./start-cloudrun.sh
+
+# Set environment variables
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    BACKEND_PORT=4000 \
+    NEXT_BACKEND_ORIGIN=http://localhost:4000
+
+# Cloud Run injects PORT (default 8080), frontend will listen on this
+# Backend listens on BACKEND_PORT (4000)
+ENV PORT=8080
+
+# Switch to non-root user
+USER nodejs
+
+# Expose the port that Cloud Run expects
+EXPOSE 8080
+
+# Note: Cloud Run handles health checks internally, so we don't need HEALTHCHECK here
+# Cloud Run will check if the container listens on PORT (8080) which our frontend does
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+
+# Start both services via startup script
+CMD ["./start-cloudrun.sh"]
+
