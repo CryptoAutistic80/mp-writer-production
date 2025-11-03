@@ -103,7 +103,8 @@ export const extractReasoningSummary = (value: unknown): string | null => {
       }
     }
 
-    for (const item of Object.values(record)) {
+    for (const [key, item] of Object.entries(record)) {
+      if (key === 'type' || key === 'event_type') continue;
       const summary = extractReasoningSummary(item);
       if (summary) return summary;
     }

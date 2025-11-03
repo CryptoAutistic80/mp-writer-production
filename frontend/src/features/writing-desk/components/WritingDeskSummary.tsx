@@ -353,23 +353,24 @@ export function WritingDeskSummary({
         }
 
         .research-notes {
-          background: #0f172a;
+          background: #ffffff;
           border-radius: 12px;
           padding: 16px;
-          color: #e2e8f0;
+          color: #1f2937;
           font-size: 0.92rem;
           line-height: 1.55;
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
 
         .research-notes :global(a) {
-          color: #38bdf8;
+          color: #2563eb;
           text-decoration: underline;
         }
 
         .research-notes__placeholder {
           margin: 0;
-          color: rgba(226, 232, 240, 0.7);
+          color: #6b7280;
         }
 
         .create-letter-button {

@@ -1135,20 +1135,42 @@ export class WritingDeskResearchService {
     if ((event as any)?.cursor) {
       payload.cursor = (event as any).cursor;
     }
-    if ((event as any)?.delta) {
-      payload.delta = (event as any).delta;
+    const candidate = event as unknown as Record<string, unknown>;
+    if (candidate.delta !== undefined) {
+      payload.delta = candidate.delta;
     }
-    if ((event as any)?.content) {
-      payload.content = (event as any).content;
+    if (candidate.content !== undefined) {
+      payload.content = candidate.content;
     }
-    if ((event as any)?.output) {
-      payload.output = (event as any).output;
+    if (candidate.output !== undefined) {
+      payload.output = candidate.output;
     }
-    if ((event as any)?.response) {
-      payload.responseId = (event as any).response?.id ?? null;
+    if (candidate.response) {
+      payload.responseId = (candidate.response as any)?.id ?? null;
     }
-    if ((event as any)?.error) {
-      payload.error = (event as any).error;
+    if (candidate.error !== undefined) {
+      payload.error = candidate.error;
+    }
+    if (candidate.reasoning !== undefined) {
+      payload.reasoning = candidate.reasoning;
+    }
+    if (candidate.reasoning_summary !== undefined) {
+      payload.reasoning_summary = candidate.reasoning_summary;
+    }
+    if (candidate.summary !== undefined) {
+      payload.summary = candidate.summary;
+    }
+    if (candidate.text !== undefined) {
+      payload.text = candidate.text;
+    }
+    if (candidate.message !== undefined) {
+      payload.message = candidate.message;
+    }
+    if (candidate.part !== undefined) {
+      payload.part = candidate.part;
+    }
+    if (candidate.snapshot !== undefined) {
+      payload.snapshot = candidate.snapshot;
     }
     return payload;
   }
@@ -1237,13 +1259,18 @@ export class WritingDeskResearchService {
     const message = typeof candidate.message === 'string' ? candidate.message.toLowerCase() : '';
 
     if (code) {
-      if (code.includes('timeout') || code.includes('connection_reset') || code.includes('aborted')) {
+      if (
+        code.includes('timeout') ||
+        code.includes('connection_reset') ||
+        code.includes('aborted') ||
+        code.includes('premature')
+      ) {
         return true;
       }
     }
 
     if (message) {
-      const keywords = ['timeout', 'timed out', 'socket hang up', 'network', 'connection reset'];
+      const keywords = ['timeout', 'timed out', 'socket hang up', 'network', 'connection reset', 'premature close'];
       return keywords.some((keyword) => message.includes(keyword));
     }
 
