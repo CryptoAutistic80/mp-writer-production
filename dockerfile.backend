@@ -23,8 +23,8 @@ ENV NODE_ENV=production \
     ALLOW_DEV_CREDIT_MUTATION=0
 WORKDIR /app
 
-RUN addgroup -g 1001 nodejs && \
-    adduser -S -G nodejs node
+# Ensure nodejs group exists (node:20-alpine already has 'node' user)
+RUN addgroup -g 1001 nodejs || true
 
 COPY --from=build /workspace/dist/backend-api ./
 RUN npm ci --omit=dev --legacy-peer-deps
