@@ -21,8 +21,11 @@ ENV NODE_ENV=production \
     NEXT_PUBLIC_ENABLE_DEMO_PURCHASE=0
 WORKDIR /app
 
-# Ensure nodejs group exists (node:20-alpine already has 'node' user)
-RUN addgroup -g 1001 nodejs || true
+# node:20-alpine already has 'node' user - just ensure nodejs group exists
+# Use idempotent approach: create group only if it doesn't exist
+RUN if ! getent group nodejs > /dev/null 2>&1; then \
+      addgroup -g 1001 nodejs; \
+    fi
 
 COPY --from=build /workspace/package.json ./package.json
 COPY --from=build /workspace/package-lock.json ./package-lock.json
