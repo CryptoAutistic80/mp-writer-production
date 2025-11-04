@@ -19,8 +19,6 @@ steps:
       - '-f'
       - 'dockerfile.frontend'
       - '-t'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:$SHORT_SHA'
-      - '-t'
       - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:latest'
       - '.'
 
@@ -39,7 +37,7 @@ steps:
       - 'deploy'
       - '${_SERVICE_NAME}'
       - '--image'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:$SHORT_SHA'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:latest'
       - '--region'
       - '${_REGION}'
       - '--platform'
@@ -62,7 +60,6 @@ steps:
 
 # Store built images
 images:
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:$SHORT_SHA'
   - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:latest'
 
 # Default values for substitution variables
