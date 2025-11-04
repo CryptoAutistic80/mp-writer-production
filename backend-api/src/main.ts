@@ -14,7 +14,12 @@ import { RequestContextInterceptor } from './common/interceptors/request-context
 import { CsrfGuard } from './common/csrf/csrf.guard';
 
 async function bootstrap() {
+  Logger.log('🚀 Starting MP Writer Backend API...');
+  Logger.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  Logger.log(`Node version: ${process.version}`);
+  
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  Logger.log('✓ NestJS application created');
   
   // Enable graceful shutdown hooks
   app.enableShutdownHooks();
@@ -207,4 +212,7 @@ async function bootstrap() {
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  Logger.error('Failed to start application', error?.stack || error);
+  process.exit(1);
+});
