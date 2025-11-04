@@ -59,7 +59,7 @@ steps:
       - '-f'
       - 'dockerfile.backend'
       - '-t'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-backend:latest'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-backend:latest'
       - '.'
 
   # 2️⃣ Push the image to Artifact Registry
@@ -67,7 +67,7 @@ steps:
     args:
       - 'push'
       - '--all-tags'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-backend'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-backend'
 
   # 3️⃣ Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
@@ -77,7 +77,7 @@ steps:
       - 'deploy'
       - '${_SERVICE_NAME}'
       - '--image'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-backend:latest'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-backend:latest'
       - '--region'
       - '${_REGION}'
       - '--platform'
@@ -101,7 +101,7 @@ steps:
 
 # Store built images
 images:
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-backend:latest'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-backend:latest'
 
 # Default values for substitution variables
 substitutions:

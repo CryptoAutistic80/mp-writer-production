@@ -1,5 +1,5 @@
 # Cloud Build configuration for MP Writer Frontend
-# 
+#
 # Required substitution variables (set in Cloud Build trigger):
 #   _NEXT_BACKEND_ORIGIN           - Backend API URL for server-side requests (e.g., https://your-backend.run.app)
 #   _SERVICE_NAME                  - Cloud Run service name (default: mp-writer-production-frontend)
@@ -19,7 +19,7 @@ steps:
       - '-f'
       - 'dockerfile.frontend'
       - '-t'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:latest'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-frontend:latest'
       - '.'
 
   # 2️⃣ Push the image to Artifact Registry
@@ -27,7 +27,7 @@ steps:
     args:
       - 'push'
       - '--all-tags'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-frontend'
 
   # 3️⃣ Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
@@ -37,7 +37,7 @@ steps:
       - 'deploy'
       - '${_SERVICE_NAME}'
       - '--image'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:latest'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-frontend:latest'
       - '--region'
       - '${_REGION}'
       - '--platform'
@@ -60,7 +60,7 @@ steps:
 
 # Store built images
 images:
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/mpwriter-repo/mpwriter-frontend:latest'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/mpwriter-frontend:latest'
 
 # Default values for substitution variables
 substitutions:
