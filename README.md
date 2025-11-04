@@ -57,6 +57,17 @@ npx nx build frontend
 docker compose build
 ```
 
+## Cloud Run deployment
+Build and deploy the backend and frontend as two Cloud Run services sourced from the `main` branch:
+
+1. **Backend service** – point your Cloud Build trigger (or manual `gcloud run deploy`) at `dockerfile.backend` in the repo root. Cloud Run injects the runtime port, so the container listens on `${PORT:-8080}` by default. Set production secrets via environment variables or Secret Manager, including:
+   - `MONGO_URI`, `REDIS_URL`, `JWT_SECRET`, `DATA_ENCRYPTION_KEY`, `OPENAI_API_KEY`, `APP_ORIGIN`
+   - Disable dev-only features by exporting `ALLOW_DEV_CREDIT_MUTATION=0` and omitting any sandbox keys you do not want available.
+2. **Frontend service** – build from `dockerfile.frontend`. The container serves the Next.js app on `${PORT:-8080}` and expects the backend URL in `NEXT_BACKEND_ORIGIN`. Ensure only public configuration uses the `NEXT_PUBLIC_*` prefix, and disable demo purchase flows via `NEXT_PUBLIC_ENABLE_DEMO_PURCHASE=0` in production.
+3. Configure Cloud Run to mount any remaining secrets (Stripe, Google OAuth, etc.) as environment variables. Both images run as the non-root `node` user and emit health probes from `/api/health` (backend) and standard Next.js liveness endpoints (frontend).
+
+Cloud Run revisions can be deployed manually or via GitHub-triggered Cloud Build pipelines—no extra wrapper scripts are required because each Dockerfile performs the Nx build internally.
+
 ## Environment Configuration Guide
 `.env.example` documents every variable. Highlights:
 
