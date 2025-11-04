@@ -1,12 +1,15 @@
 # Cloud Build configuration for MP Writer Frontend
 # 
 # Required substitution variables (set in Cloud Build trigger):
-#   _NEXT_PUBLIC_BACKEND_URL       - Backend API URL (e.g., https://your-backend.run.app)
+#   _NEXT_BACKEND_ORIGIN           - Backend API URL for server-side requests (e.g., https://your-backend.run.app)
 #   _SERVICE_NAME                  - Cloud Run service name (default: mp-writer-production-frontend)
 #   _REGION                        - Cloud Run region (default: europe-west1)
 #
 # Optional substitution variables:
+#   _NEXT_PUBLIC_API_URL           - Client-side API path (default: /api)
 #   _NEXT_PUBLIC_ENABLE_DEMO_PURCHASE - Set to "1" to enable demo purchase mode (default: 0)
+#   _NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED - Set to "1" to enable Stripe checkout (default: 0)
+#   _NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY - Stripe publishable key (required if checkout enabled)
 
 steps:
   # 1️⃣ Build the frontend container image
@@ -55,7 +58,7 @@ steps:
       - '--timeout'
       - '60'
       - '--set-env-vars'
-      - 'NODE_ENV=production,PORT=8080,NEXT_TELEMETRY_DISABLED=1,NEXT_PUBLIC_BACKEND_URL=${_NEXT_PUBLIC_BACKEND_URL},NEXT_PUBLIC_ENABLE_DEMO_PURCHASE=${_NEXT_PUBLIC_ENABLE_DEMO_PURCHASE}'
+      - 'NODE_ENV=production,PORT=8080,NEXT_TELEMETRY_DISABLED=1,NEXT_BACKEND_ORIGIN=${_NEXT_BACKEND_ORIGIN},NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL},NEXT_PUBLIC_ENABLE_DEMO_PURCHASE=${_NEXT_PUBLIC_ENABLE_DEMO_PURCHASE},NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED=${_NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED},NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${_NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}'
 
 # Store built images
 images:
@@ -66,7 +69,10 @@ images:
 substitutions:
   _SERVICE_NAME: 'mp-writer-production-frontend'
   _REGION: 'europe-west1'
+  _NEXT_PUBLIC_API_URL: '/api'
   _NEXT_PUBLIC_ENABLE_DEMO_PURCHASE: '0'
+  _NEXT_PUBLIC_STRIPE_CHECKOUT_ENABLED: '0'
+  _NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ''
 
 options:
   logging: CLOUD_LOGGING_ONLY
