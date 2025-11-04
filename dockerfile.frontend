@@ -33,6 +33,6 @@ COPY --from=build /workspace/package.json ./package.json
 COPY --from=build /workspace/frontend ./frontend
 
 USER node
-WORKDIR /app/frontend
 EXPOSE 8080
-CMD ["sh", "-c", "npx next start --hostname 0.0.0.0 --port ${PORT:-8080}"]
+# Run from /app where node_modules is located, point to frontend subdirectory
+CMD ["sh", "-c", "cd frontend && npx next start --hostname 0.0.0.0 --port ${PORT:-8080}"]
