@@ -19,7 +19,6 @@ RUN npx nx run backend-api:prune
 
 FROM node:20-alpine AS runner
 ENV NODE_ENV=production \
-    PORT=8080 \
     ALLOW_DEV_CREDIT_MUTATION=0
 WORKDIR /app
 
