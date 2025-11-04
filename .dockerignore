@@ -1,0 +1,94 @@
+# Dependencies - installed fresh in Docker
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Build outputs - built inside Docker
+dist
+.next
+out
+tmp
+out-tsc
+*.tsbuildinfo
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environment files - should be set via Cloud Run env vars, not baked into image
+.env
+.env.local
+.env.*.local
+.env.*
+!*.env.example
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*~
+.project
+.classpath
+.settings
+*.sublime-workspace
+
+# Testing
+coverage
+.nyc_output
+test-results
+playwright-report
+playwright/.cache
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+**/e2e
+
+# CI/CD (not needed in image)
+.github
+.gitlab-ci.yml
+.circleci
+.travis.yml
+
+# Documentation (not needed in image)
+README.md
+docs
+*.md
+!package.json
+
+# Cache directories
+.nx/cache
+.nx/workspace-data
+.turbo
+.vercel
+.eslintcache
+.sass-cache
+connect.lock
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Docker files themselves (avoid recursion)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Backup files
+backup.env.txt
+*.bak
+*.backup
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Misc
+typings
+libpeerconnection.log
+testem.log
+
