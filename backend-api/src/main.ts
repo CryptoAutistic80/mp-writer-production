@@ -175,9 +175,10 @@ async function bootstrap() {
   // Log CORS configuration for visibility
   Logger.log(`🔒 CORS enabled for ${origins.length === 1 ? 'origin' : 'origins'}: ${origins.join(', ')}`);
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  const host = process.env.HOST || '0.0.0.0';
+  await app.listen(port, host);
   Logger.log(
-    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`
+    `🚀 Application is running on: http://${host}:${port}/${globalPrefix}`
   );
 
   // Setup graceful shutdown

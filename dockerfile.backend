@@ -32,6 +32,9 @@ RUN if ! getent group nodejs > /dev/null 2>&1; then \
 COPY --from=build /workspace/dist/backend-api ./
 RUN npm ci --omit=dev --legacy-peer-deps
 
+# Ensure node user can read/execute all files
+RUN chown -R node:nodejs /app
+
 USER node
 EXPOSE 8080
 CMD ["node", "main.js"]
