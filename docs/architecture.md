@@ -59,6 +59,7 @@ Client components rely on TanStack Query for cache management, and React Markdow
 ## Deployment Notes
 - `Dockerfile.prod` builds separate frontend/backend images; `docker-compose.yml` assembles them alongside Redis. Critical secrets in the compose file use `${VAR:?error}` syntax to fail fast when missing.
 - `docker-compose.dev.yml` spawns hot-reloading containers with bind mounts and bundled Mongo/Redis for local development.
+- **Cloud Run**: dedicated `dockerfile.backend` and `dockerfile.frontend` live in the repo root. Build each image directly from `main` and deploy them as separate Cloud Run services. Both images default to port `8080`, disable dev-only behaviours (`ALLOW_DEV_CREDIT_MUTATION=0`, `NEXT_PUBLIC_ENABLE_DEMO_PURCHASE=0`), and expect production secrets (`JWT_SECRET`, `DATA_ENCRYPTION_KEY`, etc.) to be provided via Cloud Run environment variables or Secret Manager.
 - Health checks (`/api/health`) use Nest Terminus’ Mongo indicator so orchestrators can drop unhealthy pods/containers.
 
 ## Observability & Audit

@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.6
+
+FROM node:20-alpine AS base
+ENV CI=1
+WORKDIR /workspace
+RUN apk add --no-cache python3 make g++
+
+FROM base AS deps
+COPY package.json package-lock.json nx.json tsconfig.base.json ./
+COPY frontend/project.json frontend/project.json
+RUN npm ci --legacy-peer-deps
+
+FROM deps AS build
+COPY . .
+RUN npx nx run frontend:build --configuration=production
+
+FROM node:20-alpine AS runner
+ENV NODE_ENV=production \
+    PORT=8080 \
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_ENABLE_DEMO_PURCHASE=0
+WORKDIR /app
+
+RUN addgroup -g 1001 nodejs && \
+    adduser -S -G nodejs node
+
+COPY --from=build /workspace/package.json ./package.json
+COPY --from=build /workspace/package-lock.json ./package-lock.json
+RUN npm ci --omit=dev --legacy-peer-deps
+
+COPY --from=build /workspace/frontend ./frontend
+
+USER node
+WORKDIR /app/frontend
+EXPOSE 8080
+CMD ["sh", "-c", "npx next start --hostname 0.0.0.0 --port ${PORT:-8080}"]
