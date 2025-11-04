@@ -26,9 +26,9 @@ RUN if ! getent group nodejs > /dev/null 2>&1; then \
       addgroup -g 1001 nodejs; \
     fi
 
+# Copy node_modules from build stage (includes @nx/next needed for next.config.js)
+COPY --from=build /workspace/node_modules ./node_modules
 COPY --from=build /workspace/package.json ./package.json
-COPY --from=build /workspace/package-lock.json ./package-lock.json
-RUN npm ci --omit=dev --legacy-peer-deps
 
 COPY --from=build /workspace/frontend ./frontend
 
