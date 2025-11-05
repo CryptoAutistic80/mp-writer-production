@@ -85,22 +85,24 @@ const nextConfig = {
 		];
 	},
 	async rewrites() {
+		const hasExplicitOrigin =
+			typeof process.env.NEXT_BACKEND_ORIGIN === 'string' &&
+			process.env.NEXT_BACKEND_ORIGIN.trim().length > 0;
 		const isProduction = process.env.NODE_ENV === 'production';
-		const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build';
-		const fallbackDevOrigin = 'http://localhost:4000';
-		const fallbackBuildOrigin = 'http://backend-api:4000';
+		const isCloudRun = Boolean(process.env.K_SERVICE);
 
-		const origin =
-			process.env.NEXT_BACKEND_ORIGIN ||
-			(isProduction
-				? isBuildPhase
-					? fallbackBuildOrigin
-					: null
-				: fallbackDevOrigin);
+		let origin: string | null = null;
+		if (hasExplicitOrigin) {
+			origin = process.env.NEXT_BACKEND_ORIGIN!.trim();
+		} else if (isProduction) {
+			origin = isCloudRun ? null : 'http://backend-api:4000';
+		} else {
+			origin = 'http://localhost:4000';
+		}
 
 		if (!origin) {
 			throw new Error(
-				'NEXT_BACKEND_ORIGIN must be defined in production runtime to proxy /api requests to the backend.',
+				'NEXT_BACKEND_ORIGIN must be defined when running in Cloud Run to proxy /api requests to the backend.',
 			);
 		}
 
