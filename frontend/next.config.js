@@ -85,7 +85,16 @@ const nextConfig = {
 		];
 	},
 	async rewrites() {
-		const origin = process.env.NEXT_BACKEND_ORIGIN || 'http://localhost:4000';
+		const origin =
+			process.env.NEXT_BACKEND_ORIGIN ||
+			(process.env.NODE_ENV === 'production' ? null : 'http://localhost:4000');
+
+		if (!origin) {
+			throw new Error(
+				'NEXT_BACKEND_ORIGIN must be defined in production to proxy /api requests to the backend.',
+			);
+		}
+
 		return [
 			{
 				source: '/api/:path*',
