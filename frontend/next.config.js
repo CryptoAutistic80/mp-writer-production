@@ -91,7 +91,7 @@ const nextConfig = {
 		const isProduction = process.env.NODE_ENV === 'production';
 		const isCloudRun = Boolean(process.env.K_SERVICE);
 
-		let origin: string | null = null;
+		let origin = null;
 		if (hasExplicitOrigin) {
 			origin = process.env.NEXT_BACKEND_ORIGIN.trim();
 		} else if (isProduction) {
