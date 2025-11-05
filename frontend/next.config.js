@@ -93,7 +93,7 @@ const nextConfig = {
 
 		let origin: string | null = null;
 		if (hasExplicitOrigin) {
-			origin = process.env.NEXT_BACKEND_ORIGIN!.trim();
+			origin = process.env.NEXT_BACKEND_ORIGIN.trim();
 		} else if (isProduction) {
 			origin = isCloudRun ? null : 'http://backend-api:4000';
 		} else {
