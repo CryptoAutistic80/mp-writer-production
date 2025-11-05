@@ -85,13 +85,22 @@ const nextConfig = {
 		];
 	},
 	async rewrites() {
+		const isProduction = process.env.NODE_ENV === 'production';
+		const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build';
+		const fallbackDevOrigin = 'http://localhost:4000';
+		const fallbackBuildOrigin = 'http://backend-api:4000';
+
 		const origin =
 			process.env.NEXT_BACKEND_ORIGIN ||
-			(process.env.NODE_ENV === 'production' ? null : 'http://localhost:4000');
+			(isProduction
+				? isBuildPhase
+					? fallbackBuildOrigin
+					: null
+				: fallbackDevOrigin);
 
 		if (!origin) {
 			throw new Error(
-				'NEXT_BACKEND_ORIGIN must be defined in production to proxy /api requests to the backend.',
+				'NEXT_BACKEND_ORIGIN must be defined in production runtime to proxy /api requests to the backend.',
 			);
 		}
 
