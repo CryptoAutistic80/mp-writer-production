@@ -5,6 +5,7 @@ import AddressForm from '../../components/AddressForm';
 import DashboardWelcome from '../../components/DashboardWelcome';
 import StartWritingButton from '../../components/StartWritingButton';
 import { useEffect, useState } from 'react';
+import { fetchMeWithRefresh } from '../../lib/auth';
 
 export default function DashboardPage() {
   // AnimatedBackground is rendered globally in layout.tsx.
@@ -16,9 +17,7 @@ export default function DashboardPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/auth/me', { cache: 'no-store' });
-        if (!res.ok) return;
-        const user = await res.json();
+        const user = await fetchMeWithRefresh();
         if (!cancelled && user) {
           const name = (user.name || '').split(' ')[0] || user.email || 'User';
           setFirstName(name);

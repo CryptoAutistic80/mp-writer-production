@@ -3,40 +3,38 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Avatar from './Avatar';
-
-type User = {
-  id: string;
-  email?: string | null;
-  name?: string | null;
-  image?: string | null;
-  credits?: number | null;
-};
+import { fetchMeWithRefresh, type MeUser } from '../lib/auth';
 
 export default function SiteHeader() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<MeUser>(null);
   const [isLoading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/auth/me', {
-          cache: 'no-store',
-          credentials: 'include',
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as User;
-        if (!cancelled) {
-          setUser(data);
-        }
+        const data = await fetchMeWithRefresh();
+        if (!cancelled) setUser(data);
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    const reload = async () => {
+      const data = await fetchMeWithRefresh();
+      if (!cancelled) setUser(data);
+    };
+    const onFocus = () => { void reload(); };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void reload();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 
