@@ -60,10 +60,15 @@ async function proxy(request: NextRequest, context: any) {
     proxyHeaders.set(key, value);
   });
 
-  const rawSetCookies =
-    (response.headers as unknown as { raw?: () => Record<string, string[]> }).raw?.()?.[
-      'set-cookie'
-    ] ?? [];
+  const setCookieValues: string[] = [];
+  const responseHeadersAny = response.headers as any;
+  if (typeof responseHeadersAny.getSetCookie === 'function') {
+    setCookieValues.push(...responseHeadersAny.getSetCookie());
+  }
+  const singleHeader = response.headers.get('set-cookie');
+  if (singleHeader) {
+    setCookieValues.push(singleHeader);
+  }
 
   const proxyResponse = new NextResponse(response.body, {
     status: response.status,
@@ -71,7 +76,7 @@ async function proxy(request: NextRequest, context: any) {
     headers: proxyHeaders,
   });
 
-  rawSetCookies.forEach((cookie) => {
+  setCookieValues.forEach((cookie) => {
     proxyResponse.headers.append('set-cookie', cookie);
   });
 
