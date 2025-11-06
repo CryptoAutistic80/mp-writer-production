@@ -1,4 +1,4 @@
- 'use client';
+'use client';
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
@@ -20,7 +20,10 @@ export default function SiteHeader() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        const res = await fetch('/api/auth/me', {
+          cache: 'no-store',
+          credentials: 'include',
+        });
         if (!res.ok) return;
         const data = (await res.json()) as User;
         if (!cancelled) {
