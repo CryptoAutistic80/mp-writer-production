@@ -7,6 +7,7 @@ type User = {
   email?: string | null;
   name?: string | null;
   image?: string | null;
+  credits?: number | null;
 };
 
 async function getCurrentUser(): Promise<User | null> {
@@ -14,9 +15,10 @@ async function getCurrentUser(): Promise<User | null> {
   const store = await cookies();
   const cookie = store.getAll().map(c => `${c.name}=${c.value}`).join('; ');
   try {
-    const base = (process.env.NEXT_BACKEND_ORIGIN as string | undefined) || 'http://localhost:4000';
-    const url = `${base.replace(/\/$/, '')}/api/auth/me`;
-    const res = await fetch(url, {
+    const apiBase =
+      (process.env.NEXT_PUBLIC_API_URL as string | undefined)?.trim() || '/api';
+    const baseWithSlash = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
+    const res = await fetch(`${baseWithSlash}/auth/me`, {
       headers: { cookie },
       cache: 'no-store',
     });
