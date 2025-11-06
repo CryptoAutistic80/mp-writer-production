@@ -1,5 +1,7 @@
+ 'use client';
+
 import Link from 'next/link';
-import { cookies } from 'next/headers';
+import { useEffect, useState } from 'react';
 import Avatar from './Avatar';
 
 type User = {
@@ -10,27 +12,31 @@ type User = {
   credits?: number | null;
 };
 
-async function getCurrentUser(): Promise<User | null> {
-  // Forward incoming cookies explicitly to the backend via rewrite
-  const store = await cookies();
-  const cookie = store.getAll().map(c => `${c.name}=${c.value}`).join('; ');
-  try {
-    const apiBase =
-      (process.env.NEXT_PUBLIC_API_URL as string | undefined)?.trim() || '/api';
-    const baseWithSlash = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
-    const res = await fetch(`${baseWithSlash}/auth/me`, {
-      headers: { cookie },
-      cache: 'no-store',
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as User;
-  } catch {
-    return null;
-  }
-}
+export default function SiteHeader() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setLoading] = useState(true);
 
-export default async function SiteHeader() {
-  const user = await getCurrentUser();
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = (await res.json()) as User;
+        if (!cancelled) {
+          setUser(data);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const isAuthed = !!user?.id;
   const firstName = (user?.name || '')?.split(' ')[0] || user?.email || 'Account';
 
