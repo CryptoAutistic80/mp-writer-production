@@ -230,12 +230,12 @@ pre {
   margin-top: 16px;
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
-@media (max-width: 400px) {
+@media (min-width: 640px) {
   .letter-viewer-actions {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }
 .list-item-link svg:last-child {
@@ -744,6 +744,54 @@ body {
   }
 }
 
+@media (max-width: 640px) {
+  .site-header .container {
+    height: 52px;
+    padding: 0 12px;
+  }
+  .brand img {
+    height: 30px;
+  }
+  .nav {
+    gap: 12px;
+    height: 52px;
+  }
+  .nav a,
+  .google-btn,
+  .profile-summary {
+    font-size: 0.9rem;
+  }
+  .google-btn {
+    height: 34px;
+    padding: 0 10px 0 8px;
+    gap: 8px;
+  }
+  .google-btn .google-icon {
+    width: 16px;
+    height: 16px;
+  }
+  .profile-summary {
+    padding: 0 8px 0 4px;
+    height: 34px;
+  }
+  .profile-avatar {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+@media (max-width: 440px) {
+  .nav {
+    gap: 8px;
+  }
+  .nav a {
+    font-size: 0.85rem;
+  }
+  .profile-summary {
+    padding: 0 6px 0 4px;
+  }
+}
+
 /* Utilities for responsive visibility */
 .mobile-only {
   display: none;
@@ -1091,6 +1139,10 @@ body {
   justify-content: space-between;
   align-items: center;
 }
+.site-footer .container {
+  gap: 16px;
+  flex-wrap: wrap;
+}
 .site-footer a {
   color: var(--muted);
   text-decoration: none;
@@ -1101,6 +1153,27 @@ body {
 .site-footer .footer-nav {
   display: inline-flex;
   gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .site-footer {
+    padding: 16px 0;
+    font-size: 0.9rem;
+  }
+  .site-footer .container {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .site-footer .footer-nav {
+    display: inline-flex;
+    gap: 12px;
+  }
+  .site-footer .footer-nav a {
+    font-size: 0.9rem;
+  }
 }
 
 .link-button {
@@ -1228,6 +1301,10 @@ body {
   display: flex;
   align-items: center;
   margin-top: 2px;
+}
+
+.actions.letter-viewer-actions {
+  display: grid;
 }
 .form-grid .actions {
   gap: 10px;
