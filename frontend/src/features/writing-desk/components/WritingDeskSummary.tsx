@@ -173,7 +173,7 @@ export function WritingDeskSummary({
             )}
 
             {researchResponseId && (
-              <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>
+              <p className="reference-id" style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>
                 Research reference ID: {researchResponseId}
               </p>
             )}
@@ -192,7 +192,9 @@ export function WritingDeskSummary({
               {showSummaryDetails ? 'Hide intake details' : 'Show intake details'}
             </button>
             {responseId && !showSummaryDetails && (
-              <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</span>
+              <span className="reference-id" style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                Reference ID: {responseId}
+              </span>
             )}
           </div>
 
