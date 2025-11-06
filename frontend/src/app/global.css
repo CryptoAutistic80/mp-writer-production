@@ -171,6 +171,11 @@ pre {
   transition-duration: 150ms;
   width: 100%;
 }
+
+.reference-id {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .list-item-link svg:first-child {
   margin-right: 1rem;
   height: 1.5rem;

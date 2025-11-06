@@ -350,7 +350,10 @@ export default function MyLettersClient() {
                     Tone: {selectedToneLabel} · Saved on {selectedDisplayDate}
                   </p>
                   {selectedLetter.responseId && (
-                    <p style={{ margin: '4px 0 0', color: '#9ca3af', fontSize: '0.9rem' }}>
+                    <p
+                      className="reference-id"
+                      style={{ margin: '4px 0 0', color: '#9ca3af', fontSize: '0.9rem' }}
+                    >
                       Reference ID: {selectedLetter.responseId}
                     </p>
                   )}
