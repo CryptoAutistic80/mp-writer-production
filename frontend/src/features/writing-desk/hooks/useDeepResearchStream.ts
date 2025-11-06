@@ -138,6 +138,8 @@ export function useDeepResearchStream({
         setActivities([]);
       }
 
+      let handshakeRejected = false;
+
       try {
         const payload: Record<string, unknown> = {};
         if (jobId) payload.jobId = jobId;
@@ -150,11 +152,16 @@ export function useDeepResearchStream({
             payload,
           );
         } catch (err) {
-          const message =
+          handshakeRejected = true;
+          const message = resume
+            ? 'We could not resume deep research. Please try again.'
+            : 'We could not start deep research. Please try again.';
+          const error =
             err instanceof Error && typeof err.message === 'string' && err.message.trim().length > 0
-              ? err.message
-              : 'We could not start deep research. Please try again.';
-          throw new Error(message);
+              ? err
+              : new Error(message);
+          error.message = message;
+          throw error;
         }
 
         const streamPath =
@@ -257,12 +264,10 @@ export function useDeepResearchStream({
 
         source.onerror = () => {
           setIsBackgroundPolling(false);
+          appendActivity('Connection lost during deep research. Attempting to resume…');
           closeStream();
-          setStatus('error');
-          setError('The research stream was interrupted. Please try again.');
-          appendActivity('Connection lost during deep research.');
-          setPendingAutoResume(false);
-          void reportRefundedFailure('deep research connection dropped');
+          lastResumeAttemptRef.current = Date.now();
+          setPendingAutoResume(true);
         };
 
         lastEventRef.current = Date.now();
@@ -273,9 +278,17 @@ export function useDeepResearchStream({
         const message =
           err instanceof Error && err.message ? err.message : 'We could not start deep research. Please try again.';
         setError(message);
-        appendActivity('Unable to start deep research.');
+        const activityText = resume
+          ? handshakeRejected
+            ? 'Unable to resume deep research.'
+            : 'Deep research encountered an error.'
+          : 'Unable to start deep research.';
+        appendActivity(activityText);
         setPendingAutoResume(false);
-        void reportRefundedFailure('deep research could not start');
+        if (handshakeRejected) {
+          const context = resume ? 'deep research could not resume' : 'deep research could not start';
+          void reportRefundedFailure(context);
+        }
       }
     },
     [
