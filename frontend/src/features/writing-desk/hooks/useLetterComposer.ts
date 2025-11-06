@@ -287,18 +287,15 @@ export function useLetterComposer({
 
       source.onerror = () => {
         closeStream();
-        setStatus('error');
-        setPhase('error');
-        setError('The letter stream disconnected. Please try again.');
-        setStatusMessage(null);
+        lastEventRef.current = 0;
+        lastResumeAttemptRef.current = 0;
+        setError('Connection interrupted. Attempting to resume…');
+        setStatusMessage('Connection interrupted. Attempting to resume…');
+        appendEvent('Connection lost, retrying…');
         setIsSaving(false);
         setSaveError(null);
         clearToast();
-        void reportRefundedFailure('letter composition connection dropped').then((latest) => {
-          if (typeof latest === 'number') {
-            setRemainingCredits(latest);
-          }
-        });
+        setPendingAutoResume(true);
       };
 
       lastEventRef.current = Date.now();

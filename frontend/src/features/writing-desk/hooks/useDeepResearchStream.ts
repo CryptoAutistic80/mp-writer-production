@@ -258,11 +258,11 @@ export function useDeepResearchStream({
         source.onerror = () => {
           setIsBackgroundPolling(false);
           closeStream();
-          setStatus('error');
-          setError('The research stream was interrupted. Please try again.');
-          appendActivity('Connection lost during deep research.');
-          setPendingAutoResume(false);
-          void reportRefundedFailure('deep research connection dropped');
+          lastEventRef.current = 0;
+          lastResumeAttemptRef.current = 0;
+          setError('Connection interrupted. Attempting to resume…');
+          appendActivity('Connection lost, retrying…');
+          setPendingAutoResume(true);
         };
 
         lastEventRef.current = Date.now();
