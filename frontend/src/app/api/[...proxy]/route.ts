@@ -20,9 +20,9 @@ function getBackendOrigin() {
   return 'http://localhost:4000';
 }
 
-async function proxy(request: NextRequest, context: { params: { proxy?: string[] } }) {
+async function proxy(request: NextRequest, context: any) {
   const backendOrigin = getBackendOrigin();
-  const path = (context.params.proxy ?? []).join('/');
+  const path = (context?.params?.proxy ?? []).join('/');
   const target = new URL(`/api/${path}`, backendOrigin);
   target.search = request.nextUrl.search;
 
