@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-type RouteContext = {
-  params: { proxy?: string[] };
-};
-
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -24,7 +20,7 @@ function getBackendOrigin() {
   return 'http://localhost:4000';
 }
 
-async function proxy(request: NextRequest, context: RouteContext) {
+async function proxy(request: NextRequest, context: { params: { proxy?: string[] } }) {
   const backendOrigin = getBackendOrigin();
   const path = (context.params.proxy ?? []).join('/');
   const target = new URL(`/api/${path}`, backendOrigin);
