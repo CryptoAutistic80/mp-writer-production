@@ -84,35 +84,6 @@ const nextConfig = {
 			},
 		];
 	},
-	async rewrites() {
-		const hasExplicitOrigin =
-			typeof process.env.NEXT_BACKEND_ORIGIN === 'string' &&
-			process.env.NEXT_BACKEND_ORIGIN.trim().length > 0;
-		const isProduction = process.env.NODE_ENV === 'production';
-		const isCloudRun = Boolean(process.env.K_SERVICE);
-
-		let origin = null;
-		if (hasExplicitOrigin) {
-			origin = (process.env.NEXT_BACKEND_ORIGIN || '').trim() || null;
-		} else if (isProduction) {
-			origin = isCloudRun ? null : 'http://backend-api:4000';
-		} else {
-			origin = 'http://localhost:4000';
-		}
-
-		if (!origin) {
-			throw new Error(
-				'NEXT_BACKEND_ORIGIN must be defined when running in Cloud Run to proxy /api requests to the backend.',
-			);
-		}
-
-		return [
-			{
-				source: '/api/:path*',
-				destination: `${origin}/api/:path*`,
-			},
-		];
-	},
 };
 
 const plugins = [
