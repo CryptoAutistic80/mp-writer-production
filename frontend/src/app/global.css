@@ -225,6 +225,19 @@ pre {
   word-break: break-word;
   overflow-wrap: break-word;
 }
+
+.letter-viewer-actions {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+@media (max-width: 400px) {
+  .letter-viewer-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .list-item-link svg:last-child {
   height: 1rem;
   transition-property: all;

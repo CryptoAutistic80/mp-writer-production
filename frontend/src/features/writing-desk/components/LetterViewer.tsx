@@ -235,15 +235,7 @@ export function LetterViewer({
   return (
     <div className={className}>
       <div className="letter-preview" dangerouslySetInnerHTML={{ __html: letterHtmlForExport }} />
-      <div
-        className="actions"
-        style={{
-          marginTop: 16,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-          gap: 12,
-        }}
-      >
+      <div className="actions letter-viewer-actions">
         {leadingActions}
         <button type="button" className="btn-primary" onClick={handleCopy}>
           {copyState === 'copied'
