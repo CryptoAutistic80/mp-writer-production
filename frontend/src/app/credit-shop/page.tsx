@@ -54,6 +54,7 @@ export default function CreditShopPage() {
   });
   const [packages, setPackages] = useState<CreditPackage[]>(FALLBACK_PACKAGES);
   const [packagesLoading, setPackagesLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Fetch available packages from backend
   useEffect(() => {
@@ -92,6 +93,29 @@ export default function CreditShopPage() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(max-width: 600px)');
+    const handleChange = (event: MediaQueryListEvent | MediaQueryList) => {
+      setIsMobile(event.matches);
+    };
+
+    handleChange(mediaQuery);
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleChange);
+      return () => {
+        mediaQuery.removeEventListener('change', handleChange);
+      };
+    }
+
+    mediaQuery.addListener(handleChange);
+    return () => {
+      mediaQuery.removeListener(handleChange);
     };
   }, []);
 
@@ -166,7 +190,10 @@ export default function CreditShopPage() {
                     display: 'grid',
                     gap: 16,
                     width: '100%',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    justifyItems: 'center',
+                    gridTemplateColumns: isMobile
+                      ? '1fr'
+                      : 'repeat(auto-fit, minmax(220px, 1fr))',
                   }}
                 >
                   {packages.map((pkg) => {
@@ -181,7 +208,16 @@ export default function CreditShopPage() {
                       <div
                         key={pkg.credits}
                         className="card"
-                        style={{ border: '1px solid #e2e8f0', background: '#fff', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}
+                        style={{
+                          border: '1px solid #e2e8f0',
+                          background: '#fff',
+                          padding: isMobile ? 12 : 16,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 12,
+                          width: '100%',
+                          maxWidth: 320,
+                        }}
                       >
                         <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{displayName}</h2>
                         <p style={{ margin: 0, color: '#475569' }}>{subtitle}</p>
@@ -252,3 +288,4 @@ function prevCreditsAfterPurchase(current: number | null, delta: number) {
 function formatCredits(value: number) {
   return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
+
