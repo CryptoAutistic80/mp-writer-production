@@ -1,9 +1,13 @@
 import Link from 'next/link';
 import WritingDeskClient from './WritingDeskClient';
+import { createMetadata } from '../../lib/seo';
 
-export const metadata = {
-  title: 'Writing Desk — MPWriter',
-};
+export const metadata = createMetadata({
+  title: 'Writing Desk workspace',
+  description: 'Draft, edit, and export AI-researched letters with citations once you are signed in.',
+  path: '/writingDesk',
+  noindex: true,
+});
 
 export default function WritingDeskPage() {
   return (

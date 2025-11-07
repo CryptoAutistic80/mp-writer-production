@@ -1,4 +1,11 @@
 import ClosePageLink from '../../components/ClosePageLink';
+import { createMetadata } from '../../lib/seo';
+
+export const metadata = createMetadata({
+  title: 'Privacy Policy',
+  description: 'Learn how MPWriter collects, stores, and protects your account data, drafts, and payment history.',
+  path: '/privacy',
+});
 
 export default function PrivacyPolicyPage() {
   return (

@@ -1,3 +1,11 @@
+import { createMetadata } from '../../lib/seo';
+
+export const metadata = createMetadata({
+  title: 'How MPWriter works',
+  description: 'See the four-step flow MPWriter uses to research issues, capture your story, and draft respectful letters to your MP.',
+  path: '/how-it-works',
+});
+
 export default function HowItWorksPage() {
   // AnimatedBackground is rendered globally in layout.tsx.
   return (

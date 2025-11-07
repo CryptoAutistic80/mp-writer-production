@@ -1,4 +1,11 @@
 import ClosePageLink from '../../components/ClosePageLink';
+import { createMetadata } from '../../lib/seo';
+
+export const metadata = createMetadata({
+  title: 'Terms of Service',
+  description: 'Review the service terms, acceptable use, and billing policies that apply when you use MPWriter.',
+  path: '/terms',
+});
 
 export default function TermsPage() {
   return (

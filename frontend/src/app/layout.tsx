@@ -1,15 +1,47 @@
+import type { Metadata } from 'next';
 import './global.css';
 import SiteHeader from '../components/SiteHeader';
 import SiteFooter from '../components/SiteFooter';
 import AnimatedBackground from '../components/AnimatedBackground';
 import CookieConsent from '../components/CookieConsent';
 import Providers from './providers';
+import { canonicalUrl, getOgImages, seoConfig } from '../lib/seo';
 
-export const metadata = {
-  title: 'MPWriter — Your voice, clearly heard.',
-  description:
-    'Craft researched, respectful letters to your MP in minutes with MPWriter.',
+export const metadata: Metadata = {
+  metadataBase: new URL(seoConfig.url),
+  title: {
+    default: `${seoConfig.name} — ${seoConfig.tagline}`,
+    template: `%s — ${seoConfig.name}`,
+  },
+  description: seoConfig.description,
   manifest: '/site.webmanifest',
+  applicationName: seoConfig.shortName,
+  category: 'productivity',
+  alternates: {
+    canonical: canonicalUrl('/'),
+  },
+  openGraph: {
+    type: 'website',
+    url: canonicalUrl('/'),
+    siteName: seoConfig.name,
+    locale: seoConfig.locale,
+    title: `${seoConfig.name} — ${seoConfig.tagline}`,
+    description: seoConfig.description,
+    images: getOgImages(),
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `${seoConfig.name} — ${seoConfig.tagline}`,
+    description: seoConfig.description,
+    images: [seoConfig.twitterCard],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    maxSnippet: -1,
+    maxImagePreview: 'large',
+    maxVideoPreview: -1,
+  },
   icons: {
     icon: [
       { url: '/favicon.ico', type: 'image/x-icon' },
@@ -17,14 +49,32 @@ export const metadata = {
       { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
       { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
-    apple: [
-      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
-    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
   },
 };
 
 // Ensure this layout (and header) renders dynamically per request
 export const dynamic = 'force-dynamic';
+
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: seoConfig.name,
+  applicationCategory: 'ProductivityApplication',
+  operatingSystem: 'Web',
+  url: canonicalUrl('/'),
+  description: seoConfig.description,
+  offers: {
+    '@type': 'Offer',
+    price: '6.99',
+    priceCurrency: 'GBP',
+    availability: 'https://schema.org/InStock',
+  },
+  publisher: {
+    '@type': 'Organization',
+    name: 'Singularity Shift Ltd',
+  },
+};
 
 export default function RootLayout({
   children,
@@ -35,6 +85,11 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <Providers>
+          <script
+            type="application/ld+json"
+            suppressHydrationWarning
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+          />
           <AnimatedBackground />
           <div className="page-wrap">
             <SiteHeader />
