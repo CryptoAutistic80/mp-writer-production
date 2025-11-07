@@ -1,4 +1,11 @@
 import ClosePageLink from '../../components/ClosePageLink';
+import { createMetadata } from '../../lib/seo';
+
+export const metadata = createMetadata({
+  title: 'Contact MPWriter support',
+  description: 'Reach the MPWriter team for billing help, accessibility requests, or privacy questions.',
+  path: '/contact',
+});
 
 export default function ContactPage() {
   return (
