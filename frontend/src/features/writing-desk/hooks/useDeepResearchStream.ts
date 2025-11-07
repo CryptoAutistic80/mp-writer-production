@@ -73,7 +73,7 @@ export function useDeepResearchStream({
 }: UseDeepResearchStreamOptions): UseDeepResearchStreamResult {
   const [content, setContent] = useState<string>('');
   const [responseId, setResponseId] = useState<string | null>(null);
-  const [status, setStatus] = useState<WritingDeskResearchStatus>('idle');
+  const [status, setStatusState] = useState<WritingDeskResearchStatus>('idle');
   const [activities, setActivities] = useState<Array<{ id: string; text: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [isBackgroundPolling, setIsBackgroundPolling] = useState(false);
@@ -82,6 +82,15 @@ export function useDeepResearchStream({
   const sourceRef = useRef<EventSource | null>(null);
   const lastEventRef = useRef<number>(0);
   const lastResumeAttemptRef = useRef<number>(0);
+  const statusRef = useRef<WritingDeskResearchStatus>('idle');
+  const hasClearedActivitiesRef = useRef(false);
+  const startInFlightRef = useRef(false);
+  const resumeInFlightRef = useRef(false);
+
+  const setStatus = useCallback((nextStatus: WritingDeskResearchStatus) => {
+    statusRef.current = nextStatus;
+    setStatusState(nextStatus);
+  }, []);
 
   const updateCreditsFromStream = useCallback(
     (value: number | null | undefined) => {
@@ -112,6 +121,9 @@ export function useDeepResearchStream({
     setIsBackgroundPolling(false);
     lastEventRef.current = 0;
     lastResumeAttemptRef.current = 0;
+    hasClearedActivitiesRef.current = false;
+    startInFlightRef.current = false;
+    resumeInFlightRef.current = false;
   }, [closeStream]);
 
   const appendActivity = useCallback((text: string) => {
@@ -125,7 +137,13 @@ export function useDeepResearchStream({
   const start = useCallback(
     async (options?: { resume?: boolean }) => {
       const resume = options?.resume === true;
-      if (!resume && status === 'running') return;
+      if (resume) {
+        if (sourceRef.current || resumeInFlightRef.current) return;
+        resumeInFlightRef.current = true;
+      } else {
+        if (status === 'running' || startInFlightRef.current) return;
+        startInFlightRef.current = true;
+      }
 
       closeStream();
       setPendingAutoResume(false);
@@ -137,6 +155,7 @@ export function useDeepResearchStream({
         setResponseId(null);
         setActivities([]);
       }
+      hasClearedActivitiesRef.current = false;
 
       let handshakeRejected = false;
 
@@ -221,10 +240,11 @@ export function useDeepResearchStream({
             setIsBackgroundPolling(false);
             lastEventRef.current = Date.now();
             if (typeof payload.text === 'string') {
+              if (!hasClearedActivitiesRef.current) {
+                hasClearedActivitiesRef.current = true;
+                setActivities([]);
+              }
               setContent((prev) => {
-                if (prev.length === 0) {
-                  setActivities([]);
-                }
                 return prev + payload.text;
               });
             }
@@ -263,6 +283,10 @@ export function useDeepResearchStream({
         };
 
         source.onerror = () => {
+          if (statusRef.current !== 'running') {
+            closeStream();
+            return;
+          }
           setIsBackgroundPolling(false);
           appendActivity('Connection lost during deep research. Attempting to resume…');
           closeStream();
@@ -288,6 +312,12 @@ export function useDeepResearchStream({
         if (handshakeRejected) {
           const context = resume ? 'deep research could not resume' : 'deep research could not start';
           void reportRefundedFailure(context);
+        }
+      } finally {
+        if (resume) {
+          resumeInFlightRef.current = false;
+        } else {
+          startInFlightRef.current = false;
         }
       }
     },
@@ -354,6 +384,7 @@ export function useDeepResearchStream({
       const resolvedStatus = nextStatus === 'running' ? 'running' : nextStatus;
       setStatus(resolvedStatus);
       setPendingAutoResume(resolvedStatus === 'running');
+      hasClearedActivitiesRef.current = resolvedStatus === 'running' ? false : true;
       setIsBackgroundPolling(false);
       lastEventRef.current = 0;
       lastResumeAttemptRef.current = 0;

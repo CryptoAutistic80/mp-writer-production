@@ -498,7 +498,7 @@ export class WritingDeskResearchService {
             type: 'event',
             event: {
               type: 'quiet_period',
-              message: 'Taking a moment to connect the dots…',
+              message: this.pickQuietPeriodMessage(),
             },
           });
           quietPeriodTimer = null;
@@ -1134,6 +1134,19 @@ export class WritingDeskResearchService {
       'Processing the information through my democratic filters…',
       'Taking a breather to let the evidence sink in…',
       'Having a brief consultation with the wisdom of ages…',
+    ];
+    return messages[Math.floor(Math.random() * messages.length)];
+  }
+
+  private pickQuietPeriodMessage(): string {
+    const messages = [
+      'Taking a moment to connect the dots…',
+      'Cross-referencing those findings with another trusted source…',
+      'Linking fresh evidence into the research trail…',
+      'Organising the notes so the next update is crystal clear…',
+      'Double-checking citations to keep things watertight…',
+      'Following up on a promising lead from the last result…',
+      'Letting the dust settle while the insights take shape…',
     ];
     return messages[Math.floor(Math.random() * messages.length)];
   }
