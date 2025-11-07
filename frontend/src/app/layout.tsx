@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Script from 'next/script';
 import './global.css';
 import SiteHeader from '../components/SiteHeader';
 import SiteFooter from '../components/SiteFooter';
@@ -6,6 +7,8 @@ import AnimatedBackground from '../components/AnimatedBackground';
 import CookieConsent from '../components/CookieConsent';
 import Providers from './providers';
 import { canonicalUrl, getOgImages, seoConfig } from '../lib/seo';
+
+const gaMeasurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID ?? 'G-SYRYHWMLP5';
 
 export const metadata: Metadata = {
   metadataBase: new URL(seoConfig.url),
@@ -85,6 +88,27 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <Providers>
+          {gaMeasurementId ? (
+            <>
+              <Script
+                id="gtag-script"
+                strategy="afterInteractive"
+                src={`https://www.googletagmanager.com/gtag/js?id=${gaMeasurementId}`}
+              />
+              <Script
+                id="gtag-init"
+                strategy="afterInteractive"
+                dangerouslySetInnerHTML={{
+                  __html: `
+                    window.dataLayer = window.dataLayer || [];
+                    function gtag(){dataLayer.push(arguments);}
+                    gtag('js', new Date());
+                    gtag('config', '${gaMeasurementId}');
+                  `,
+                }}
+              />
+            </>
+          ) : null}
           <script
             type="application/ld+json"
             suppressHydrationWarning
