@@ -244,7 +244,7 @@ export default function MyLettersClient() {
 
   return (
     <main className="hero-section">
-      <section className="card">
+      <section className="card hero-card">
         <div className="container" style={{ paddingTop: 32, paddingBottom: 32 }}>
           <div style={{ maxWidth: 880, margin: '0 auto', width: '100%' }}>
             <header style={{ marginBottom: 24 }}>

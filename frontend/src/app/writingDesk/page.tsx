@@ -8,7 +8,7 @@ export const metadata = {
 export default function WritingDeskPage() {
   return (
     <main className="hero-section">
-      <section className="card">
+      <section className="card hero-card">
         <div className="container">
           <h1 className="section-title">Writing desk</h1>
           <p className="section-sub">Compose your message and we’ll handle the research and draft.</p>
@@ -17,7 +17,7 @@ export default function WritingDeskPage() {
 
       <WritingDeskClient />
 
-      <section className="card" style={{ marginTop: 16 }}>
+      <section className="card hero-card" style={{ marginTop: 16 }}>
         <div className="container">
           <p>
             Need to update your saved details first? Head back to the{' '}

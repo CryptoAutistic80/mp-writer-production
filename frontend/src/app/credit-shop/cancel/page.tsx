@@ -5,7 +5,7 @@ import Link from 'next/link';
 export default function CheckoutCancelPage() {
   return (
     <main className="hero-section">
-      <section className="card">
+      <section className="card hero-card">
         <div className="container" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <header>
             <h1 className="section-title">Checkout cancelled</h1>

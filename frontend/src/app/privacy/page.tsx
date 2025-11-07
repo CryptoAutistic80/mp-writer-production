@@ -3,7 +3,7 @@ import ClosePageLink from '../../components/ClosePageLink';
 export default function PrivacyPolicyPage() {
   return (
     <main className="hero-section">
-      <section className="card">
+      <section className="card hero-card">
         <div className="container">
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <ClosePageLink className="micro-link close-link" label="Close and return" fallbackHref="/" />

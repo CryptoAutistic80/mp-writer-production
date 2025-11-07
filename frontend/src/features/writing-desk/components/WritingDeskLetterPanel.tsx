@@ -62,7 +62,7 @@ export function WritingDeskLetterPanel({
 
   if (phase === 'tone') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
+      <div className="card hero-subcard" style={{ padding: 16, marginTop: 16 }}>
         <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Choose a tone for your letter</h4>
         <p className="section-sub">
           Pick the style you want the drafted MP letter to use. You can always compose another letter later in a different
@@ -106,7 +106,7 @@ export function WritingDeskLetterPanel({
     );
   } else if (phase === 'streaming') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
+      <div className="card hero-subcard" style={{ padding: 16, marginTop: 16 }}>
         <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Drafting your letter</h4>
         {status === 'generating' && statusMessage && (
           <div className="research-progress" role="status" aria-live="polite" style={{ marginTop: 16 }}>
@@ -148,7 +148,7 @@ export function WritingDeskLetterPanel({
       isSaving || !responseId || !metadata || !letterHtml || (savedResponseId !== null && savedResponseId === responseId);
 
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
+      <div className="card hero-subcard" style={{ padding: 16, marginTop: 16 }}>
         <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Your drafted letter</h4>
         <p className="section-sub">
           Tone: {toneLabel} · Date {dateLabel}
@@ -209,7 +209,7 @@ export function WritingDeskLetterPanel({
     );
   } else if (phase === 'error') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
+      <div className="card hero-subcard" style={{ padding: 16, marginTop: 16 }}>
         <h4 className="section-title" style={{ fontSize: '1.1rem', color: '#b91c1c' }}>
           We couldn&apos;t finish your letter
         </h4>

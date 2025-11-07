@@ -38,7 +38,7 @@ export default function Hero() {
   }, [isPricingOpen]);
 
   return (
-    <section className="card">
+    <section className="card hero-card">
       <div className="hero-top">
         <div className="hero-copy">
           <h1 className="hero-title">

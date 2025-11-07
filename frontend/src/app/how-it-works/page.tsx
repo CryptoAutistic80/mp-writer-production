@@ -2,7 +2,7 @@ export default function HowItWorksPage() {
   // AnimatedBackground is rendered globally in layout.tsx.
   return (
     <main className="hero-section">
-      <section className="card">
+      <section className="card hero-card">
         <div className="container">
           <h1 style={{ margin: 0 }}>How it works</h1>
           <p style={{ marginTop: 12, color: '#64748b' }}>

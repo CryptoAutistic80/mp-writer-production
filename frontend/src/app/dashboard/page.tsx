@@ -38,13 +38,13 @@ export default function DashboardPage() {
         firstName={firstName}
         credits={credits}
       />
-      <section className="card" style={{ marginTop: 16 }}>
+      <section className="card hero-card" style={{ marginTop: 16 }}>
         <MpFetch onPostcodeChange={setSharedPostcode} />
       </section>
-      <section className="card" style={{ marginTop: 16 }}>
+      <section className="card hero-card" style={{ marginTop: 16 }}>
         <AddressForm seedPostcode={sharedPostcode} />
       </section>
-      <section className="card card-compact" style={{ marginTop: 16 }}>
+      <section className="card hero-card card-compact" style={{ marginTop: 16 }}>
         <StartWritingButton />
       </section>
     </main>

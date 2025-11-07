@@ -1042,7 +1042,7 @@ export default function WritingDeskClient() {
         onConfirm={handleConfirmExit}
         onCancel={handleCancelExit}
       />
-      <section className="card" style={{ marginTop: 16 }} aria-hidden={resumeModalOpen}>
+      <section className="card hero-card" style={{ marginTop: 16 }} aria-hidden={resumeModalOpen}>
         <div className="container">
         <header style={{ marginBottom: 16 }}>
           <div className="section-header">

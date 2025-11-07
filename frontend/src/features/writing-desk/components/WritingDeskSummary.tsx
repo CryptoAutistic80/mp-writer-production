@@ -98,7 +98,7 @@ export function WritingDeskSummary({
             </div>
           )}
 
-          <div className="card" style={{ padding: 16, marginTop: 16 }}>
+          <div className="card hero-subcard" style={{ padding: 16, marginTop: 16 }}>
             <h4 className="section-title" style={{ fontSize: '1rem' }}>Research evidence</h4>
             {!hasResearchContent && researchStatus !== 'running' && (
               <p style={{ marginTop: 8 }}>
@@ -200,7 +200,7 @@ export function WritingDeskSummary({
 
           {showSummaryDetails && (
             <>
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
+              <div className="card hero-subcard" style={{ padding: 16, marginTop: 16 }}>
                 <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
                 <div className="stack" style={{ marginTop: 12 }}>
                   {steps.map((step) => (
@@ -214,7 +214,7 @@ export function WritingDeskSummary({
                 </div>
               </div>
 
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
+              <div className="card hero-subcard" style={{ padding: 16, marginTop: 16 }}>
                 <h4 className="section-title" style={{ fontSize: '1rem' }}>Follow-up questions</h4>
                 {followUps.length > 0 ? (
                   <ol style={{ marginTop: 8, paddingLeft: 20 }}>

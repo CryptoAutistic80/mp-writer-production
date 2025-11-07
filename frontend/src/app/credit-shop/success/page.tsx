@@ -66,7 +66,7 @@ export default function CheckoutSuccessPage() {
 
   return (
     <main className="hero-section">
-      <section className="card">
+      <section className="card hero-card">
         <div className="container" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <header>
             <h1 className="section-title">Payment complete</h1>

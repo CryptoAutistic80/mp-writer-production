@@ -13,7 +13,7 @@ export default function DashboardWelcome({ firstName, credits }: Props) {
     return rounded.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
   };
   return (
-    <section className="card">
+    <section className="card hero-card">
       <div className="container dashboard-welcome">
         <div className="welcome-copy">
           <h2 className="section-title">Welcome to your dashboard {firstName}!</h2>
