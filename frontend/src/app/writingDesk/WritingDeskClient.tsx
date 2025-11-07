@@ -12,6 +12,7 @@ import FollowUpsConfirmModal from '../../features/writing-desk/components/Follow
 import EditFollowUpsConfirmModal from '../../features/writing-desk/components/EditFollowUpsConfirmModal';
 import ExitWritingDeskModal from '../../features/writing-desk/components/ExitWritingDeskModal';
 import CreateLetterConfirmModal from '../../features/writing-desk/components/CreateLetterConfirmModal';
+import { FollowUpGuidanceModal } from '../../features/writing-desk/components/FollowUpGuidanceModal';
 import { useDeepResearchStream } from '../../features/writing-desk/hooks/useDeepResearchStream';
 import { useLetterComposer } from '../../features/writing-desk/hooks/useLetterComposer';
 import { WritingDeskIntakeForm } from '../../features/writing-desk/components/WritingDeskIntakeForm';
@@ -79,6 +80,8 @@ export default function WritingDeskClient() {
   const [editFollowUpsConfirmOpen, setEditFollowUpsConfirmOpen] = useState(false);
   const [initialFollowUpsConfirmOpen, setInitialFollowUpsConfirmOpen] = useState(false);
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const [followUpGuidanceOpen, setFollowUpGuidanceOpen] = useState(false);
+  const [followUpGuidanceAcknowledged, setFollowUpGuidanceAcknowledged] = useState(false);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEditingFollowUpsFromSummary = useRef<boolean>(false);
   const pendingEditFollowUpIndexRef = useRef<number | null>(null);
@@ -100,6 +103,11 @@ export default function WritingDeskClient() {
       setToastMessage(null);
       toastTimeoutRef.current = null;
     }, 3500);
+  }, []);
+
+  const closeFollowUpGuidance = useCallback(() => {
+    setFollowUpGuidanceOpen(false);
+    setFollowUpGuidanceAcknowledged(true);
   }, []);
 
   const currentStep = phase === 'initial' ? steps[stepIndex] ?? null : null;
@@ -156,6 +164,12 @@ export default function WritingDeskClient() {
     reportRefundedFailure,
     canAutoResume: hasHandledInitialJob,
   });
+
+  useEffect(() => {
+    if (!followUpGuidanceAcknowledged && phase === 'followup' && followUps.length > 0) {
+      setFollowUpGuidanceOpen(true);
+    }
+  }, [followUpGuidanceAcknowledged, followUps.length, phase]);
 
   const {
     status: letterStatus,
@@ -324,6 +338,8 @@ export default function WritingDeskClient() {
     setFollowUpIndex(0);
     setNotes(null);
     setResponseId(null);
+    setFollowUpGuidanceAcknowledged(false);
+    setFollowUpGuidanceOpen(false);
     resetResearch();
     resetLetter();
   }, [resetLetter, resetResearch]);
@@ -355,6 +371,8 @@ export default function WritingDeskClient() {
       setPhase(job.phase);
       setStepIndex(Math.max(0, job.stepIndex ?? 0));
       const questions = Array.isArray(job.followUpQuestions) ? [...job.followUpQuestions] : [];
+      setFollowUpGuidanceAcknowledged(false);
+      setFollowUpGuidanceOpen(false);
       setFollowUps(questions);
       const answers = questions.map((_, idx) => job.followUpAnswers?.[idx] ?? '');
       setFollowUpAnswers(answers);
@@ -606,6 +624,8 @@ export default function WritingDeskClient() {
         const questions: string[] = Array.isArray(json?.followUpQuestions)
           ? json.followUpQuestions.filter((q: unknown) => typeof q === 'string' && q.trim().length > 0)
           : [];
+        setFollowUpGuidanceAcknowledged(false);
+        setFollowUpGuidanceOpen(false);
         setFollowUps(questions);
         setNotes(json?.notes ?? null);
         setResponseId(json?.responseId ?? null);
@@ -1009,6 +1029,7 @@ export default function WritingDeskClient() {
         onConfirm={handleConfirmResearch}
         onCancel={handleCancelResearch}
       />
+      <FollowUpGuidanceModal open={followUpGuidanceOpen} onClose={closeFollowUpGuidance} />
       <EditFollowUpsConfirmModal
         open={editFollowUpsConfirmOpen}
         creditCost={formatCredits(deepResearchCreditCost)}

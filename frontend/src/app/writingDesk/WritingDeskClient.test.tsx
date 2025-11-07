@@ -130,7 +130,16 @@ describe('WritingDeskClient', () => {
     });
   };
 
+  const dismissFollowUpGuidanceModal = async () => {
+    const dialog = await screen.findByRole('dialog', { name: 'About the follow-up questions' });
+    expect(dialog).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Okay' }));
+    });
+  };
+
   const answerFollowUpQuestions = async (answers: string[]) => {
+    await dismissFollowUpGuidanceModal();
     for (let idx = 0; idx < answers.length; idx += 1) {
       const label = new RegExp(`Follow-up question ${idx + 1}`);
       const textarea = await screen.findByLabelText(label);
@@ -349,5 +358,115 @@ describe('WritingDeskClient', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('does not attempt to resume once a research stream completes', async () => {
+    followUpQueue.push({
+      followUpQuestions: ['Question one?', 'Question two?'],
+      notes: 'Helpful note',
+      responseId: 'resp-1',
+      remainingCredits: 0.8,
+    });
+
+    await renderComponent();
+    await answerInitialQuestions();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
+    await answerFollowUpQuestions(['First answer', 'Second answer']);
+    await screen.findByText('Initial summary captured');
+
+    const researchButton = await screen.findByRole('button', { name: 'Start deep research' });
+    await act(async () => {
+      fireEvent.click(researchButton);
+    });
+
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Start deep research?' });
+    expect(confirmDialog).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Yes, start research' }));
+    });
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/writing-desk/jobs/active/research/start', expect.any(Object)),
+    );
+
+    expect(MockEventSource.instances).toHaveLength(1);
+    const [eventSource] = MockEventSource.instances;
+
+    const handshakeCallsBefore = fetchMock.mock.calls.filter(([url]) => {
+      const requestUrl = typeof url === 'string' ? url : url.toString();
+      return requestUrl === '/api/writing-desk/jobs/active/research/start';
+    }).length;
+
+    await act(async () => {
+      eventSource.emit({ type: 'status', status: 'in_progress' });
+      eventSource.emit({ type: 'delta', text: 'Collecting evidence...' });
+      eventSource.emit({
+        type: 'complete',
+        content: 'Final report contents.',
+        responseId: 'resp-final',
+        remainingCredits: 0.42,
+      });
+    });
+
+    await screen.findByRole('button', { name: 'Run deep research again' });
+
+    act(() => {
+      eventSource.onerror?.(new Event('error'));
+    });
+
+    const handshakeCallsAfter = fetchMock.mock.calls.filter(([url]) => {
+      const requestUrl = typeof url === 'string' ? url : url.toString();
+      return requestUrl === '/api/writing-desk/jobs/active/research/start';
+    }).length;
+
+    expect(handshakeCallsAfter).toBe(handshakeCallsBefore);
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it('clears the activity feed once research output begins streaming', async () => {
+    followUpQueue.push({
+      followUpQuestions: ['Question one?', 'Question two?'],
+      notes: 'Helpful note',
+      responseId: 'resp-1',
+      remainingCredits: 0.8,
+    });
+
+    await renderComponent();
+    await answerInitialQuestions();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)));
+    await answerFollowUpQuestions(['First answer', 'Second answer']);
+    await screen.findByText('Initial summary captured');
+
+    const researchButton = await screen.findByRole('button', { name: 'Start deep research' });
+    await act(async () => {
+      fireEvent.click(researchButton);
+    });
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Start deep research?' });
+    expect(confirmDialog).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Yes, start research' }));
+    });
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/writing-desk/jobs/active/research/start', expect.any(Object)),
+    );
+
+    expect(MockEventSource.instances).toHaveLength(1);
+    const [eventSource] = MockEventSource.instances;
+
+    act(() => {
+      eventSource.emit({ type: 'status', status: 'queued' });
+    });
+    await screen.findByText('Deep research queued…');
+
+    act(() => {
+      eventSource.emit({ type: 'delta', text: 'First findings.' });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Deep research queued…')).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText('Latest activity')).not.toBeInTheDocument();
   });
 });
