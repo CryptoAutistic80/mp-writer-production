@@ -154,7 +154,9 @@ export function WritingDeskLetterPanel({
           Tone: {toneLabel} · Date {dateLabel}
         </p>
         {responseId && (
-          <p style={{ marginTop: 4, fontSize: '0.85rem', color: '#6b7280' }}>Letter reference ID: {responseId}</p>
+          <p className="reference-id" style={{ marginTop: 4, fontSize: '0.85rem', color: '#6b7280' }}>
+            Letter reference ID: {responseId}
+          </p>
         )}
         <div style={{ marginTop: 16 }}>
           <LetterViewer

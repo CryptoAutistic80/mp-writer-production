@@ -348,6 +348,7 @@ export class WritingDeskResearchService {
     let responseId: string | null = resumeFromState?.responseId ?? run.responseId ?? null;
     let quietPeriodTimer: NodeJS.Timeout | null = null;
     let backgroundPollingNotified = false;
+    let timeoutCleanup: (() => void) | null = null;
 
     const captureResponseId = async (candidate: unknown) => {
       if (!candidate || typeof candidate !== 'object') return;
@@ -622,7 +623,13 @@ export class WritingDeskResearchService {
         let streamError: unknown = null;
 
         try {
-          const timeoutWrappedStream = this.createStreamWithTimeout(
+          // Clean up any previous timeout before creating a new one
+          if (timeoutCleanup) {
+            timeoutCleanup();
+            timeoutCleanup = null;
+          }
+
+          const { stream: timeoutWrappedStream, cleanup } = this.createStreamWithTimeout(
             currentStream,
             RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS,
             () => {
@@ -630,6 +637,7 @@ export class WritingDeskResearchService {
               openAiStream?.controller?.abort();
             }
           );
+          timeoutCleanup = cleanup;
 
           for await (const event of timeoutWrappedStream) {
             if (!event) continue;
@@ -844,6 +852,9 @@ export class WritingDeskResearchService {
     } finally {
       if (quietPeriodTimer) {
         clearTimeout(quietPeriodTimer);
+      }
+      if (timeoutCleanup) {
+        timeoutCleanup();
       }
       await this.persistDeepResearchStatus(userId, job, run.status);
       run.cleanupTimer = this.scheduleRunCleanup(run);
@@ -1196,12 +1207,20 @@ export class WritingDeskResearchService {
     stream: AsyncIterable<T>,
     timeoutMs: number,
     onTimeout: () => void,
-  ): AsyncIterable<T> {
+  ): { stream: AsyncIterable<T>; cleanup: () => void } {
     const self = this;
-    return {
+    let timeout: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+    };
+
+    const wrappedStream = {
       [Symbol.asyncIterator](): AsyncIterator<T> {
         const iterator = stream[Symbol.asyncIterator]();
-        let timeout: NodeJS.Timeout | null = null;
 
         const schedule = () => {
           if (timeout) {
@@ -1225,20 +1244,14 @@ export class WritingDeskResearchService {
             return iterator.next();
           },
           async return(value?: any) {
-            if (timeout) {
-              clearTimeout(timeout);
-              timeout = null;
-            }
+            cleanup();
             if (iterator.return) {
               return iterator.return(value);
             }
             return { done: true, value: undefined };
           },
           async throw(err?: any) {
-            if (timeout) {
-              clearTimeout(timeout);
-              timeout = null;
-            }
+            cleanup();
             if (iterator.throw) {
               return iterator.throw(err);
             }
@@ -1247,6 +1260,8 @@ export class WritingDeskResearchService {
         };
       },
     };
+
+    return { stream: wrappedStream, cleanup };
   }
 
   private isRecoverableTransportError(error: unknown): boolean {
@@ -1270,7 +1285,7 @@ export class WritingDeskResearchService {
     }
 
     if (message) {
-      const keywords = ['timeout', 'timed out', 'socket hang up', 'network', 'connection reset', 'premature close'];
+      const keywords = ['timeout', 'timed out', 'socket hang up', 'network', 'connection reset', 'premature close', 'aborted'];
       return keywords.some((keyword) => message.includes(keyword));
     }
 

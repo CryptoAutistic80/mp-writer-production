@@ -154,10 +154,10 @@ export default function MyLettersClient() {
     borderRadius: 9999,
     color: '#1d4ed8',
     cursor: 'pointer',
-    fontSize: '1.5rem',
+    fontSize: '1.1rem',
     fontWeight: 600,
-    height: 56,
-    width: 56,
+    height: 36,
+    width: 36,
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -169,6 +169,49 @@ export default function MyLettersClient() {
     borderColor: '#d1d5db',
     color: '#9ca3af',
     cursor: 'not-allowed',
+  };
+
+  const filterRowStyle: CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: 16,
+    alignItems: 'end',
+    width: '100%',
+  };
+
+  const filterFieldStyle: CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  };
+
+  const filterInputStyle: CSSProperties = {
+    width: '100%',
+    minWidth: 0,
+  };
+
+  const filterButtonStyle: CSSProperties = {
+    height: 40,
+    width: '100%',
+  };
+
+  const navigationLayoutStyle: CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    maxWidth: '100%',
+  };
+
+  const navigationInfoStyle: CSSProperties = {
+    minWidth: 0,
+    textAlign: 'center',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 2,
+    fontSize: '0.95rem',
   };
 
   const handlePreviousLetter = () => {
@@ -216,18 +259,14 @@ export default function MyLettersClient() {
                 Filter by date saved
               </h2>
               <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 16,
-                  alignItems: 'flex-end',
-                }}
+                style={filterRowStyle}
               >
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={filterFieldStyle}>
                   <span style={{ fontWeight: 600 }}>From</span>
                   <input
                     type="date"
                     value={fromDate}
+                    style={filterInputStyle}
                   onChange={(event) => {
                     setFromDate(event.target.value);
                     setPage(1);
@@ -237,11 +276,12 @@ export default function MyLettersClient() {
                     aria-label="Filter letters from date"
                   />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={filterFieldStyle}>
                   <span style={{ fontWeight: 600 }}>To</span>
                   <input
                     type="date"
                     value={toDate}
+                    style={filterInputStyle}
                   onChange={(event) => {
                     setToDate(event.target.value);
                     setPage(1);
@@ -262,7 +302,7 @@ export default function MyLettersClient() {
                     setPendingPageDirection(null);
                     void refetch();
                   }}
-                  style={{ height: 40 }}
+                  style={filterButtonStyle}
                 >
                   Reset filters
                 </button>
@@ -271,15 +311,7 @@ export default function MyLettersClient() {
 
             {hasLetters && (
               <nav aria-label="Browse saved letters" style={{ marginBottom: 24 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 24,
-                    justifyContent: 'center',
-                    flexWrap: 'wrap',
-                  }}
-                >
+                <div style={navigationLayoutStyle}>
                   <button
                     type="button"
                     onClick={handlePreviousLetter}
@@ -293,11 +325,13 @@ export default function MyLettersClient() {
                   >
                     <span aria-hidden="true">‹</span>
                   </button>
-                  <div style={{ textAlign: 'center', minWidth: 180 }}>
-                    <div style={{ fontWeight: 600, fontSize: '1.1rem' }}>
+                  <div style={navigationInfoStyle}>
+                    <div style={{ fontWeight: 600, fontSize: '1rem', lineHeight: 1.2 }}>
                       Letter {displayIndex} of {Math.max(displayIndex, totalLetters)}
                     </div>
-                    <div style={{ color: '#6b7280' }}>Page {currentPage} of {Math.max(1, meta.totalPages)}</div>
+                    <div style={{ color: '#6b7280', fontSize: '0.85rem', lineHeight: 1.2 }}>
+                      Page {currentPage} of {Math.max(1, meta.totalPages)}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -350,7 +384,10 @@ export default function MyLettersClient() {
                     Tone: {selectedToneLabel} · Saved on {selectedDisplayDate}
                   </p>
                   {selectedLetter.responseId && (
-                    <p style={{ margin: '4px 0 0', color: '#9ca3af', fontSize: '0.9rem' }}>
+                    <p
+                      className="reference-id"
+                      style={{ margin: '4px 0 0', color: '#9ca3af', fontSize: '0.9rem' }}
+                    >
                       Reference ID: {selectedLetter.responseId}
                     </p>
                   )}
@@ -361,15 +398,7 @@ export default function MyLettersClient() {
 
             {hasLetters && (
               <nav aria-label="Browse saved letters" style={{ marginTop: 32 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 24,
-                    justifyContent: 'center',
-                    flexWrap: 'wrap',
-                  }}
-                >
+                <div style={navigationLayoutStyle}>
                   <button
                     type="button"
                     onClick={handlePreviousLetter}
@@ -383,11 +412,13 @@ export default function MyLettersClient() {
                   >
                     <span aria-hidden="true">‹</span>
                   </button>
-                  <div style={{ textAlign: 'center', minWidth: 180 }}>
-                    <div style={{ fontWeight: 600, fontSize: '1.1rem' }}>
+                  <div style={navigationInfoStyle}>
+                    <div style={{ fontWeight: 600, fontSize: '1rem', lineHeight: 1.2 }}>
                       Letter {displayIndex} of {Math.max(displayIndex, totalLetters)}
                     </div>
-                    <div style={{ color: '#6b7280' }}>Page {currentPage} of {Math.max(1, meta.totalPages)}</div>
+                    <div style={{ color: '#6b7280', fontSize: '0.85rem', lineHeight: 1.2 }}>
+                      Page {currentPage} of {Math.max(1, meta.totalPages)}
+                    </div>
                   </div>
                   <button
                     type="button"

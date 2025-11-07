@@ -89,6 +89,9 @@ playwright/.cache/
 *.swp
 *~
 
+# Development/test pages
+dev-pages/
+
 # Docker local overrides
 docker-compose.override.local.yml
 
