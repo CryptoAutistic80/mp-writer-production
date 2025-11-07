@@ -82,6 +82,8 @@ export function useDeepResearchStream({
   const sourceRef = useRef<EventSource | null>(null);
   const lastEventRef = useRef<number>(0);
   const lastResumeAttemptRef = useRef<number>(0);
+  const startInFlightRef = useRef(false);
+  const resumeInFlightRef = useRef(false);
 
   const updateCreditsFromStream = useCallback(
     (value: number | null | undefined) => {
@@ -112,6 +114,8 @@ export function useDeepResearchStream({
     setIsBackgroundPolling(false);
     lastEventRef.current = 0;
     lastResumeAttemptRef.current = 0;
+    startInFlightRef.current = false;
+    resumeInFlightRef.current = false;
   }, [closeStream]);
 
   const appendActivity = useCallback((text: string) => {
@@ -125,7 +129,13 @@ export function useDeepResearchStream({
   const start = useCallback(
     async (options?: { resume?: boolean }) => {
       const resume = options?.resume === true;
-      if (!resume && status === 'running') return;
+      if (resume) {
+        if (sourceRef.current || resumeInFlightRef.current) return;
+        resumeInFlightRef.current = true;
+      } else {
+        if (status === 'running' || startInFlightRef.current) return;
+        startInFlightRef.current = true;
+      }
 
       closeStream();
       setPendingAutoResume(false);
@@ -288,6 +298,12 @@ export function useDeepResearchStream({
         if (handshakeRejected) {
           const context = resume ? 'deep research could not resume' : 'deep research could not start';
           void reportRefundedFailure(context);
+        }
+      } finally {
+        if (resume) {
+          resumeInFlightRef.current = false;
+        } else {
+          startInFlightRef.current = false;
         }
       }
     },
