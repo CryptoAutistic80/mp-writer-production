@@ -50,13 +50,17 @@ const noindexRobots: NonNullable<Metadata['robots']> = {
 
 export type OgImageVariant = keyof typeof ogImages;
 
+type OpenGraphType = NonNullable<Metadata['openGraph']> extends { type?: infer T }
+  ? T
+  : Metadata['openGraph'];
+
 export type CreateMetadataOptions = {
   title?: string;
   description?: string;
   path?: string;
   ogVariant?: OgImageVariant;
   noindex?: boolean;
-  type?: NonNullable<Metadata['openGraph']>['type'];
+  type?: OpenGraphType;
 };
 
 export const canonicalUrl = (path = '/'): string => {
@@ -70,7 +74,7 @@ export function createMetadata({
   path = '/',
   ogVariant = 'default',
   noindex,
-  type = 'website',
+  type,
 }: CreateMetadataOptions = {}): Metadata {
   const resolvedTitle = title ?? `${seoConfig.name} — ${seoConfig.tagline}`;
   const resolvedDescription = description ?? seoConfig.description;
@@ -88,7 +92,7 @@ export function createMetadata({
       url: canonical,
       siteName: seoConfig.name,
       locale: seoConfig.locale,
-      type,
+      ...(type ? { type } : {}),
       images: ogImages[ogVariant] ?? ogImages.default,
     },
     twitter: {
