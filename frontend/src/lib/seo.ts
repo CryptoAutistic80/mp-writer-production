@@ -28,7 +28,6 @@ export const seoConfig = {
 const ogImages = {
   default: [
     { url: assetUrl('/seo/og-image.jpg'), width: 1200, height: 630, alt: 'MPWriter hero illustration' },
-    { url: assetUrl('/seo/social-square.jpg'), width: 1080, height: 1080, alt: 'MPWriter square artwork' },
   ],
   square: [{ url: assetUrl('/seo/social-square.jpg'), width: 1080, height: 1080, alt: 'MPWriter square artwork' }],
 } satisfies Record<
