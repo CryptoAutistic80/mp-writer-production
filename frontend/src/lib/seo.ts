@@ -9,6 +9,12 @@ const normalizedSiteUrl = rawSiteUrl
   : FALLBACK_SITE_URL;
 const siteUrl = normalizedSiteUrl.replace(/\/+$/, '');
 
+const assetUrl = (path: string) => {
+  if (/^https?:\/\//i.test(path)) return path;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${siteUrl}${normalizedPath}`;
+};
+
 export const seoConfig = {
   name: 'MPWriter',
   shortName: 'MPWriter',
@@ -16,15 +22,15 @@ export const seoConfig = {
   description: 'Craft researched, respectful letters to your MP in minutes with MPWriter.',
   url: siteUrl,
   locale: 'en_GB',
-  twitterCard: '/seo/twitter-card.jpg',
+  twitterCard: assetUrl('/seo/twitter-card.jpg'),
 } as const;
 
 const ogImages = {
   default: [
-    { url: '/seo/og-image.jpg', width: 1200, height: 630, alt: 'MPWriter hero illustration' },
-    { url: '/seo/og-image@2x.jpg', width: 2400, height: 1260, alt: 'MPWriter hero illustration (high resolution)' },
+    { url: assetUrl('/seo/og-image.jpg'), width: 1200, height: 630, alt: 'MPWriter hero illustration' },
+    { url: assetUrl('/seo/og-image@2x.jpg'), width: 2400, height: 1260, alt: 'MPWriter hero illustration (high resolution)' },
   ],
-  square: [{ url: '/seo/social-square.jpg', width: 1080, height: 1080, alt: 'MPWriter square artwork' }],
+  square: [{ url: assetUrl('/seo/social-square.jpg'), width: 1080, height: 1080, alt: 'MPWriter square artwork' }],
 } satisfies Record<
   'default' | 'square',
   NonNullable<NonNullable<Metadata['openGraph']>['images']>
@@ -68,6 +74,20 @@ export const canonicalUrl = (path = '/'): string => {
   return normalizedPath === '/' ? siteUrl : `${siteUrl}${normalizedPath}`;
 };
 
+export const getOgImages = (variant: OgImageVariant = 'default') => {
+  const primary = ogImages[variant] ?? ogImages.default;
+  if (variant === 'square') {
+    return primary;
+  }
+  const combined = [...primary];
+  ogImages.square.forEach((image) => {
+    if (!combined.some((existing) => existing.url === image.url)) {
+      combined.push(image);
+    }
+  });
+  return combined;
+};
+
 export function createMetadata({
   title,
   description,
@@ -93,7 +113,7 @@ export function createMetadata({
       siteName: seoConfig.name,
       locale: seoConfig.locale,
       ...(type ? { type } : {}),
-      images: ogImages[ogVariant] ?? ogImages.default,
+      images: getOgImages(ogVariant),
     },
     twitter: {
       card: 'summary_large_image',
@@ -104,8 +124,6 @@ export function createMetadata({
     robots: noindex ? noindexRobots : indexableRobots,
   };
 }
-
-export const getOgImages = (variant: OgImageVariant = 'default') => ogImages[variant] ?? ogImages.default;
 
 export const marketingPages: Array<{
   path: string;
