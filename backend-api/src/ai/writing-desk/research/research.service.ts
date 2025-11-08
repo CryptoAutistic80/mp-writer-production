@@ -63,6 +63,13 @@ interface DeepResearchRequestExtras {
   };
 }
 
+export class StreamInactivityTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Stream timed out after ${timeoutMs}ms of inactivity`);
+    this.name = 'StreamInactivityTimeoutError';
+  }
+}
+
 const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
 const DEEP_RESEARCH_RUN_TTL_MS = 5 * 60 * 1000;
 const RESEARCH_STREAM_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -1223,12 +1230,15 @@ export class WritingDeskResearchService {
   ): { stream: AsyncIterable<T>; cleanup: () => void } {
     const self = this;
     let timeout: NodeJS.Timeout | null = null;
+    let pendingReject: ((reason?: unknown) => void) | null = null;
+    let timedOutError: StreamInactivityTimeoutError | null = null;
 
     const cleanup = () => {
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
       }
+      pendingReject = null;
     };
 
     const wrappedStream = {
@@ -1240,7 +1250,21 @@ export class WritingDeskResearchService {
             clearTimeout(timeout);
           }
           timeout = setTimeout(() => {
-            onTimeout();
+            if (timedOutError) {
+              return;
+            }
+            timedOutError = new StreamInactivityTimeoutError(timeoutMs);
+            try {
+              onTimeout();
+            } catch (error) {
+              self.logger.warn(
+                `Timeout handler threw an error: ${(error as Error)?.message ?? error}`,
+              );
+            }
+            const reject = pendingReject;
+            pendingReject = null;
+            cleanup();
+            reject?.(timedOutError);
             iterator.return?.(undefined as any).catch((error) => {
               self.logger.warn(`Failed to abort stream: ${(error as Error)?.message ?? error}`);
             });
@@ -1253,8 +1277,36 @@ export class WritingDeskResearchService {
 
         return {
           async next() {
+            if (timedOutError) {
+              const error = timedOutError;
+              timedOutError = null;
+              throw error;
+            }
+
             schedule();
-            return iterator.next();
+
+            let localReject: ((reason?: unknown) => void) | null = null;
+            const timeoutPromise = new Promise<IteratorResult<T>>((_, reject) => {
+              localReject = reject;
+              pendingReject = reject;
+            });
+
+            try {
+              const result = await Promise.race([iterator.next(), timeoutPromise]);
+              if (result.done) {
+                cleanup();
+              }
+              return result;
+            } catch (error) {
+              if (error === timedOutError) {
+                timedOutError = null;
+              }
+              throw error;
+            } finally {
+              if (pendingReject === localReject) {
+                pendingReject = null;
+              }
+            }
           },
           async return(value?: any) {
             cleanup();
@@ -1278,6 +1330,10 @@ export class WritingDeskResearchService {
   }
 
   private isRecoverableTransportError(error: unknown): boolean {
+    if (error instanceof StreamInactivityTimeoutError) {
+      return true;
+    }
+
     if (!error || typeof error !== 'object') {
       return false;
     }
