@@ -47,11 +47,11 @@ const nextConfig = {
 						key: 'Content-Security-Policy',
 						value: [
 							"default-src 'self'",
-							"script-src 'self' 'unsafe-eval' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com", // unsafe-eval needed for Next.js, unsafe-inline for inline scripts, GA domains for analytics
+							"script-src 'self' 'unsafe-eval' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com", // unsafe-eval needed for Next.js, unsafe-inline for inline scripts, GA domains for analytics
 							"style-src 'self' 'unsafe-inline'", // unsafe-inline for styled-components/styled-jsx
 							"img-src 'self' data: https:", // Allow data URIs for images, HTTPS for external images
 							"font-src 'self' data:", // Allow data URIs for fonts
-							"connect-src 'self' https://api.postcodes.io https://api.parliament.uk https://api.getaddress.io https://www.google-analytics.com https://stats.g.doubleclick.net https://www.googletagmanager.com", // API endpoints + analytics
+							"connect-src 'self' https://api.postcodes.io https://api.parliament.uk https://api.getaddress.io https://www.google-analytics.com https://region1.google-analytics.com https://*.google-analytics.com https://stats.g.doubleclick.net https://www.googletagmanager.com", // API endpoints + analytics (region1 GA handles gtag events)
 							"frame-src 'self'", // Allow same-origin iframes
 							"object-src 'none'", // Block plugins
 							"base-uri 'self'", // Restrict base tag
