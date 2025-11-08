@@ -9,7 +9,7 @@ import Providers from './providers';
 import { canonicalUrl, getOgImages, seoConfig } from '../lib/seo';
 import AnalyticsTracker from '../components/AnalyticsTracker';
 
-const gaMeasurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID ?? 'G-SYRYHWMLP5';
+const gaMeasurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID ?? 'G-JPQG202YPM';
 
 export const metadata: Metadata = {
   metadataBase: new URL(seoConfig.url),
