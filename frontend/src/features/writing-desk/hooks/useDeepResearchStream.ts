@@ -19,17 +19,18 @@ type DeepResearchStreamStatus =
   | string;
 
 type DeepResearchStreamMessage =
-  | { type: 'status'; status: DeepResearchStreamStatus; remainingCredits?: number | null }
-  | { type: 'delta'; text: string }
+  | { seq?: number; type: 'status'; status: DeepResearchStreamStatus; remainingCredits?: number | null }
+  | { seq?: number; type: 'delta'; text: string }
   | {
+      seq?: number;
       type: 'complete';
       content: string;
       responseId: string | null;
       remainingCredits: number | null;
       usage?: Record<string, unknown> | null;
     }
-  | { type: 'event'; event: { type?: string; [key: string]: any } }
-  | { type: 'error'; message: string; remainingCredits?: number | null };
+  | { seq?: number; type: 'event'; event: { type?: string; [key: string]: any } }
+  | { seq?: number; type: 'error'; message: string; remainingCredits?: number | null };
 
 type DeepResearchHandshakeResponse = {
   jobId?: string | null;
@@ -82,6 +83,7 @@ export function useDeepResearchStream({
   const sourceRef = useRef<EventSource | null>(null);
   const lastEventRef = useRef<number>(0);
   const lastResumeAttemptRef = useRef<number>(0);
+  const lastSequenceRef = useRef<number>(0);
   const statusRef = useRef<WritingDeskResearchStatus>('idle');
   const hasClearedActivitiesRef = useRef(false);
   const startInFlightRef = useRef(false);
@@ -121,6 +123,7 @@ export function useDeepResearchStream({
     setIsBackgroundPolling(false);
     lastEventRef.current = 0;
     lastResumeAttemptRef.current = 0;
+    lastSequenceRef.current = 0;
     hasClearedActivitiesRef.current = false;
     startInFlightRef.current = false;
     resumeInFlightRef.current = false;
@@ -154,6 +157,7 @@ export function useDeepResearchStream({
         setContent('');
         setResponseId(null);
         setActivities([]);
+        lastSequenceRef.current = 0;
       }
       hasClearedActivitiesRef.current = false;
 
@@ -215,6 +219,21 @@ export function useDeepResearchStream({
             return;
           }
           if (!payload) return;
+
+          if (typeof payload.seq === 'number') {
+            if (payload.seq <= lastSequenceRef.current) {
+              const looksLikeRestart = payload.seq === 1 && lastSequenceRef.current !== 0;
+              if (!looksLikeRestart) {
+                return;
+              }
+              lastSequenceRef.current = 0;
+              setContent('');
+              setActivities([]);
+              setResponseId(null);
+              hasClearedActivitiesRef.current = false;
+            }
+            lastSequenceRef.current = payload.seq;
+          }
 
           markActivity();
 
@@ -388,6 +407,7 @@ export function useDeepResearchStream({
       setIsBackgroundPolling(false);
       lastEventRef.current = 0;
       lastResumeAttemptRef.current = 0;
+      lastSequenceRef.current = 0;
       setActivities([]);
       setError(null);
     },

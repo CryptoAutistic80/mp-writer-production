@@ -23,7 +23,7 @@ import { UpsertActiveWritingDeskJobDto } from '../../../writing-desk-jobs/dto/up
 import { extractFirstText, getSupportedReasoningEfforts, isOpenAiRelatedError } from '../../openai/openai.helpers';
 import { buildDeepResearchPrompt, buildDeepResearchStub } from './research.helpers';
 
-type DeepResearchStreamPayload =
+type DeepResearchStreamPayloadBody =
   | { type: 'status'; status: string; remainingCredits?: number | null }
   | { type: 'delta'; text: string }
   | { type: 'event'; event: Record<string, unknown> }
@@ -35,6 +35,8 @@ type DeepResearchStreamPayload =
       usage?: Record<string, unknown> | null;
     }
   | { type: 'error'; message: string; remainingCredits?: number | null };
+
+type DeepResearchStreamPayload = DeepResearchStreamPayloadBody & { seq: number };
 
 type DeepResearchRunStatus = 'running' | 'completed' | 'error';
 
@@ -48,6 +50,7 @@ interface DeepResearchRun {
   cleanupTimer: NodeJS.Timeout | null;
   promise: Promise<void> | null;
   responseId: string | null;
+  sequence: number;
 }
 
 type ResponseStreamLike = AsyncIterable<ResponseStreamEvent> & {
@@ -61,6 +64,13 @@ interface DeepResearchRequestExtras {
     summary?: 'auto' | 'disabled' | null;
     effort?: 'low' | 'medium' | 'high';
   };
+}
+
+export class StreamInactivityTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Stream timed out after ${timeoutMs}ms of inactivity`);
+    this.name = 'StreamInactivityTimeoutError';
+  }
 }
 
 const DEEP_RESEARCH_RUN_BUFFER_SIZE = 2000;
@@ -254,6 +264,7 @@ export class WritingDeskResearchService {
       cleanupTimer: null,
       promise: null,
       responseId: null,
+      sequence: 0,
     };
 
     this.researchRuns.set(key, run);
@@ -290,6 +301,7 @@ export class WritingDeskResearchService {
       cleanupTimer: null,
       promise: null,
       responseId: typeof persisted.responseId === 'string' ? persisted.responseId : null,
+      sequence: 0,
     };
 
     this.researchRuns.set(persisted.runKey, run);
@@ -307,7 +319,9 @@ export class WritingDeskResearchService {
       meta: { charged, remainingCredits },
     });
 
+    run.sequence += 1;
     subject.next({
+      seq: run.sequence,
       type: 'status',
       status: 'Reconnecting to your research run…',
       remainingCredits,
@@ -371,8 +385,9 @@ export class WritingDeskResearchService {
       }
     };
 
-    const send = (payload: DeepResearchStreamPayload) => {
-      subject.next(payload);
+    const send = (payload: DeepResearchStreamPayloadBody) => {
+      run.sequence += 1;
+      subject.next({ ...payload, seq: run.sequence });
       heartbeat();
     };
 
@@ -1223,12 +1238,15 @@ export class WritingDeskResearchService {
   ): { stream: AsyncIterable<T>; cleanup: () => void } {
     const self = this;
     let timeout: NodeJS.Timeout | null = null;
+    let pendingReject: ((reason?: unknown) => void) | null = null;
+    let timedOutError: StreamInactivityTimeoutError | null = null;
 
     const cleanup = () => {
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
       }
+      pendingReject = null;
     };
 
     const wrappedStream = {
@@ -1240,7 +1258,21 @@ export class WritingDeskResearchService {
             clearTimeout(timeout);
           }
           timeout = setTimeout(() => {
-            onTimeout();
+            if (timedOutError) {
+              return;
+            }
+            timedOutError = new StreamInactivityTimeoutError(timeoutMs);
+            try {
+              onTimeout();
+            } catch (error) {
+              self.logger.warn(
+                `Timeout handler threw an error: ${(error as Error)?.message ?? error}`,
+              );
+            }
+            const reject = pendingReject;
+            pendingReject = null;
+            cleanup();
+            reject?.(timedOutError);
             iterator.return?.(undefined as any).catch((error) => {
               self.logger.warn(`Failed to abort stream: ${(error as Error)?.message ?? error}`);
             });
@@ -1253,8 +1285,36 @@ export class WritingDeskResearchService {
 
         return {
           async next() {
+            if (timedOutError) {
+              const error = timedOutError;
+              timedOutError = null;
+              throw error;
+            }
+
             schedule();
-            return iterator.next();
+
+            let localReject: ((reason?: unknown) => void) | null = null;
+            const timeoutPromise = new Promise<IteratorResult<T>>((_, reject) => {
+              localReject = reject;
+              pendingReject = reject;
+            });
+
+            try {
+              const result = await Promise.race([iterator.next(), timeoutPromise]);
+              if (result.done) {
+                cleanup();
+              }
+              return result;
+            } catch (error) {
+              if (error === timedOutError) {
+                timedOutError = null;
+              }
+              throw error;
+            } finally {
+              if (pendingReject === localReject) {
+                pendingReject = null;
+              }
+            }
           },
           async return(value?: any) {
             cleanup();
@@ -1278,6 +1338,10 @@ export class WritingDeskResearchService {
   }
 
   private isRecoverableTransportError(error: unknown): boolean {
+    if (error instanceof StreamInactivityTimeoutError) {
+      return true;
+    }
+
     if (!error || typeof error !== 'object') {
       return false;
     }

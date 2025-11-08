@@ -12,10 +12,18 @@ import { UserCreditsService } from '../../user-credits/user-credits.service';
 import { OpenAiClientService } from '../openai/openai-client.service';
 import { isOpenAiRelatedError } from '../openai/openai.helpers';
 
+export class StreamTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StreamTimeoutError';
+  }
+}
+
 @Injectable()
 export class AiTranscriptionService {
   private static readonly TRANSCRIPTION_CREDIT_COST = 0;
   private static readonly TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+  private static readonly TRANSCRIPTION_STREAM_MAX_RETRIES = 3;
 
   private readonly logger = new Logger(AiTranscriptionService.name);
 
@@ -94,11 +102,15 @@ export class AiTranscriptionService {
       let settled = false;
 
       const transcribe = async () => {
+        let remainingAfterCharge = 0;
+
         try {
-          const { credits: remainingAfterCharge } = await this.userCredits.deductFromMine(
+          const { credits } = await this.userCredits.deductFromMine(
             userId,
             AiTranscriptionService.TRANSCRIPTION_CREDIT_COST,
           );
+          remainingAfterCharge = credits;
+
           const apiKey = this.config.get<string>('OPENAI_API_KEY');
 
           if (!apiKey) {
@@ -109,6 +121,7 @@ export class AiTranscriptionService {
               data: JSON.stringify({ type: 'complete', text: stubText, remainingCredits: remainingAfterCharge }),
             });
             subscriber.complete();
+            settled = true;
             return;
           }
 
@@ -118,49 +131,76 @@ export class AiTranscriptionService {
           const audioBuffer = Buffer.from(input.audioData, 'base64');
           const audioFile = new File([audioBuffer], 'audio.webm', { type: 'audio/webm' });
 
-          const stream = await client.audio.transcriptions.create({
-            file: audioFile,
-            model,
-            response_format: TranscriptionResponseFormat.TEXT,
-            stream: true,
-            prompt: input.prompt || 'Use British English spelling throughout.',
-            language: input.language || 'en',
-          });
+          const attemptStream = async () => {
+            const stream = await client.audio.transcriptions.create({
+              file: audioFile,
+              model,
+              response_format: TranscriptionResponseFormat.TEXT,
+              stream: true,
+              prompt: input.prompt || 'Use British English spelling throughout.',
+              language: input.language || 'en',
+            });
 
-          const timeoutWrappedStream = this.createStreamWithTimeout(
-            stream,
-            AiTranscriptionService.TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS,
-            () => this.logger.warn(`[transcription] Stream inactivity timeout for user ${userId}`),
-          );
+            const timeoutWrappedStream = this.createStreamWithTimeout(
+              stream,
+              AiTranscriptionService.TRANSCRIPTION_STREAM_INACTIVITY_TIMEOUT_MS,
+              () => this.logger.warn(`[transcription] Stream inactivity timeout for user ${userId}`),
+            );
 
-          for await (const event of timeoutWrappedStream) {
-            if (subscriber.closed) {
-              break;
+            for await (const event of timeoutWrappedStream) {
+              if (subscriber.closed) {
+                settled = true;
+                return;
+              }
+
+              const typedEvent = event as any;
+              if (typedEvent.type === 'transcript.text.delta') {
+                subscriber.next({ data: JSON.stringify({ type: 'delta', text: typedEvent.delta }) });
+              } else if (typedEvent.type === 'transcript.text.done') {
+                this.openAiClient.recordSuccess();
+                subscriber.next({
+                  data: JSON.stringify({
+                    type: 'complete',
+                    text: typedEvent.text,
+                    remainingCredits: remainingAfterCharge,
+                  }),
+                });
+                subscriber.complete();
+                settled = true;
+                return;
+              }
             }
 
-            const typedEvent = event as any;
-            if (typedEvent.type === 'transcript.text.delta') {
-              subscriber.next({ data: JSON.stringify({ type: 'delta', text: typedEvent.delta }) });
-            } else if (typedEvent.type === 'transcript.text.done') {
-              this.openAiClient.recordSuccess();
-              subscriber.next({
-                data: JSON.stringify({
-                  type: 'complete',
-                  text: typedEvent.text,
-                  remainingCredits: remainingAfterCharge,
-                }),
-              });
-              subscriber.complete();
-              settled = true;
+            if (!settled && !subscriber.closed) {
+              throw new Error('Transcription stream ended unexpectedly');
+            }
+          };
+
+          let lastError: unknown;
+          for (
+            let attempt = 1;
+            attempt <= AiTranscriptionService.TRANSCRIPTION_STREAM_MAX_RETRIES && !settled && !subscriber.closed;
+            attempt++
+          ) {
+            try {
+              await attemptStream();
               return;
+            } catch (error) {
+              lastError = error;
+              if (!this.isTransientStreamError(error) || attempt === AiTranscriptionService.TRANSCRIPTION_STREAM_MAX_RETRIES) {
+                throw error;
+              }
+
+              this.logger.warn(
+                `[transcription] Transient streaming error (attempt ${attempt} of ${AiTranscriptionService.TRANSCRIPTION_STREAM_MAX_RETRIES}) for user ${userId}: ${
+                  error instanceof Error ? error.message : error
+                }`,
+              );
             }
           }
 
-          if (!settled) {
-            subscriber.next({
-              data: JSON.stringify({ type: 'error', message: 'Transcription stream ended unexpectedly' }),
-            });
-            subscriber.complete();
+          if (!settled && !subscriber.closed && lastError) {
+            throw lastError;
           }
         } catch (error) {
           if (isOpenAiRelatedError(error)) {
@@ -171,7 +211,8 @@ export class AiTranscriptionService {
             let errorMessage = 'Transcription failed';
             if (error instanceof Error) {
               const message = error.message;
-              if (message.includes('timeout') || message.includes('inactivity')) {
+              const normalizedMessage = message.toLowerCase();
+              if (normalizedMessage.includes('timeout') || normalizedMessage.includes('inactivity')) {
                 errorMessage = 'Transcription timed out due to inactivity. Please try again.';
               } else {
                 errorMessage = message;
@@ -179,6 +220,7 @@ export class AiTranscriptionService {
             }
             subscriber.next({ data: JSON.stringify({ type: 'error', message: errorMessage }) });
             subscriber.complete();
+            settled = true;
           }
         }
       };
@@ -225,43 +267,83 @@ export class AiTranscriptionService {
     timeoutMs: number,
     onTimeout: () => void,
   ): AsyncGenerator<T, void, unknown> {
-    let lastEventTime = Date.now();
-    let timeoutTriggered = false;
-    let timedOut = false;
-
-    const checkInterval = setInterval(() => {
-      const elapsed = Date.now() - lastEventTime;
-      if (elapsed >= timeoutMs && !timeoutTriggered) {
-        timeoutTriggered = true;
-        timedOut = true;
-        clearInterval(checkInterval);
-        onTimeout();
-      }
-    }, Math.min(1000, timeoutMs));
-
     const iterator = stream[Symbol.asyncIterator]();
+    let timeoutHandle: NodeJS.Timeout | null = null;
+
+    const clearTimer = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+    };
+
+    const nextWithTimeout = () =>
+      new Promise<IteratorResult<T>>((resolve, reject) => {
+        const timeoutError = new StreamTimeoutError(
+          `Transcription stream timed out after ${timeoutMs}ms of inactivity`,
+        );
+
+        const startTimer = () => {
+          timeoutHandle = setTimeout(() => {
+            clearTimer();
+            onTimeout();
+            reject(timeoutError);
+          }, timeoutMs);
+        };
+
+        try {
+          const nextPromise = iterator.next();
+          startTimer();
+          nextPromise.then(
+            (result) => {
+              clearTimer();
+              resolve(result);
+            },
+            (error) => {
+              clearTimer();
+              reject(error);
+            },
+          );
+        } catch (error) {
+          clearTimer();
+          reject(error);
+        }
+      });
 
     try {
       while (true) {
-        if (timedOut) {
-          return;
-        }
-
-        const result = await iterator.next();
+        const result = await nextWithTimeout();
         if (result.done) {
           return;
         }
-
-        lastEventTime = Date.now();
-        timeoutTriggered = false;
         yield result.value;
       }
     } finally {
-      clearInterval(checkInterval);
+      clearTimer();
       if (iterator.return) {
         await iterator.return(undefined as unknown as T);
       }
     }
+  }
+
+  private isTransientStreamError(error: unknown): boolean {
+    if (error instanceof StreamTimeoutError) {
+      return true;
+    }
+
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('timeout') ||
+      message.includes('inactivity') ||
+      message.includes('network') ||
+      message.includes('connection') ||
+      message.includes('econnreset') ||
+      message.includes('aborted')
+    );
   }
 }
 

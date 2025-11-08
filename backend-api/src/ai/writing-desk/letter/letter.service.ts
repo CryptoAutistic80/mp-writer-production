@@ -838,12 +838,22 @@ export class WritingDeskLetterService {
       };
 
       const wrapStream = (stream: ResponseStreamLike): AsyncIterable<ResponseStreamEvent> => {
-        trackedControllers.push(stream.controller ?? { abort: () => undefined });
+        const controller = stream.controller ?? { abort: () => undefined };
+        trackedControllers.push(controller);
         return this.createStreamWithTimeout(
           stream,
           WritingDeskLetterService.LETTER_STREAM_INACTIVITY_TIMEOUT_MS,
           () => {
-            this.logger.warn(`[writing-desk letter] Stream inactivity timeout for user ${userId}`);
+            this.logger.warn(
+              `[writing-desk letter] Stream inactivity timeout for user ${userId}; aborting controller`,
+            );
+            try {
+              controller.abort();
+            } catch (abortError) {
+              this.logger.warn(
+                `[writing-desk letter] Failed to abort stream controller after timeout: ${(abortError as Error)?.message ?? abortError}`,
+              );
+            }
           },
         );
       };
@@ -2132,15 +2142,21 @@ export class WritingDeskLetterService {
   ): AsyncGenerator<T, void, unknown> {
     let lastEventTime = Date.now();
     let timeoutTriggered = false;
-    let timedOut = false;
+    let timeoutError: Error | null = null;
 
     const checkInterval = setInterval(() => {
       const elapsed = Date.now() - lastEventTime;
       if (elapsed >= timeoutMs && !timeoutTriggered) {
         timeoutTriggered = true;
-        timedOut = true;
+        const error = new Error('Stream timed out due to inactivity.');
+        error.name = 'TimeoutError';
+        timeoutError = error;
         clearInterval(checkInterval);
-        onTimeout();
+        try {
+          onTimeout();
+        } catch {
+          // ignore errors from timeout handler
+        }
       }
     }, 1000);
     if (typeof (checkInterval as any)?.unref === 'function') {
@@ -2151,15 +2167,19 @@ export class WritingDeskLetterService {
       for await (const event of stream) {
         lastEventTime = Date.now();
 
-        if (timedOut) {
-          break;
+        if (timeoutError) {
+          throw timeoutError;
         }
 
         yield event;
       }
+
+      if (timeoutError) {
+        throw timeoutError;
+      }
     } catch (error) {
-      if (timeoutTriggered) {
-        timedOut = true;
+      if (timeoutError && error !== timeoutError) {
+        throw timeoutError;
       }
       throw error;
     } finally {
