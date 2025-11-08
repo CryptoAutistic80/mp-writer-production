@@ -28,7 +28,7 @@ export const seoConfig = {
 const ogImages = {
   default: [
     { url: assetUrl('/seo/og-image.jpg'), width: 1200, height: 630, alt: 'MPWriter hero illustration' },
-    { url: assetUrl('/seo/og-image@2x.jpg'), width: 2400, height: 1260, alt: 'MPWriter hero illustration (high resolution)' },
+    { url: assetUrl('/seo/social-square.jpg'), width: 1080, height: 1080, alt: 'MPWriter square artwork' },
   ],
   square: [{ url: assetUrl('/seo/social-square.jpg'), width: 1080, height: 1080, alt: 'MPWriter square artwork' }],
 } satisfies Record<
@@ -75,17 +75,7 @@ export const canonicalUrl = (path = '/'): string => {
 };
 
 export const getOgImages = (variant: OgImageVariant = 'default') => {
-  const primary = ogImages[variant] ?? ogImages.default;
-  if (variant === 'square') {
-    return primary;
-  }
-  const combined = [...primary];
-  ogImages.square.forEach((image) => {
-    if (!combined.some((existing) => existing.url === image.url)) {
-      combined.push(image);
-    }
-  });
-  return combined;
+  return ogImages[variant] ?? ogImages.default;
 };
 
 export function createMetadata({
