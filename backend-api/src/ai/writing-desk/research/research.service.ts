@@ -23,7 +23,7 @@ import { UpsertActiveWritingDeskJobDto } from '../../../writing-desk-jobs/dto/up
 import { extractFirstText, getSupportedReasoningEfforts, isOpenAiRelatedError } from '../../openai/openai.helpers';
 import { buildDeepResearchPrompt, buildDeepResearchStub } from './research.helpers';
 
-type DeepResearchStreamPayload =
+type DeepResearchStreamPayloadBody =
   | { type: 'status'; status: string; remainingCredits?: number | null }
   | { type: 'delta'; text: string }
   | { type: 'event'; event: Record<string, unknown> }
@@ -35,6 +35,8 @@ type DeepResearchStreamPayload =
       usage?: Record<string, unknown> | null;
     }
   | { type: 'error'; message: string; remainingCredits?: number | null };
+
+type DeepResearchStreamPayload = DeepResearchStreamPayloadBody & { seq: number };
 
 type DeepResearchRunStatus = 'running' | 'completed' | 'error';
 
@@ -48,6 +50,7 @@ interface DeepResearchRun {
   cleanupTimer: NodeJS.Timeout | null;
   promise: Promise<void> | null;
   responseId: string | null;
+  sequence: number;
 }
 
 type ResponseStreamLike = AsyncIterable<ResponseStreamEvent> & {
@@ -261,6 +264,7 @@ export class WritingDeskResearchService {
       cleanupTimer: null,
       promise: null,
       responseId: null,
+      sequence: 0,
     };
 
     this.researchRuns.set(key, run);
@@ -297,6 +301,7 @@ export class WritingDeskResearchService {
       cleanupTimer: null,
       promise: null,
       responseId: typeof persisted.responseId === 'string' ? persisted.responseId : null,
+      sequence: 0,
     };
 
     this.researchRuns.set(persisted.runKey, run);
@@ -314,7 +319,9 @@ export class WritingDeskResearchService {
       meta: { charged, remainingCredits },
     });
 
+    run.sequence += 1;
     subject.next({
+      seq: run.sequence,
       type: 'status',
       status: 'Reconnecting to your research run…',
       remainingCredits,
@@ -378,8 +385,9 @@ export class WritingDeskResearchService {
       }
     };
 
-    const send = (payload: DeepResearchStreamPayload) => {
-      subject.next(payload);
+    const send = (payload: DeepResearchStreamPayloadBody) => {
+      run.sequence += 1;
+      subject.next({ ...payload, seq: run.sequence });
       heartbeat();
     };
 

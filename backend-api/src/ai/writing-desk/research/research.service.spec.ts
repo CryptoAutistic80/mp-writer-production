@@ -181,6 +181,7 @@ describe('WritingDeskResearchService streaming recovery', () => {
       cleanupTimer: null as NodeJS.Timeout | null,
       promise: null as Promise<void> | null,
       responseId: null as string | null,
+      sequence: 0,
     };
 
     const job = {
@@ -222,5 +223,13 @@ describe('WritingDeskResearchService streaming recovery', () => {
     expect(completeEvent).toBeDefined();
 
     expect(stalledStream.controller?.abort).toHaveBeenCalled();
+
+    const sequenceNumbers = emissions
+      .filter((payload) => payload && typeof payload.seq === 'number')
+      .map((payload) => payload.seq as number);
+    expect(sequenceNumbers.length).toBeGreaterThan(0);
+    const sorted = [...sequenceNumbers].sort((a, b) => a - b);
+    expect(sequenceNumbers).toEqual(sorted);
+    expect(new Set(sequenceNumbers).size).toBe(sequenceNumbers.length);
   });
 });
