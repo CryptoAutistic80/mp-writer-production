@@ -1,10 +1,11 @@
 //@ts-check
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
 const { composePlugins, withNx } = require('@nx/next');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
 const path = require('path');
 // Load env from workspace root so we can keep a single unified .env
+// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 /**
@@ -46,11 +47,11 @@ const nextConfig = {
 						key: 'Content-Security-Policy',
 						value: [
 							"default-src 'self'",
-							"script-src 'self' 'unsafe-eval' 'unsafe-inline'", // unsafe-eval needed for Next.js, unsafe-inline for inline scripts
+							"script-src 'self' 'unsafe-eval' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com", // unsafe-eval needed for Next.js, unsafe-inline for inline scripts, GA domains for analytics
 							"style-src 'self' 'unsafe-inline'", // unsafe-inline for styled-components/styled-jsx
 							"img-src 'self' data: https:", // Allow data URIs for images, HTTPS for external images
 							"font-src 'self' data:", // Allow data URIs for fonts
-							"connect-src 'self' https://api.postcodes.io https://api.parliament.uk https://api.getaddress.io", // API endpoints
+							"connect-src 'self' https://api.postcodes.io https://api.parliament.uk https://api.getaddress.io https://www.google-analytics.com https://stats.g.doubleclick.net https://www.googletagmanager.com", // API endpoints + analytics
 							"frame-src 'self'", // Allow same-origin iframes
 							"object-src 'none'", // Block plugins
 							"base-uri 'self'", // Restrict base tag

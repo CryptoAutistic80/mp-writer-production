@@ -7,6 +7,7 @@ import AnimatedBackground from '../components/AnimatedBackground';
 import CookieConsent from '../components/CookieConsent';
 import Providers from './providers';
 import { canonicalUrl, getOgImages, seoConfig } from '../lib/seo';
+import AnalyticsTracker from '../components/AnalyticsTracker';
 
 const gaMeasurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID ?? 'G-SYRYHWMLP5';
 
@@ -111,6 +112,7 @@ export default function RootLayout({
             suppressHydrationWarning
             dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
           />
+          {gaMeasurementId ? <AnalyticsTracker measurementId={gaMeasurementId} /> : null}
           <AnimatedBackground />
           <div className="page-wrap">
             <SiteHeader />
