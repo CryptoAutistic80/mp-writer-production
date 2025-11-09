@@ -189,6 +189,52 @@ describe('WritingDeskResearchService streaming recovery', () => {
     ...overrides,
   });
 
+  describe('persist helpers', () => {
+    it('persists research status using the minimal payload needed to preserve state', async () => {
+      const { service, writingDeskJobs } = buildService();
+      const job = createActiveJob();
+
+      await (service as any).persistDeepResearchStatus('user-1', job, 'running');
+
+      expect(writingDeskJobs.upsertActiveJob).toHaveBeenCalledWith('user-1', {
+        jobId: job.jobId,
+        phase: job.phase,
+        stepIndex: job.stepIndex,
+        followUpIndex: job.followUpIndex,
+        form: job.form,
+        followUpQuestions: job.followUpQuestions,
+        followUpAnswers: job.followUpAnswers,
+        researchStatus: 'running',
+        letterStatus: job.letterStatus,
+      });
+    });
+
+    it('persists research results without mutating unrelated fields', async () => {
+      const { service, writingDeskJobs } = buildService();
+      const job = createActiveJob({ letterStatus: 'completed', researchContent: 'Existing summary' });
+
+      await (service as any).persistDeepResearchResult('user-1', job, {
+        content: '   Finalised findings   ',
+        responseId: 'resp-123',
+        status: 'completed',
+      });
+
+      expect(writingDeskJobs.upsertActiveJob).toHaveBeenCalledWith('user-1', {
+        jobId: job.jobId,
+        phase: job.phase,
+        stepIndex: job.stepIndex,
+        followUpIndex: job.followUpIndex,
+        form: job.form,
+        followUpQuestions: job.followUpQuestions,
+        followUpAnswers: job.followUpAnswers,
+        researchContent: 'Finalised findings',
+        researchResponseId: 'resp-123',
+        researchStatus: 'completed',
+        letterStatus: job.letterStatus,
+      });
+    });
+  });
+
   it('attempts to resume when the stream times out due to inactivity', async () => {
     const {
       service,
