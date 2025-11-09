@@ -1,5 +1,7 @@
 import { ReplaySubject } from 'rxjs';
 
+import { ActiveWritingDeskJobResource } from '../../../writing-desk-jobs/writing-desk-jobs.types';
+import { StreamingRunState } from '../../../streaming-state/streaming-state.types';
 import { WritingDeskResearchService, StreamInactivityTimeoutError } from './research.service';
 
 describe('WritingDeskResearchService streaming recovery', () => {
@@ -32,6 +34,7 @@ describe('WritingDeskResearchService streaming recovery', () => {
     };
 
     const writingDeskJobs = {
+      getActiveJobForUser: jest.fn(),
       upsertActiveJob: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -160,6 +163,32 @@ describe('WritingDeskResearchService streaming recovery', () => {
     };
   };
 
+  const createActiveJob = (
+    overrides: Partial<ActiveWritingDeskJobResource> = {},
+  ): ActiveWritingDeskJobResource => ({
+    jobId: 'job-1',
+    phase: 'initial',
+    stepIndex: 0,
+    followUpIndex: 0,
+    form: { issueDescription: 'Issue' },
+    followUpQuestions: [],
+    followUpAnswers: [],
+    notes: null,
+    responseId: null,
+    researchContent: null,
+    researchResponseId: null,
+    researchStatus: 'idle',
+    letterStatus: 'idle',
+    letterTone: null,
+    letterResponseId: null,
+    letterContent: null,
+    letterReferences: [],
+    letterJson: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  });
+
   it('attempts to resume when the stream times out due to inactivity', async () => {
     const {
       service,
@@ -231,5 +260,84 @@ describe('WritingDeskResearchService streaming recovery', () => {
     const sorted = [...sequenceNumbers].sort((a, b) => a - b);
     expect(sequenceNumbers).toEqual(sorted);
     expect(new Set(sequenceNumbers).size).toBe(sequenceNumbers.length);
+  });
+
+  describe('beginDeepResearchRun', () => {
+    it('reuses an existing in-memory run when restart is not requested', async () => {
+      const { service, writingDeskJobs, streamingRuns } = buildService();
+      const job = createActiveJob();
+      (writingDeskJobs.getActiveJobForUser as jest.Mock).mockResolvedValue(job);
+
+      const existingRun = {
+        key: 'user-1::job-1',
+        userId: 'user-1',
+        jobId: job.jobId,
+        subject: new ReplaySubject<any>(),
+        status: 'running' as const,
+        startedAt: Date.now(),
+        cleanupTimer: null as NodeJS.Timeout | null,
+        promise: null as Promise<void> | null,
+        responseId: null as string | null,
+        sequence: 0,
+      };
+
+      ((service as any).researchRuns as Map<string, any>).set(existingRun.key, existingRun);
+
+      const result = await (service as any).beginDeepResearchRun('user-1', job.jobId, {
+        createIfMissing: false,
+      });
+
+      expect(result).toBe(existingRun);
+      expect(streamingRuns.getRun).not.toHaveBeenCalled();
+      expect(streamingRuns.registerRun).not.toHaveBeenCalled();
+    });
+
+    it('resurrects a persisted run before spawning a new one', async () => {
+      const { service, writingDeskJobs, streamingRuns } = buildService();
+      const job = createActiveJob();
+      (writingDeskJobs.getActiveJobForUser as jest.Mock).mockResolvedValue(job);
+
+      const persisted: StreamingRunState = {
+        type: 'deep_research',
+        runKey: 'user-1::job-1',
+        userId: 'user-1',
+        jobId: job.jobId,
+        startedAt: Date.now(),
+        status: 'running',
+        responseId: 'resp-123',
+        meta: {},
+      };
+
+      streamingRuns.getRun.mockResolvedValue(persisted);
+
+      const resumedRun = {
+        key: persisted.runKey,
+        userId: persisted.userId,
+        jobId: job.jobId,
+        subject: new ReplaySubject<any>(),
+        status: 'running' as const,
+        startedAt: persisted.startedAt,
+        cleanupTimer: null as NodeJS.Timeout | null,
+        promise: null as Promise<void> | null,
+        responseId: persisted.responseId,
+        sequence: 0,
+      };
+
+      const resumeSpy = jest
+        .spyOn(service as any, 'resumeDeepResearchRunFromState')
+        .mockResolvedValue(resumedRun);
+
+      try {
+        const result = await (service as any).beginDeepResearchRun('user-1', job.jobId, {
+          createIfMissing: false,
+        });
+
+        expect(result).toBe(resumedRun);
+        expect(resumeSpy).toHaveBeenCalledWith({ persisted, userId: 'user-1', job });
+        expect(streamingRuns.registerRun).not.toHaveBeenCalled();
+      } finally {
+        resumeSpy.mockRestore();
+      }
+    });
   });
 });
