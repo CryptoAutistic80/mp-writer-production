@@ -53,6 +53,8 @@ const mockUseWritingDeskPersistence = useWritingDeskPersistence as jest.MockedFu
   typeof useWritingDeskPersistence
 >;
 
+let latestPersistenceOptions: Parameters<typeof useWritingDeskPersistence>[0] | null = null;
+
 const createJsonResponse = (payload: any): ResponseLike => ({
   ok: true,
   status: 200,
@@ -158,18 +160,23 @@ describe('WritingDeskClient', () => {
     mockCredits = 1;
     setupFetchMock();
     MockEventSource.reset();
-    mockUseWritingDeskPersistence.mockReturnValue({
-      saveJob: saveJobMock,
-      clearJob: clearJobMock,
-      isClearingJob: false,
-      handleResumeExistingJob: jest.fn(),
-      handleDiscardExistingJob: jest.fn(async () => {}),
-      markSnapshotSaved: jest.fn(),
-    } as any);
+    latestPersistenceOptions = null;
+    mockUseWritingDeskPersistence.mockImplementation((options) => {
+      latestPersistenceOptions = options;
+      return {
+        saveJob: saveJobMock,
+        clearJob: clearJobMock,
+        isClearingJob: false,
+        handleResumeExistingJob: jest.fn(),
+        handleDiscardExistingJob: jest.fn(async () => {}),
+        markSnapshotSaved: jest.fn(),
+      } as any;
+    });
   });
 
   afterEach(() => {
     jest.clearAllMocks();
+    latestPersistenceOptions = null;
   });
 
   beforeAll(() => {
@@ -266,6 +273,92 @@ describe('WritingDeskClient', () => {
       return requestUrl === '/api/ai/writing-desk/follow-up';
     }).length;
     expect(followUpCallsAfter).toBe(followUpCallsBefore + 1);
+  });
+
+  it('applies persisted research snapshots and clears local research state', async () => {
+    followUpQueue.push({
+      followUpQuestions: ['Question one?', 'Question two?'],
+      notes: 'Helpful note',
+      responseId: 'resp-1',
+      remainingCredits: 0.8,
+    });
+
+    await renderComponent();
+    await answerInitialQuestions();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/ai/writing-desk/follow-up', expect.any(Object)),
+    );
+    await answerFollowUpQuestions(['First answer', 'Second answer']);
+    await screen.findByText('Initial summary captured');
+
+    const researchButton = await screen.findByRole('button', { name: 'Start deep research' });
+    await act(async () => {
+      fireEvent.click(researchButton);
+    });
+
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Start deep research?' });
+    expect(confirmDialog).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Yes, start research' }));
+    });
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/writing-desk/jobs/active/research/start', expect.any(Object)),
+    );
+
+    expect(MockEventSource.instances).toHaveLength(1);
+    const [eventSource] = MockEventSource.instances;
+
+    act(() => {
+      eventSource.emit({
+        type: 'event',
+        event: { type: 'response.web_search_call.searching' },
+      });
+    });
+
+    await screen.findByText('Latest activity');
+    await screen.findByText('Searching the web for relevant sources…');
+
+    act(() => {
+      eventSource.emit({ type: 'error', message: 'Research failed' });
+    });
+
+    await screen.findByText('Research failed');
+
+    expect(latestPersistenceOptions).not.toBeNull();
+    const timestamp = new Date().toISOString();
+    const persistedJob = {
+      jobId: 'job-123',
+      form: { issueDescription: 'Restored issue details' },
+      phase: 'summary',
+      stepIndex: 0,
+      followUpQuestions: ['Question one?', 'Question two?'],
+      followUpAnswers: ['First answer', 'Second answer'],
+      followUpIndex: 0,
+      notes: 'Helpful note',
+      responseId: 'resp-1',
+      researchContent: 'Persisted research content',
+      researchResponseId: 'research-456',
+      researchStatus: 'running',
+      letterStatus: 'idle',
+      letterTone: null,
+      letterResponseId: null,
+      letterContent: null,
+      letterReferences: [],
+      letterJson: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    } as any;
+
+    await act(async () => {
+      latestPersistenceOptions?.onApplySnapshot(persistedJob);
+    });
+
+    await screen.findByText('Persisted research content');
+    expect(screen.getByText('Research reference ID: research-456')).toBeInTheDocument();
+    expect(screen.queryByText('Research failed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Latest activity')).not.toBeInTheDocument();
   });
 
   it('disables credit-consuming summary actions when credits are below the required amount', async () => {

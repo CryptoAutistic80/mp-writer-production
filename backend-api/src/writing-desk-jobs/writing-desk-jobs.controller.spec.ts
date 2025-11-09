@@ -78,6 +78,18 @@ describe('WritingDeskJobsController', () => {
       expect(aiService.ensureDeepResearchRun).not.toHaveBeenCalled();
     });
 
+    it('rejects resume handshake attempts when the job id mismatches the active job', async () => {
+      jobsService.getActiveJobForUser.mockResolvedValue(createActiveJob());
+
+      await expect(
+        controller.startDeepResearch(req, {
+          jobId: 'other-job',
+          resume: true,
+        } as StartDeepResearchDto),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(aiService.ensureDeepResearchRun).not.toHaveBeenCalled();
+    });
+
     it('restarts deep research when resume is false', async () => {
       const activeJob = createActiveJob();
       jobsService.getActiveJobForUser.mockResolvedValue(activeJob);
@@ -94,7 +106,7 @@ describe('WritingDeskJobsController', () => {
       });
     });
 
-    it('resumes deep research when resume is true', async () => {
+    it('resumes deep research when the resume handshake matches the active job', async () => {
       const activeJob = createActiveJob();
       jobsService.getActiveJobForUser.mockResolvedValue(activeJob);
 
