@@ -262,6 +262,108 @@ describe('WritingDeskResearchService streaming recovery', () => {
     expect(new Set(sequenceNumbers).size).toBe(sequenceNumbers.length);
   });
 
+  it('polls for background completion when the stream ends without a completion event', async () => {
+    const { service, responses, streamingRuns } = buildService();
+
+    const scheduleSpy = jest
+      .spyOn(service as any, 'scheduleRunCleanup')
+      .mockReturnValue(null as any);
+
+    const subject = new ReplaySubject<any>();
+    const emissions: any[] = [];
+    subject.subscribe((payload) => emissions.push(payload));
+
+    const earlyStream = {
+      [Symbol.asyncIterator]() {
+        const events = [
+          { type: 'response.created', response: { id: 'resp-early', output: [] } },
+          { type: 'response.in_progress' },
+        ];
+        let index = 0;
+        return {
+          next: () => {
+            if (index < events.length) {
+              return Promise.resolve({ value: events[index++], done: false });
+            }
+            return Promise.resolve({ value: undefined, done: true });
+          },
+          return: () => Promise.resolve({ done: true, value: undefined }),
+        };
+      },
+    };
+
+    responses.create.mockResolvedValue(earlyStream);
+
+    const waitSpy = jest
+      .spyOn(service as any, 'waitForBackgroundResponseCompletion')
+      .mockResolvedValue({
+        status: 'completed',
+        id: 'resp-early',
+        output: [
+          {
+            content: [
+              {
+                type: 'output_text',
+                text: 'Recovered via background polling',
+              },
+            ],
+          },
+        ],
+        usage: { total_tokens: 42 },
+      });
+
+    const persistSpy = jest.spyOn(service as any, 'persistDeepResearchResult');
+
+    const run = {
+      key: 'run-early',
+      userId: 'user-1',
+      jobId: 'job-1',
+      subject,
+      status: 'running' as const,
+      startedAt: Date.now(),
+      cleanupTimer: null as NodeJS.Timeout | null,
+      promise: null as Promise<void> | null,
+      responseId: null as string | null,
+      sequence: 0,
+    };
+
+    const job = createActiveJob();
+
+    try {
+      await (service as any).executeDeepResearchRun({ run, userId: 'user-1', job, subject });
+    } finally {
+      scheduleSpy.mockRestore();
+    }
+
+    expect(waitSpy).toHaveBeenCalledTimes(1);
+    expect(waitSpy.mock.calls[0][1]).toBe('resp-early');
+
+    expect(
+      emissions.some((payload) => payload?.type === 'status' && payload?.status === 'background_polling'),
+    ).toBe(true);
+
+    const completeEvent = emissions.find((payload) => payload?.type === 'complete');
+    expect(completeEvent).toMatchObject({
+      content: 'Recovered via background polling',
+      responseId: 'resp-early',
+    });
+
+    expect(persistSpy).toHaveBeenCalledWith(
+      'user-1',
+      job,
+      expect.objectContaining({
+        status: 'completed',
+        responseId: 'resp-early',
+        content: 'Recovered via background polling',
+      }),
+    );
+
+    expect(streamingRuns.clearRun).toHaveBeenCalledWith('deep_research', run.key);
+
+    waitSpy.mockRestore();
+    persistSpy.mockRestore();
+  });
+
   describe('beginDeepResearchRun', () => {
     it('reuses an existing in-memory run when restart is not requested', async () => {
       const { service, writingDeskJobs, streamingRuns } = buildService();
@@ -337,6 +439,71 @@ describe('WritingDeskResearchService streaming recovery', () => {
         expect(streamingRuns.registerRun).not.toHaveBeenCalled();
       } finally {
         resumeSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('handleOrphanedRun', () => {
+    it('refunds credits and clears streaming state for charged orphaned runs', async () => {
+      const { service, writingDeskJobs, userCredits, streamingRuns } = buildService();
+      const job = createActiveJob({ jobId: 'job-orphan', researchStatus: 'running' });
+      (writingDeskJobs.getActiveJobForUser as jest.Mock).mockResolvedValue(job);
+
+      const state: StreamingRunState = {
+        type: 'deep_research',
+        runKey: 'user-1::job-orphan',
+        userId: 'user-1',
+        jobId: 'job-orphan',
+        startedAt: Date.now() - 1000,
+        status: 'running',
+        responseId: 'resp-123',
+        meta: { charged: true },
+      };
+
+      await service.handleOrphanedRun(state);
+
+      expect(userCredits.addToMine).toHaveBeenCalledWith('user-1', 0.7);
+      expect(streamingRuns.clearRun).toHaveBeenCalledWith('deep_research', state.runKey);
+      expect(writingDeskJobs.upsertActiveJob).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ researchStatus: 'error' }),
+      );
+    });
+  });
+
+  describe('scheduleRunCleanup', () => {
+    it('evicts stale runs and clears the persisted streaming state', async () => {
+      jest.useFakeTimers();
+      try {
+        const { service, streamingRuns } = buildService();
+
+        const subject = new ReplaySubject<any>();
+        const run = {
+          key: 'user-1::job-cleanup',
+          userId: 'user-1',
+          jobId: 'job-cleanup',
+          subject,
+          status: 'completed' as const,
+          startedAt: Date.now(),
+          cleanupTimer: null as NodeJS.Timeout | null,
+          promise: null as Promise<void> | null,
+          responseId: 'resp-clean',
+          sequence: 0,
+        };
+
+        ((service as any).researchRuns as Map<string, any>).set(run.key, run);
+
+        const timer = (service as any).scheduleRunCleanup(run);
+        expect(timer).toBeTruthy();
+        expect(((service as any).researchRuns as Map<string, any>).has(run.key)).toBe(true);
+
+        jest.advanceTimersByTime(service.getRunTtlMs());
+        await Promise.resolve();
+
+        expect(((service as any).researchRuns as Map<string, any>).has(run.key)).toBe(false);
+        expect(streamingRuns.clearRun).toHaveBeenCalledWith('deep_research', run.key);
+      } finally {
+        jest.useRealTimers();
       }
     });
   });
