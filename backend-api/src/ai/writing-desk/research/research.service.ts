@@ -486,11 +486,16 @@ export class WritingDeskResearchService {
         if (requestExtras.reasoning) {
           resumeParams.reasoning = requestExtras.reasoning;
         }
+        // The resume flow must use the streaming endpoint directly so the
+        // existing response_id continues without spawning a new background job.
         openAiStream = client.responses.stream(resumeParams) as ResponseStreamLike;
       } else {
         openAiStream = (await client.responses.create({
           model,
           input: prompt,
+          // These flags ensure OpenAI persists the response so we can resume or
+          // poll for completion if the stream drops. Avoid removing them during
+          // future refactors unless the downstream recovery logic changes.
           background: true,
           store: true,
           stream: true,
