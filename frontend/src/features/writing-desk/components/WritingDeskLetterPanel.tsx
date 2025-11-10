@@ -62,8 +62,13 @@ export function WritingDeskLetterPanel({
 
   if (phase === 'tone') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Choose a tone for your letter</h4>
+      <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
+        <h4
+          className="section-title"
+          style={{ fontSize: 'clamp(1rem, 0.95rem + 0.5vw, 1.1rem)' }}
+        >
+          Choose a tone for your letter
+        </h4>
         <p className="section-sub">
           Pick the style you want the drafted MP letter to use. You can always compose another letter later in a different
           tone.
@@ -106,8 +111,13 @@ export function WritingDeskLetterPanel({
     );
   } else if (phase === 'streaming') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Drafting your letter</h4>
+      <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
+        <h4
+          className="section-title"
+          style={{ fontSize: 'clamp(1rem, 0.95rem + 0.5vw, 1.1rem)' }}
+        >
+          Drafting your letter
+        </h4>
         {status === 'generating' && statusMessage && (
           <div className="research-progress" role="status" aria-live="polite" style={{ marginTop: 16 }}>
             <span className="research-progress__spinner" aria-hidden="true" />
@@ -119,7 +129,11 @@ export function WritingDeskLetterPanel({
         )}
         {reasoningVisible && (
           <div style={{ marginTop: 16 }}>
-            <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Reasoning feed</h5>
+            <h5
+              style={{ margin: '0 0 8px 0', fontSize: 'clamp(0.9rem, 0.88rem + 0.3vw, 0.95rem)' }}
+            >
+              Reasoning feed
+            </h5>
             {events.length > 0 ? (
               <ul style={{ margin: 0, paddingLeft: 18 }}>
                 {events.map((event) => (
@@ -134,7 +148,11 @@ export function WritingDeskLetterPanel({
           </div>
         )}
         <div style={{ marginTop: 16 }}>
-          <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Letter preview</h5>
+          <h5
+            style={{ margin: '0 0 8px 0', fontSize: 'clamp(0.9rem, 0.88rem + 0.3vw, 0.95rem)' }}
+          >
+            Letter preview
+          </h5>
           <div className="letter-preview" dangerouslySetInnerHTML={{ __html: letterHtml || DEFAULT_PREVIEW }} />
         </div>
       </div>
@@ -148,8 +166,13 @@ export function WritingDeskLetterPanel({
       isSaving || !responseId || !metadata || !letterHtml || (savedResponseId !== null && savedResponseId === responseId);
 
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Your drafted letter</h4>
+      <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
+        <h4
+          className="section-title"
+          style={{ fontSize: 'clamp(1rem, 0.95rem + 0.5vw, 1.1rem)' }}
+        >
+          Your drafted letter
+        </h4>
         <p className="section-sub">
           Tone: {toneLabel} · Date {dateLabel}
         </p>
@@ -209,8 +232,11 @@ export function WritingDeskLetterPanel({
     );
   } else if (phase === 'error') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem', color: '#b91c1c' }}>
+      <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
+        <h4
+          className="section-title"
+          style={{ fontSize: 'clamp(1rem, 0.95rem + 0.5vw, 1.1rem)', color: '#b91c1c' }}
+        >
           We couldn&apos;t finish your letter
         </h4>
         {letterError && <p style={{ marginTop: 8 }}>{letterError}</p>}
@@ -269,7 +295,7 @@ export function WritingDeskLetterPanel({
           }
 
           .tone-option {
-            padding: 16px;
+            gap: 6px;
           }
         }
 
@@ -287,7 +313,7 @@ export function WritingDeskLetterPanel({
           border: 1px solid var(--tone-border);
           background: var(--tone-bg);
           border-radius: 16px;
-          padding: 20px;
+          padding: clamp(16px, 4vw, 20px);
           display: flex;
           flex-direction: column;
           gap: 8px;

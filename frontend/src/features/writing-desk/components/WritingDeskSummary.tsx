@@ -87,7 +87,12 @@ export function WritingDeskSummary({
       <div className="result" aria-live="polite">
         {letterPhase === 'idle' && (
           <>
-            <h3 className="section-title" style={{ fontSize: '1.25rem' }}>Initial summary captured</h3>
+            <h3
+              className="section-title"
+              style={{ fontSize: 'clamp(1.1rem, 1rem + 1vw, 1.25rem)' }}
+            >
+              Initial summary captured
+            </h3>
             <p className="section-sub">
               Thanks for the detail. When you’re ready, start the research to gather supporting evidence.
           </p>
@@ -98,8 +103,13 @@ export function WritingDeskSummary({
             </div>
           )}
 
-          <div className="card" style={{ padding: 16, marginTop: 16 }}>
-            <h4 className="section-title" style={{ fontSize: '1rem' }}>Research evidence</h4>
+          <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
+            <h4
+              className="section-title"
+              style={{ fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
+            >
+              Research evidence
+            </h4>
             {!hasResearchContent && researchStatus !== 'running' && (
               <p style={{ marginTop: 8 }}>
                 Run research to gather cited evidence that supports your letter. The findings feed straight into your draft.
@@ -141,7 +151,11 @@ export function WritingDeskSummary({
 
             {researchStatus === 'running' && researchActivities.length > 0 && (
               <div style={{ marginTop: 12 }}>
-                <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Latest activity</h5>
+                <h5
+                  style={{ margin: '0 0 8px 0', fontSize: 'clamp(0.9rem, 0.88rem + 0.3vw, 0.95rem)' }}
+                >
+                  Latest activity
+                </h5>
                 <ul style={{ paddingLeft: 18, margin: 0 }}>
                   {researchActivities.map((activity) => (
                     <li key={activity.id} style={{ marginBottom: 4 }}>
@@ -154,7 +168,11 @@ export function WritingDeskSummary({
 
             {(hasResearchContent || researchStatus === 'running') && (
               <div style={{ marginTop: 12 }}>
-                <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Research notes</h5>
+                <h5
+                  style={{ margin: '0 0 8px 0', fontSize: 'clamp(0.9rem, 0.88rem + 0.3vw, 0.95rem)' }}
+                >
+                  Research notes
+                </h5>
                 <div className="research-notes">
                   {researchContent ? (
                     <ReactMarkdown
@@ -200,13 +218,22 @@ export function WritingDeskSummary({
 
           {showSummaryDetails && (
             <>
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                <h4 className="section-title" style={{ fontSize: '1rem' }}>What you told us</h4>
+              <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
+                <h4
+                  className="section-title"
+                  style={{ fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
+                >
+                  What you told us
+                </h4>
                 <div className="stack" style={{ marginTop: 12 }}>
                   {steps.map((step) => (
                     <div key={step.key} style={{ marginBottom: 16 }}>
                       <div>
-                        <h5 style={{ margin: 0, fontWeight: 600, fontSize: '1rem' }}>{step.title}</h5>
+                        <h5
+                          style={{ margin: 0, fontWeight: 600, fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
+                        >
+                          {step.title}
+                        </h5>
                       </div>
                       <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
                     </div>
@@ -214,8 +241,13 @@ export function WritingDeskSummary({
                 </div>
               </div>
 
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                <h4 className="section-title" style={{ fontSize: '1rem' }}>Follow-up questions</h4>
+              <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
+                <h4
+                  className="section-title"
+                  style={{ fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
+                >
+                  Follow-up questions
+                </h4>
                 {followUps.length > 0 ? (
                   <ol style={{ marginTop: 8, paddingLeft: 20 }}>
                     {followUps.map((question, idx) => (
@@ -334,7 +366,7 @@ export function WritingDeskSummary({
           align-items: flex-start;
           background: #f8fafc;
           border-radius: 12px;
-          padding: 12px;
+          padding: clamp(10px, 2.4vw, 16px);
           border: 1px solid rgba(148, 163, 184, 0.35);
         }
 
@@ -357,12 +389,15 @@ export function WritingDeskSummary({
         .research-notes {
           background: #ffffff;
           border-radius: 12px;
-          padding: 16px;
+          padding: clamp(12px, 3vw, 16px);
           color: #1f2937;
-          font-size: 0.92rem;
-          line-height: 1.55;
+          font-size: clamp(0.85rem, 0.9rem + 0.3vw, 0.95rem);
+          line-height: clamp(1.5, 1.45 + 0.2vw, 1.6);
           border: 1px solid rgba(15, 23, 42, 0.08);
           box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          max-height: min(55vh, 320px);
+          overflow-y: auto;
+          overflow-x: hidden;
         }
 
         .research-notes :global(a) {
@@ -373,6 +408,17 @@ export function WritingDeskSummary({
         .research-notes__placeholder {
           margin: 0;
           color: #6b7280;
+        }
+
+        @media (max-width: 640px) {
+          .research-progress {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .research-progress__spinner {
+            margin-top: 0;
+          }
         }
 
         .create-letter-button {
