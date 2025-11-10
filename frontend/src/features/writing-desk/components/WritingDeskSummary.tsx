@@ -84,43 +84,52 @@ export function WritingDeskSummary({
 }: WritingDeskSummaryProps) {
   return (
     <>
-      <div className="result" aria-live="polite">
+      <div className="result writing-desk-summary" aria-live="polite">
         {letterPhase === 'idle' && (
           <>
-            <h3
-              className="section-title"
-              style={{ fontSize: 'clamp(1.1rem, 1rem + 1vw, 1.25rem)' }}
-            >
+            <h3 className="section-title writing-desk-heading-lg">
               Initial summary captured
             </h3>
-            <p className="section-sub">
+            <p className="section-sub writing-desk-body writing-desk-subtle">
               Thanks for the detail. When you’re ready, start the research to gather supporting evidence.
-          </p>
+            </p>
 
           {serverError && (
-            <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
-              <p style={{ color: '#b91c1c' }}>{serverError}</p>
+            <div
+              className="status"
+              aria-live="assertive"
+              style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}
+            >
+              <p className="writing-desk-body" style={{ color: '#b91c1c' }}>
+                {serverError}
+              </p>
             </div>
           )}
 
-          <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
-            <h4
-              className="section-title"
-              style={{ fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
-            >
+          <div className="card writing-desk-card" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
+            <h4 className="section-title writing-desk-heading-md">
               Research evidence
             </h4>
             {!hasResearchContent && researchStatus !== 'running' && (
-              <p style={{ marginTop: 8 }}>
+              <p
+                className="writing-desk-body"
+                style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.5)' }}
+              >
                 Run research to gather cited evidence that supports your letter. The findings feed straight into your draft.
               </p>
             )}
             {researchStatus === 'error' && researchError && (
-              <div className="status" aria-live="assertive" style={{ marginTop: 12 }}>
-                <p style={{ color: '#b91c1c' }}>{researchError}</p>
+              <div
+                className="status"
+                aria-live="assertive"
+                style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}
+              >
+                <p className="writing-desk-body" style={{ color: '#b91c1c' }}>
+                  {researchError}
+                </p>
               </div>
             )}
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}>
               <button
                 type="button"
                 className="btn-primary"
@@ -130,12 +139,20 @@ export function WritingDeskSummary({
                 {researchButtonLabel}
               </button>
               {researchCreditState === 'low' && (
-                <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                <p
+                  className="writing-desk-body"
+                  style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.45)', color: '#b91c1c' }}
+                >
                   You need at least {formatCredits(deepResearchCreditCost)} credits to run deep research.
                 </p>
               )}
               {researchCreditState === 'loading' && (
-                <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
+                <p
+                  className="writing-desk-body writing-desk-subtle"
+                  style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.45)', color: '#2563eb' }}
+                >
+                  Checking your available credits…
+                </p>
               )}
             </div>
 
@@ -143,34 +160,32 @@ export function WritingDeskSummary({
               <div className="research-progress" role="status" aria-live="polite">
                 <span className="research-progress__spinner" aria-hidden="true" />
                 <div className="research-progress__content">
-                  <p>Gathering evidence — this can take approximately 15-30 minutes while we trace reliable sources.</p>
-                  <p>We&apos;ll post updates in the activity feed below while the research continues.</p>
+                  <p className="writing-desk-body">
+                    Gathering evidence — this can take approximately 15-30 minutes while we trace reliable sources.
+                  </p>
+                  <p className="writing-desk-body">
+                    We&apos;ll post updates in the activity feed below while the research continues.
+                  </p>
                 </div>
               </div>
             )}
 
             {researchStatus === 'running' && researchActivities.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <h5
-                  style={{ margin: '0 0 8px 0', fontSize: 'clamp(0.9rem, 0.88rem + 0.3vw, 0.95rem)' }}
-                >
+              <div style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}>
+                <h5 className="writing-desk-heading-sm" style={{ margin: 0 }}>
                   Latest activity
                 </h5>
-                <ul style={{ paddingLeft: 18, margin: 0 }}>
+                <ul className="writing-desk-list">
                   {researchActivities.map((activity) => (
-                    <li key={activity.id} style={{ marginBottom: 4 }}>
-                      {activity.text}
-                    </li>
+                    <li key={activity.id}>{activity.text}</li>
                   ))}
                 </ul>
               </div>
             )}
 
             {(hasResearchContent || researchStatus === 'running') && (
-              <div style={{ marginTop: 12 }}>
-                <h5
-                  style={{ margin: '0 0 8px 0', fontSize: 'clamp(0.9rem, 0.88rem + 0.3vw, 0.95rem)' }}
-                >
+              <div style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}>
+                <h5 className="writing-desk-heading-sm" style={{ margin: 0 }}>
                   Research notes
                 </h5>
                 <div className="research-notes">
@@ -184,33 +199,30 @@ export function WritingDeskSummary({
                       {researchContent}
                     </ReactMarkdown>
                   ) : (
-                    <p className="research-notes__placeholder">Collecting evidence…</p>
+                    <p className="research-notes__placeholder writing-desk-body writing-desk-subtle">
+                      Collecting evidence…
+                    </p>
                   )}
                 </div>
               </div>
             )}
 
             {researchResponseId && (
-              <p className="reference-id" style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>
+              <p
+                className="reference-id writing-desk-reference"
+                style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}
+              >
                 Research reference ID: {researchResponseId}
               </p>
             )}
           </div>
 
-          <div
-            style={{
-              marginTop: 12,
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              gap: 12,
-            }}
-          >
+          <div className="writing-desk-meta-row">
             <button type="button" className="btn-link" onClick={onToggleSummaryDetails} disabled={loading}>
               {showSummaryDetails ? 'Hide intake details' : 'Show intake details'}
             </button>
             {responseId && !showSummaryDetails && (
-              <span className="reference-id" style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+              <span className="reference-id writing-desk-reference">
                 Reference ID: {responseId}
               </span>
             )}
@@ -218,49 +230,41 @@ export function WritingDeskSummary({
 
           {showSummaryDetails && (
             <>
-              <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
-                <h4
-                  className="section-title"
-                  style={{ fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
-                >
+              <div className="card writing-desk-card" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
+                <h4 className="section-title writing-desk-heading-md">
                   What you told us
                 </h4>
-                <div className="stack" style={{ marginTop: 12 }}>
+                <div className="stack" style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}>
                   {steps.map((step) => (
-                    <div key={step.key} style={{ marginBottom: 16 }}>
+                    <div key={step.key} style={{ marginBottom: 'calc(var(--writing-desk-card-gap) * 0.75)' }}>
                       <div>
-                        <h5
-                          style={{ margin: 0, fontWeight: 600, fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
-                        >
+                        <h5 className="writing-desk-heading-sm" style={{ margin: 0 }}>
                           {step.title}
                         </h5>
                       </div>
-                      <p style={{ margin: '6px 0 0 0' }}>{form[step.key]}</p>
+                      <p className="writing-desk-body" style={{ margin: '6px 0 0 0' }}>
+                        {form[step.key]}
+                      </p>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="card" style={{ padding: 'clamp(14px, 3vw, 20px)', marginTop: 16 }}>
-                <h4
-                  className="section-title"
-                  style={{ fontSize: 'clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem)' }}
-                >
+              <div className="card writing-desk-card" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
+                <h4 className="section-title writing-desk-heading-md">
                   Follow-up questions
                 </h4>
                 {followUps.length > 0 ? (
-                  <ol style={{ marginTop: 8, paddingLeft: 20 }}>
+                  <ol
+                    className="writing-desk-list writing-desk-list--ordered"
+                    style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.5)' }}
+                  >
                     {followUps.map((question, idx) => (
-                      <li key={idx} style={{ marginBottom: 12 }}>
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'flex-start',
-                            gap: 12,
-                          }}
-                        >
-                          <p style={{ marginBottom: 4 }}>{question}</p>
+                      <li key={idx}>
+                        <div className="writing-desk-follow-up-row">
+                          <p className="writing-desk-body" style={{ marginBottom: 4 }}>
+                            {question}
+                          </p>
                           <button
                             type="button"
                             className="btn-link"
@@ -271,19 +275,26 @@ export function WritingDeskSummary({
                             Edit answer
                           </button>
                         </div>
-                        <p style={{ margin: 0, fontWeight: 600 }}>Your answer:</p>
-                        <p style={{ margin: '4px 0 0 0' }}>{followUpAnswers[idx]}</p>
+                        <p className="writing-desk-body" style={{ margin: 0, fontWeight: 600 }}>
+                          Your answer:
+                        </p>
+                        <p className="writing-desk-body" style={{ margin: '4px 0 0 0' }}>
+                          {followUpAnswers[idx]}
+                        </p>
                       </li>
                     ))}
                   </ol>
                 ) : (
-                  <p style={{ marginTop: 8 }}>
+                  <p className="writing-desk-body" style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.5)' }}>
                     No additional questions needed — we have enough detail for the next step.
                   </p>
                 )}
                 {followUps.length > 0 && (
                   <>
-                    <div className="actions" style={{ marginTop: 12 }}>
+                    <div
+                      className="actions writing-desk-actions"
+                      style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}
+                    >
                       <button
                         type="button"
                         className="btn-link"
@@ -295,27 +306,41 @@ export function WritingDeskSummary({
                       </button>
                     </div>
                     {creditState === 'low' && (
-                      <p style={{ marginTop: 8, color: '#b91c1c' }}>
+                      <p
+                        className="writing-desk-body"
+                        style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.45)', color: '#b91c1c' }}
+                      >
                         You need at least {formatCredits(followUpCreditCost)} credits to generate new follow-up questions.
                       </p>
                     )}
                     {creditState === 'loading' && (
-                      <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
+                      <p
+                        className="writing-desk-body writing-desk-subtle"
+                        style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.45)', color: '#2563eb' }}
+                      >
+                        Checking your available credits…
+                      </p>
                     )}
                   </>
                 )}
-                {notes && <p style={{ marginTop: 8, fontStyle: 'italic' }}>{notes}</p>}
+                {notes && (
+                  <p className="writing-desk-body" style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.5)', fontStyle: 'italic' }}>
+                    {notes}
+                  </p>
+                )}
                 {responseId && (
-                  <p style={{ marginTop: 12, fontSize: '0.85rem', color: '#6b7280' }}>Reference ID: {responseId}</p>
+                  <p
+                    className="writing-desk-reference"
+                    style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}
+                  >
+                    Reference ID: {responseId}
+                  </p>
                 )}
               </div>
             </>
           )}
 
-          <div
-            className="actions"
-            style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}
-          >
+          <div className="actions writing-desk-actions" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
             <button type="button" className="btn-secondary" onClick={onStartOver} disabled={loading}>
               Start again
             </button>
@@ -340,12 +365,20 @@ export function WritingDeskSummary({
               </button>
             )}
             {researchStatus === 'completed' && letterCreditState === 'low' && (
-              <p style={{ marginTop: 8, color: '#b91c1c' }}>
+              <p
+                className="writing-desk-body"
+                style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.45)', color: '#b91c1c' }}
+              >
                 You need at least {formatCredits(letterCreditCost)} credits to create your letter.
               </p>
             )}
             {researchStatus === 'completed' && letterCreditState === 'loading' && (
-              <p style={{ marginTop: 8, color: '#2563eb' }}>Checking your available credits…</p>
+              <p
+                className="writing-desk-body writing-desk-subtle"
+                style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.45)', color: '#2563eb' }}
+              >
+                Checking your available credits…
+              </p>
             )}
           </div>
         </>
@@ -354,23 +387,24 @@ export function WritingDeskSummary({
         {letterPhase !== 'idle' && <WritingDeskLetterPanel {...letterPanelProps} />}
       </div>
       <style>{`
-        .result {
+        .writing-desk-summary {
           display: flex;
           flex-direction: column;
+          gap: var(--writing-desk-card-gap);
         }
 
-        .research-progress {
+        .writing-desk-summary .research-progress {
           display: flex;
-          gap: 12px;
-          margin-top: 16px;
+          gap: calc(var(--writing-desk-card-gap) * 0.5);
+          margin-top: calc(var(--writing-desk-card-gap) * 0.6);
           align-items: flex-start;
           background: #f8fafc;
           border-radius: 12px;
-          padding: clamp(10px, 2.4vw, 16px);
+          padding: calc(var(--writing-desk-card-padding) * 0.75);
           border: 1px solid rgba(148, 163, 184, 0.35);
         }
 
-        .research-progress__spinner {
+        .writing-desk-summary .research-progress__spinner {
           width: 16px;
           height: 16px;
           border: 2px solid rgba(59, 130, 246, 0.3);
@@ -380,44 +414,72 @@ export function WritingDeskSummary({
           margin-top: 4px;
         }
 
-        .research-progress__content {
+        .writing-desk-summary .research-progress__content {
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: calc(var(--writing-desk-card-gap) * 0.3);
         }
 
-        .research-notes {
+        .writing-desk-summary .research-notes {
           background: #ffffff;
           border-radius: 12px;
-          padding: clamp(12px, 3vw, 16px);
+          padding: calc(var(--writing-desk-card-padding) * 0.85);
           color: #1f2937;
-          font-size: clamp(0.85rem, 0.9rem + 0.3vw, 0.95rem);
-          line-height: clamp(1.5, 1.45 + 0.2vw, 1.6);
+          font-size: var(--writing-desk-body-size);
+          line-height: var(--writing-desk-body-line);
           border: 1px solid rgba(15, 23, 42, 0.08);
           box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-          max-height: min(55vh, 320px);
+          max-height: min(52vh, 280px);
           overflow-y: auto;
           overflow-x: hidden;
         }
 
-        .research-notes :global(a) {
+        .writing-desk-summary .research-notes :global(a) {
           color: #2563eb;
           text-decoration: underline;
         }
 
-        .research-notes__placeholder {
+        .writing-desk-summary .research-notes__placeholder {
           margin: 0;
-          color: #6b7280;
         }
 
-        @media (max-width: 640px) {
-          .research-progress {
+        .writing-desk-meta-row {
+          margin-top: calc(var(--writing-desk-card-gap) * 0.6);
+          display: flex;
+          flex-wrap: wrap;
+          gap: calc(var(--writing-desk-card-gap) * 0.5);
+          align-items: center;
+        }
+
+        .writing-desk-follow-up-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: calc(var(--writing-desk-card-gap) * 0.5);
+        }
+
+        @media (max-width: 720px) {
+          .writing-desk-summary .research-progress {
             flex-direction: column;
             align-items: stretch;
           }
 
-          .research-progress__spinner {
+          .writing-desk-summary .research-progress__spinner {
             margin-top: 0;
+          }
+
+          .writing-desk-meta-row {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+
+          .writing-desk-follow-up-row {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .writing-desk-summary .research-notes {
+            max-height: min(48vh, 240px);
           }
         }
 
