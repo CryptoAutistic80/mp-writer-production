@@ -1830,3 +1830,398 @@ body.cookie-consent-pending {
   color: var(--ink-600);
   margin-top: 2px;
 }
+
+/* ============================================
+   Mobile Optimizations (≤640px and ≤480px)
+   Based on tested optimizations from preview pages
+   ============================================ */
+
+/* Hero Section Padding Reductions */
+@media (max-width: 640px) {
+  .hero-section {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-section {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+}
+
+/* Card Padding Reductions */
+@media (max-width: 640px) {
+  .hero-section .card {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    max-width: calc(100vw - 16px) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-section .card {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    max-width: calc(100vw - 12px) !important;
+  }
+}
+
+/* Typography Optimizations */
+@media (max-width: 640px) {
+  .section-title {
+    font-size: 20px !important;
+  }
+
+  .section-sub {
+    font-size: 0.9rem !important;
+    line-height: 1.5 !important;
+  }
+
+  h1, h2, h3, h4, h5 {
+    font-size: 0.9em !important;
+  }
+
+  h1 {
+    font-size: clamp(28px, 5vw, 36px) !important;
+  }
+
+  h2 {
+    font-size: clamp(22px, 4vw, 28px) !important;
+  }
+
+  h3 {
+    font-size: clamp(18px, 3.5vw, 22px) !important;
+  }
+
+  h4 {
+    font-size: clamp(16px, 3vw, 20px) !important;
+  }
+
+  h5 {
+    font-size: clamp(14px, 2.5vw, 18px) !important;
+  }
+
+  p {
+    font-size: 0.9rem !important;
+    line-height: 1.5 !important;
+  }
+
+  .hero-title {
+    font-size: clamp(28px, 5vw, 40px) !important;
+  }
+
+  .hero-sub {
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .section-title {
+    font-size: 19px !important;
+  }
+
+  .section-sub {
+    font-size: 0.85rem !important;
+  }
+
+  p {
+    font-size: 0.85rem !important;
+  }
+
+  .hero-title {
+    font-size: clamp(24px, 5vw, 36px) !important;
+  }
+
+  .hero-sub {
+    font-size: 15px !important;
+  }
+}
+
+/* Research Notes Optimizations */
+@media (max-width: 640px) {
+  .research-notes {
+    padding: 8px !important;
+    font-size: 0.85rem !important;
+    line-height: 1.5 !important;
+  }
+
+  .research-notes h1,
+  .research-notes h2,
+  .research-notes h3,
+  .research-notes h4,
+  .research-notes h5,
+  .research-notes h6 {
+    font-size: 1.1em !important;
+    margin-top: 0.75em !important;
+    margin-bottom: 0.5em !important;
+  }
+
+  .research-notes p,
+  .research-notes ul,
+  .research-notes ol {
+    margin-bottom: 0.6rem !important;
+  }
+
+  .research-notes ul,
+  .research-notes ol {
+    padding-left: 1rem !important;
+  }
+
+  .research-notes table {
+    font-size: 0.8rem !important;
+  }
+
+  .research-notes code {
+    font-size: 0.8em !important;
+    padding: 0.08rem 0.2rem !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .research-notes {
+    padding: 6px !important;
+    font-size: 0.8rem !important;
+  }
+}
+
+/* Letter Preview Optimizations */
+@media (max-width: 640px) {
+  .letter-preview {
+    font-size: 0.9rem !important;
+    line-height: 1.5 !important;
+  }
+
+  .letter-preview p {
+    margin-bottom: 0.85rem !important;
+  }
+
+  .letter-preview ul,
+  .letter-preview ol {
+    padding-left: 1.25rem !important;
+    margin-bottom: 0.85rem !important;
+  }
+
+  .letter-preview li {
+    margin-bottom: 0.4rem !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .letter-preview {
+    font-size: 0.85rem !important;
+  }
+
+  .letter-preview p {
+    margin-bottom: 0.75rem !important;
+  }
+}
+
+/* Research Progress Optimizations */
+@media (max-width: 640px) {
+  .research-progress {
+    padding: 10px !important;
+    gap: 10px !important;
+    font-size: 0.85rem !important;
+  }
+
+  .research-progress__content {
+    font-size: 0.85rem !important;
+    line-height: 1.5 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .research-progress {
+    font-size: 0.8rem !important;
+  }
+
+  .research-progress__content {
+    font-size: 0.8rem !important;
+  }
+}
+
+/* Activity and Reasoning Feed Lists */
+@media (max-width: 640px) {
+  /* Target lists with padding-left: 18px (React converts paddingLeft: 18 to padding-left: 18px) */
+  ul[style*="padding-left: 18"],
+  ul[style*="padding-left:18"],
+  .activities-list,
+  .reasoning-list {
+    font-size: 0.85rem !important;
+    line-height: 1.5 !important;
+    padding-left: 16px !important;
+  }
+
+  ul[style*="padding-left: 18"] li,
+  ul[style*="padding-left:18"] li,
+  .activities-list li,
+  .reasoning-list li {
+    margin-bottom: 3px !important;
+  }
+
+  /* Target h5 elements with fontSize: '0.95rem' (React converts to font-size: 0.95rem) */
+  h5[style*="font-size: 0.95rem"],
+  h5[style*="font-size:0.95rem"],
+  .activities-heading,
+  .reasoning-heading,
+  .notes-heading {
+    font-size: 0.85rem !important;
+    margin-bottom: 6px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  ul[style*="padding-left: 18"],
+  ul[style*="padding-left:18"],
+  .activities-list,
+  .reasoning-list {
+    font-size: 0.8rem !important;
+  }
+}
+
+/* Button Optimizations */
+@media (max-width: 640px) {
+  .btn-primary,
+  .btn-secondary {
+    font-size: 0.9rem !important;
+    padding: 10px 14px !important;
+    min-height: 44px !important; /* Maintain accessibility */
+  }
+
+  .actions {
+    gap: 10px !important;
+  }
+
+  .actions.letter-viewer-actions {
+    gap: 10px !important;
+    margin-top: 12px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .btn-primary,
+  .btn-secondary {
+    font-size: 0.85rem !important;
+    padding: 9px 12px !important;
+    min-height: 44px !important; /* Maintain accessibility */
+  }
+}
+
+/* Reference ID Optimizations */
+@media (max-width: 640px) {
+  .reference-id {
+    font-size: 0.75rem !important;
+    margin-top: 10px !important;
+  }
+}
+
+/* List and Content Spacing Reductions */
+@media (max-width: 640px) {
+  ul:not(.mp-links),
+  ol {
+    padding-left: 1rem !important;
+  }
+
+  ul:not(.mp-links) li,
+  ol li {
+    margin-bottom: 0.4rem !important;
+  }
+
+  .step {
+    gap: 12px !important;
+  }
+
+  .step-sub {
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+  }
+
+  .value-callout {
+    padding: 14px 16px !important;
+  }
+
+  .value-callout .value-1 {
+    font-size: 15px !important;
+  }
+
+  .value-callout .value-2,
+  .value-callout .value-3 {
+    font-size: 0.85rem !important;
+    line-height: 1.5 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .step-sub {
+    font-size: 12px !important;
+  }
+
+  .value-callout {
+    padding: 12px 14px !important;
+  }
+
+  .value-callout .value-1 {
+    font-size: 14px !important;
+  }
+}
+
+/* Stepper Optimizations */
+@media (max-width: 640px) {
+  .stepper {
+    padding: 12px !important;
+    gap: 16px !important;
+  }
+
+  .step-icon {
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 14px !important;
+  }
+}
+
+/* Copy/Content Section Optimizations */
+@media (max-width: 640px) {
+  .copy p {
+    font-size: 0.9rem !important;
+    line-height: 1.5 !important;
+    margin-top: 8px !important;
+  }
+
+  .copy .emph {
+    font-size: 0.95rem !important;
+    margin-top: 12px !important;
+  }
+
+  .copy ul,
+  .copy ol {
+    font-size: 0.9rem !important;
+    padding-left: 18px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .copy p {
+    font-size: 0.85rem !important;
+  }
+
+  .copy .emph {
+    font-size: 0.9rem !important;
+  }
+}
+
+/* Fineprint Optimizations */
+@media (max-width: 640px) {
+  .fineprint {
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .fineprint {
+    font-size: 11px !important;
+  }
+}
