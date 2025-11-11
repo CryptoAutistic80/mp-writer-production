@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 const PRICING_PACKAGES = [
@@ -23,6 +24,63 @@ const PRICING_PACKAGES = [
   },
 ];
 
+const CIVIC_REFERENCES = [
+  {
+    name: 'House of Commons Library',
+    description:
+      'Surface impartial research briefings so your MP sees evidence from the official parliamentary knowledge base.',
+    url: 'https://commonslibrary.parliament.uk/',
+  },
+  {
+    name: 'National Audit Office',
+    description:
+      'Highlight watchdog reports on government performance when you need to reference investigations or spending scrutiny.',
+    url: 'https://www.nao.org.uk/',
+  },
+  {
+    name: 'Democracy Club',
+    description:
+      'Match every UK postcode to the correct MP using the open civic data maintained by Democracy Club.',
+    url: 'https://democracyclub.org.uk/',
+  },
+];
+
+const CIVIC_USAGE = [
+  {
+    title: 'Parliamentary and Health Service Ombudsman escalation steps',
+    description:
+      "MPWriter surfaces the Ombudsman's official complaint checklists so you know when to escalate beyond your MP.",
+    url: 'https://www.ombudsman.org.uk/making-complaint',
+  },
+  {
+    title: 'GOV.UK tone and accessibility standards',
+    description:
+      'Letters are drafted against the GOV.UK service manual guidance, keeping your message clear, respectful, and inclusive.',
+    url: 'https://www.gov.uk/service-manual',
+  },
+  {
+    title: 'Boundary Commission constituency coverage',
+    description:
+      'Constituency data stays current with Boundary Commission updates so every letter routes to the correct representative.',
+    url: 'https://boundarycommissionforengland.independent.gov.uk/',
+  },
+];
+
+const TRUST_BADGES = [
+  {
+    title: 'Built for UK constituencies',
+    description: 'Powered by official parliamentary boundaries and postcode lookup so every letter reaches the right MP.',
+  },
+  {
+    title: 'Researched with UK sources',
+    description: 'Each briefing links to trusted UK media, Parliament libraries, and watchdog reports for credible complaints to government.',
+  },
+  {
+    title: 'Data-responsible',
+    description: 'Secure Google sign-in and GDPR-ready storage keep constituent stories private and under your control.',
+  },
+];
+
 export default function Hero() {
   const [isPricingOpen, setPricingOpen] = useState(false);
 
@@ -42,12 +100,22 @@ export default function Hero() {
       <div className="hero-top">
         <div className="hero-copy">
           <h1 className="hero-title">
-            Your voice,
+            Contact your MP quickly
             <br />
-            <span className="hero-highlight">clearly heard.</span>
+            <span className="hero-highlight">with confident research.</span>
           </h1>
-          <p className="hero-sub">Craft researched, respectful letters to your MP in minutes. We handle postcode lookup, deep AI research with citations, tone personalisation, and make it easy to edit and export. You can choose to save your letter at the end for later.</p>
+          <p className="hero-sub">
+            Craft researched, respectful letters that help you contact your MP, complain to the UK government, and write to representatives quickly. MPWriter pairs postcode lookup with deep AI research, tone personalisation, and easy export so your message lands with impact.
+          </p>
           <div className="cta">
+            <div className="hero-buttons" role="group" aria-label="Key actions">
+              <Link className="btn-primary" href="#start-contact">
+                Start contacting your MP
+              </Link>
+              <Link className="btn-secondary" href="/how-it-works">
+                See how it works
+              </Link>
+            </div>
             <p className="fineprint mobile-only">
               <a className="micro-link" href="/how-it-works">How it works</a>
             </p>
@@ -59,9 +127,11 @@ export default function Hero() {
         </div>
       </div>
 
-      <div className="value-callout" role="note" aria-label="Key benefits">
+      <div id="start-contact" className="value-callout" role="note" aria-label="Key benefits">
         <p className="value-1"><strong>Most of us never write to our MP.</strong></p>
-        <p className="value-2">For years, writing to your MP meant hours of digging for facts, drafting, and editing — so important issues often went unspoken. MP Writer changes that. We pair AI-powered research with a clear drafting flow so you can deliver a persuasive, evidence-backed letter in minutes. Share what matters and we'll surface the facts, shape the message, and help it land with impact.</p>
+        <p className="value-2">
+          For years, writing to your MP in the UK meant hours of digging for facts, drafting, and editing — so important issues often went unspoken. MPWriter changes that. Share what matters and we surface the evidence, shape the message, and help it land with impact, whether you are rallying support or lodging a formal complaint to a government department.
+        </p>
         <p className="value-3">
           <strong>One credit = One letter.</strong> Credit packs from £6.99.{' '}
           <button
@@ -112,6 +182,48 @@ export default function Hero() {
         </div>
       </div>
       <div className="copy" />
+
+      <section className="proof-sections" aria-label="MPWriter credibility">
+        <div className="proof-block">
+          <h2 className="proof-heading">Grounded in trusted UK civic research</h2>
+          <ul className="testimonial-grid" aria-label="Civic research sources">
+            {CIVIC_REFERENCES.map((reference) => (
+              <li key={reference.name} className="testimonial-card">
+                <p className="testimonial-name">
+                  <a className="micro-link" href={reference.url} target="_blank" rel="noreferrer">
+                    {reference.name}
+                  </a>
+                </p>
+                <p className="testimonial-quote">{reference.description}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="proof-block">
+          <h2 className="proof-heading">Guides your UK complaint from draft to escalation</h2>
+          <ul className="usage-list" aria-label="Civic usage references">
+            {CIVIC_USAGE.map((item) => (
+              <li key={item.title} className="usage-item">
+                <a className="micro-link" href={item.url} target="_blank" rel="noreferrer">
+                  <strong>{item.title}</strong>
+                </a>
+                <p>{item.description}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="proof-block">
+          <h2 className="proof-heading">How MPWriter earns your trust</h2>
+          <ul className="trust-badges" aria-label="Trust commitments">
+            {TRUST_BADGES.map((badge) => (
+              <li key={badge.title} className="trust-badge">
+                <strong>{badge.title}</strong>
+                <p>{badge.description}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
 
       <div className="card-footer">
         <div className="brand-sub"><img src="/assets/header-title.png" alt="MPWriter" /></div>
