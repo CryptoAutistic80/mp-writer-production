@@ -24,28 +24,46 @@ const PRICING_PACKAGES = [
   },
 ];
 
-const TESTIMONIALS = [
+const CIVIC_REFERENCES = [
   {
-    quote:
-      'MPWriter helped our tenants union contact our MP quickly with the right evidence. The briefing notes meant we could complain to government departments with confidence.',
-    name: 'Amelia P., London housing campaigner',
+    name: 'House of Commons Library',
+    description:
+      'Surface impartial research briefings so your MP sees evidence from the official parliamentary knowledge base.',
+    url: 'https://commonslibrary.parliament.uk/',
   },
   {
-    quote:
-      'I finally contacted my MP about disabled access in our town centre. The tailored UK research saved me hours and kept the tone respectful.',
-    name: 'Jon B., Greater Manchester constituent',
+    name: 'National Audit Office',
+    description:
+      'Highlight watchdog reports on government performance when you need to reference investigations or spending scrutiny.',
+    url: 'https://www.nao.org.uk/',
   },
   {
-    quote:
-      'As a community organiser, I need to write to MPs quickly and accurately. MPWriter’s citations and tone controls make it simple to brief supporters.',
-    name: 'Priya K., Leeds civic volunteer',
+    name: 'Democracy Club',
+    description:
+      'Match every UK postcode to the correct MP using the open civic data maintained by Democracy Club.',
+    url: 'https://democracyclub.org.uk/',
   },
 ];
 
-const PRESS_LOGOS = [
-  { name: 'The Yorkshire Post', url: 'https://www.yorkshirepost.co.uk/' },
-  { name: 'BBC Radio Sheffield', url: 'https://www.bbc.co.uk/sounds/play/live:bbc_radio_sheffield' },
-  { name: 'Democracy Club', url: 'https://democracyclub.org.uk/' },
+const CIVIC_USAGE = [
+  {
+    title: 'Complaint and escalation guidance',
+    description:
+      'Incorporates process checklists from the Parliamentary and Health Service Ombudsman so you know when to escalate issues.',
+    url: 'https://www.ombudsman.org.uk/making-complaint',
+  },
+  {
+    title: 'Data standards aligned with GOV.UK',
+    description:
+      'Follows GOV.UK service manual tone and accessibility guidance to keep letters clear, respectful, and inclusive.',
+    url: 'https://www.gov.uk/service-manual',
+  },
+  {
+    title: 'Constituency boundaries kept current',
+    description:
+      'Updates MP coverage using data from the Boundary Commission so every message routes to the right representative.',
+    url: 'https://boundarycommissionforengland.independent.gov.uk/',
+  },
 ];
 
 const TRUST_BADGES = [
@@ -167,24 +185,29 @@ export default function Hero() {
 
       <section className="proof-sections" aria-label="MPWriter credibility">
         <div className="proof-block">
-          <h2 className="proof-heading">Trusted by UK civic voices</h2>
-          <ul className="testimonial-grid">
-            {TESTIMONIALS.map((testimonial) => (
-              <li key={testimonial.name} className="testimonial-card">
-                <p className="testimonial-quote">“{testimonial.quote}”</p>
-                <p className="testimonial-name">{testimonial.name}</p>
+          <h2 className="proof-heading">Grounded in trusted UK civic research</h2>
+          <ul className="testimonial-grid" aria-label="Civic research sources">
+            {CIVIC_REFERENCES.map((reference) => (
+              <li key={reference.name} className="testimonial-card">
+                <p className="testimonial-name">
+                  <a className="micro-link" href={reference.url} target="_blank" rel="noreferrer">
+                    {reference.name}
+                  </a>
+                </p>
+                <p className="testimonial-quote">{reference.description}</p>
               </li>
             ))}
           </ul>
         </div>
         <div className="proof-block">
-          <h2 className="proof-heading">Featured by UK democracy partners</h2>
-          <ul className="press-logos" aria-label="Press coverage">
-            {PRESS_LOGOS.map((press) => (
-              <li key={press.name} className="press-logo">
-                <a href={press.url} target="_blank" rel="noreferrer" aria-label={`Learn more about ${press.name}`}>
-                  {press.name}
+          <h2 className="proof-heading">Keeps UK complaint workflows on track</h2>
+          <ul className="usage-list" aria-label="Civic usage references">
+            {CIVIC_USAGE.map((item) => (
+              <li key={item.title} className="usage-item">
+                <a className="micro-link" href={item.url} target="_blank" rel="noreferrer">
+                  <strong>{item.title}</strong>
                 </a>
+                <p>{item.description}</p>
               </li>
             ))}
           </ul>
