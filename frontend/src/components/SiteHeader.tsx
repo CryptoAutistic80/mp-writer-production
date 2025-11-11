@@ -51,6 +51,7 @@ export default function SiteHeader() {
         </div>
         <nav className="nav">
           <Link href="/how-it-works" className="hide-mobile">How it works</Link>
+          <Link href="/blog">Guides</Link>
           {isAuthed && (
             <>
               <Link href="/dashboard">Dashboard</Link>
