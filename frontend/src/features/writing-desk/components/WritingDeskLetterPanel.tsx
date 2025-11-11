@@ -62,9 +62,11 @@ export function WritingDeskLetterPanel({
 
   if (phase === 'tone') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Choose a tone for your letter</h4>
-        <p className="section-sub">
+      <section className="card writing-desk-card writing-desk-letter-panel" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
+        <h4 className="section-title writing-desk-heading-md">
+          Choose a tone for your letter
+        </h4>
+        <p className="section-sub writing-desk-body writing-desk-subtle">
           Pick the style you want the drafted MP letter to use. You can always compose another letter later in a different
           tone.
         </p>
@@ -97,47 +99,58 @@ export function WritingDeskLetterPanel({
             );
           })}
         </div>
-        <div className="actions" style={{ marginTop: 16, display: 'flex', gap: 12 }}>
+        <div
+          className="actions writing-desk-actions"
+          style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.75)' }}
+        >
           <button type="button" className="btn-secondary" onClick={onBackToSummary}>
             Back to summary
           </button>
         </div>
-      </div>
+      </section>
     );
   } else if (phase === 'streaming') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Drafting your letter</h4>
+      <section className="card writing-desk-card writing-desk-letter-panel" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
+        <h4 className="section-title writing-desk-heading-md">
+          Drafting your letter
+        </h4>
         {status === 'generating' && statusMessage && (
-          <div className="research-progress" role="status" aria-live="polite" style={{ marginTop: 16 }}>
+          <div className="research-progress" role="status" aria-live="polite">
             <span className="research-progress__spinner" aria-hidden="true" />
             <div className="research-progress__content">
-              <p>{statusMessage}</p>
-              <p>We’ll keep posting updates in the reasoning feed while the letter takes shape.</p>
+              <p className="writing-desk-body">{statusMessage}</p>
+              <p className="writing-desk-body writing-desk-subtle">
+                We’ll keep posting updates in the reasoning feed while the letter takes shape.
+              </p>
             </div>
           </div>
         )}
         {reasoningVisible && (
-          <div style={{ marginTop: 16 }}>
-            <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Reasoning feed</h5>
+          <div style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}>
+            <h5 className="writing-desk-heading-sm" style={{ margin: 0 }}>
+              Reasoning feed
+            </h5>
             {events.length > 0 ? (
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
+              <ul className="writing-desk-list">
                 {events.map((event) => (
-                  <li key={event.id} style={{ marginBottom: 4 }}>
-                    {event.text}
-                  </li>
+                  <li key={event.id}>{event.text}</li>
                 ))}
               </ul>
             ) : (
-              <p style={{ margin: 0, color: '#6b7280' }}>The assistant is planning the letter…</p>
+              <p className="writing-desk-body writing-desk-subtle" style={{ margin: 0 }}>
+                The assistant is planning the letter…
+              </p>
             )}
           </div>
         )}
-        <div style={{ marginTop: 16 }}>
-          <h5 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Letter preview</h5>
+        <div style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}>
+          <h5 className="writing-desk-heading-sm" style={{ margin: 0 }}>
+            Letter preview
+          </h5>
           <div className="letter-preview" dangerouslySetInnerHTML={{ __html: letterHtml || DEFAULT_PREVIEW }} />
         </div>
-      </div>
+      </section>
     );
   } else if (phase === 'completed' && metadata) {
     const toneMap =
@@ -148,17 +161,19 @@ export function WritingDeskLetterPanel({
       isSaving || !responseId || !metadata || !letterHtml || (savedResponseId !== null && savedResponseId === responseId);
 
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem' }}>Your drafted letter</h4>
-        <p className="section-sub">
+      <section className="card writing-desk-card writing-desk-letter-panel" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
+        <h4 className="section-title writing-desk-heading-md">
+          Your drafted letter
+        </h4>
+        <p className="section-sub writing-desk-body writing-desk-subtle">
           Tone: {toneLabel} · Date {dateLabel}
         </p>
         {responseId && (
-          <p className="reference-id" style={{ marginTop: 4, fontSize: '0.85rem', color: '#6b7280' }}>
+          <p className="reference-id writing-desk-reference" style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.35)' }}>
             Letter reference ID: {responseId}
           </p>
         )}
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.6)' }}>
           <LetterViewer
             letterHtml={letterHtml}
             metadata={metadata}
@@ -205,16 +220,23 @@ export function WritingDeskLetterPanel({
           />
         </div>
         {toastMessage && <Toast>{toastMessage}</Toast>}
-      </div>
+      </section>
     );
   } else if (phase === 'error') {
     content = (
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <h4 className="section-title" style={{ fontSize: '1.1rem', color: '#b91c1c' }}>
+      <section className="card writing-desk-card writing-desk-letter-panel" style={{ marginTop: 'var(--writing-desk-card-gap)' }}>
+        <h4 className="section-title writing-desk-heading-md" style={{ color: '#b91c1c' }}>
           We couldn&apos;t finish your letter
         </h4>
-        {letterError && <p style={{ marginTop: 8 }}>{letterError}</p>}
-        <div className="actions" style={{ marginTop: 16, display: 'flex', gap: 12 }}>
+        {letterError && (
+          <p className="writing-desk-body" style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.5)' }}>
+            {letterError}
+          </p>
+        )}
+        <div
+          className="actions writing-desk-actions"
+          style={{ marginTop: 'calc(var(--writing-desk-card-gap) * 0.75)' }}
+        >
           <button type="button" className="btn-primary" onClick={onTryAgain}>
             Try again
           </button>
@@ -222,7 +244,7 @@ export function WritingDeskLetterPanel({
             Back to summary
           </button>
         </div>
-      </div>
+      </section>
     );
   }
 
@@ -258,19 +280,9 @@ export function WritingDeskLetterPanel({
 
         .tone-grid {
           display: grid;
-          gap: 16px;
-          margin-top: 16px;
+          gap: calc(var(--writing-desk-card-gap) * 0.75);
+          margin-top: calc(var(--writing-desk-card-gap) * 0.75);
           grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        }
-
-        @media (max-width: 640px) {
-          .tone-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .tone-option {
-            padding: 16px;
-          }
         }
 
         .tone-option {
@@ -287,7 +299,7 @@ export function WritingDeskLetterPanel({
           border: 1px solid var(--tone-border);
           background: var(--tone-bg);
           border-radius: 16px;
-          padding: 20px;
+          padding: calc(var(--writing-desk-card-padding) * 0.9);
           display: flex;
           flex-direction: column;
           gap: 8px;
@@ -339,12 +351,13 @@ export function WritingDeskLetterPanel({
 
         .tone-option__label {
           font-weight: 600;
-          font-size: 1rem;
+          font-size: var(--writing-desk-subtitle-size);
           color: var(--tone-heading);
         }
 
         .tone-option__description {
-          font-size: 0.9rem;
+          font-size: var(--writing-desk-body-size);
+          line-height: var(--writing-desk-body-line);
           color: var(--tone-text);
         }
 
@@ -414,14 +427,19 @@ export function WritingDeskLetterPanel({
           --tone-shadow: rgba(147, 51, 234, 0.18);
         }
 
+        .writing-desk-letter-panel .letter-preview {
+          font-size: var(--writing-desk-body-size);
+          line-height: var(--writing-desk-body-line);
+        }
+
         .research-progress {
           display: flex;
-          gap: 12px;
-          margin-top: 16px;
+          gap: calc(var(--writing-desk-card-gap) * 0.5);
+          margin-top: calc(var(--writing-desk-card-gap) * 0.6);
           align-items: flex-start;
           background: #f8fafc;
           border-radius: 12px;
-          padding: 12px;
+          padding: calc(var(--writing-desk-card-padding) * 0.75);
           border: 1px solid rgba(148, 163, 184, 0.35);
         }
 
@@ -438,7 +456,37 @@ export function WritingDeskLetterPanel({
         .research-progress__content {
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: calc(var(--writing-desk-card-gap) * 0.3);
+        }
+
+        @media (max-width: 720px) {
+          .tone-grid {
+            grid-template-columns: 1fr;
+            gap: calc(var(--writing-desk-card-gap) * 0.6);
+          }
+
+          .tone-option {
+            gap: 6px;
+          }
+
+          .tone-option__badge {
+            width: 40px;
+            height: 40px;
+          }
+
+          .writing-desk-letter-panel .letter-preview {
+            font-size: clamp(0.82rem, 0.78rem + 0.6vw, 0.94rem);
+            line-height: clamp(1.32, 1.28 + 0.22vw, 1.5);
+          }
+
+          .research-progress {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .research-progress__spinner {
+            margin-top: 0;
+          }
         }
 
         @keyframes spin {
