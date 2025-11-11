@@ -13,11 +13,12 @@ export function generateStaticParams() {
 }
 
 type BlogPostPageProps = {
-  params: { slug: string };
+  params: Promise<{ slug: string }>;
 };
 
-export function generateMetadata({ params }: BlogPostPageProps) {
-  const post = getBlogPost(params.slug);
+export async function generateMetadata({ params }: BlogPostPageProps) {
+  const { slug } = await params;
+  const post = getBlogPost(slug);
 
   if (!post) {
     return createMetadata({ title: 'Article not found', noindex: true });
@@ -34,8 +35,9 @@ const renderParagraph = (text: string, key: string) => (
   <p key={key} dangerouslySetInnerHTML={{ __html: text }} />
 );
 
-export default function BlogPostPage({ params }: BlogPostPageProps) {
-  const post = getBlogPost(params.slug);
+export default async function BlogPostPage({ params }: BlogPostPageProps) {
+  const { slug } = await params;
+  const post = getBlogPost(slug);
 
   if (!post) {
     notFound();
