@@ -218,7 +218,7 @@ export const writeAnEffectiveMpLetter: BlogPost = {
       content: [
         `Use descriptive filenames when uploading attachments (for example, <code>2025-01-20-housing-repairs-letter.pdf</code>). This helps caseworkers file your documents correctly.`,
         `Add UTM parameters to links pointing back to <a href="/" class="micro-link">MPWriter</a> or supporting resources. This feeds marketing analytics so your CRM can attribute conversions from the blog to in-app activity.`,
-        `After sending, update your sitemap if you published a related article or resource. Keeping the `/sitemap.xml` current helps search engines and constituents discover the latest guidance.`,
+        `After sending, update your sitemap if you published a related article or resource. Keeping the <code>/sitemap.xml</code> current helps search engines and constituents discover the latest guidance.`,
       ],
     },
   ],
