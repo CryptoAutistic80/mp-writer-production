@@ -112,7 +112,7 @@ export default function Hero() {
               <Link className="btn-primary" href="#start-contact">
                 Start contacting your MP
               </Link>
-              <Link className="btn-secondary" href="#features">
+              <Link className="btn-secondary" href="/how-it-works">
                 See how it works
               </Link>
             </div>
