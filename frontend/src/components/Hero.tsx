@@ -47,21 +47,21 @@ const CIVIC_REFERENCES = [
 
 const CIVIC_USAGE = [
   {
-    title: 'Complaint and escalation guidance',
+    title: 'Parliamentary and Health Service Ombudsman escalation steps',
     description:
-      'Incorporates process checklists from the Parliamentary and Health Service Ombudsman so you know when to escalate issues.',
+      "MPWriter surfaces the Ombudsman's official complaint checklists so you know when to escalate beyond your MP.",
     url: 'https://www.ombudsman.org.uk/making-complaint',
   },
   {
-    title: 'Data standards aligned with GOV.UK',
+    title: 'GOV.UK tone and accessibility standards',
     description:
-      'Follows GOV.UK service manual tone and accessibility guidance to keep letters clear, respectful, and inclusive.',
+      'Letters are drafted against the GOV.UK service manual guidance, keeping your message clear, respectful, and inclusive.',
     url: 'https://www.gov.uk/service-manual',
   },
   {
-    title: 'Constituency boundaries kept current',
+    title: 'Boundary Commission constituency coverage',
     description:
-      'Updates MP coverage using data from the Boundary Commission so every message routes to the right representative.',
+      'Constituency data stays current with Boundary Commission updates so every letter routes to the correct representative.',
     url: 'https://boundarycommissionforengland.independent.gov.uk/',
   },
 ];
@@ -200,7 +200,7 @@ export default function Hero() {
           </ul>
         </div>
         <div className="proof-block">
-          <h2 className="proof-heading">Keeps UK complaint workflows on track</h2>
+          <h2 className="proof-heading">Guides your UK complaint from draft to escalation</h2>
           <ul className="usage-list" aria-label="Civic usage references">
             {CIVIC_USAGE.map((item) => (
               <li key={item.title} className="usage-item">
