@@ -213,8 +213,8 @@ export default function Hero() {
           </ul>
         </div>
         <div className="proof-block">
-          <h2 className="proof-heading">Confidence badges</h2>
-          <ul className="trust-badges" aria-label="Trust badges">
+          <h2 className="proof-heading">How MPWriter earns your trust</h2>
+          <ul className="trust-badges" aria-label="Trust commitments">
             {TRUST_BADGES.map((badge) => (
               <li key={badge.title} className="trust-badge">
                 <strong>{badge.title}</strong>
