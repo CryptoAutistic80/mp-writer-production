@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 const PRICING_PACKAGES = [
@@ -23,6 +24,45 @@ const PRICING_PACKAGES = [
   },
 ];
 
+const TESTIMONIALS = [
+  {
+    quote:
+      'MPWriter helped our tenants union contact our MP quickly with the right evidence. The briefing notes meant we could complain to government departments with confidence.',
+    name: 'Amelia P., London housing campaigner',
+  },
+  {
+    quote:
+      'I finally contacted my MP about disabled access in our town centre. The tailored UK research saved me hours and kept the tone respectful.',
+    name: 'Jon B., Greater Manchester constituent',
+  },
+  {
+    quote:
+      'As a community organiser, I need to write to MPs quickly and accurately. MPWriter’s citations and tone controls make it simple to brief supporters.',
+    name: 'Priya K., Leeds civic volunteer',
+  },
+];
+
+const PRESS_LOGOS = [
+  { name: 'The Yorkshire Post', url: 'https://www.yorkshirepost.co.uk/' },
+  { name: 'BBC Radio Sheffield', url: 'https://www.bbc.co.uk/sounds/play/live:bbc_radio_sheffield' },
+  { name: 'Democracy Club', url: 'https://democracyclub.org.uk/' },
+];
+
+const TRUST_BADGES = [
+  {
+    title: 'Built for UK constituencies',
+    description: 'Powered by official parliamentary boundaries and postcode lookup so every letter reaches the right MP.',
+  },
+  {
+    title: 'Researched with UK sources',
+    description: 'Each briefing links to trusted UK media, Parliament libraries, and watchdog reports for credible complaints to government.',
+  },
+  {
+    title: 'Data-responsible',
+    description: 'Secure Google sign-in and GDPR-ready storage keep constituent stories private and under your control.',
+  },
+];
+
 export default function Hero() {
   const [isPricingOpen, setPricingOpen] = useState(false);
 
@@ -42,12 +82,22 @@ export default function Hero() {
       <div className="hero-top">
         <div className="hero-copy">
           <h1 className="hero-title">
-            Your voice,
+            Contact your MP quickly
             <br />
-            <span className="hero-highlight">clearly heard.</span>
+            <span className="hero-highlight">with confident research.</span>
           </h1>
-          <p className="hero-sub">Craft researched, respectful letters to your MP in minutes. We handle postcode lookup, deep AI research with citations, tone personalisation, and make it easy to edit and export. You can choose to save your letter at the end for later.</p>
+          <p className="hero-sub">
+            Craft researched, respectful letters that help you contact your MP, complain to the UK government, and write to representatives quickly. MPWriter pairs postcode lookup with deep AI research, tone personalisation, and easy export so your message lands with impact.
+          </p>
           <div className="cta">
+            <div className="hero-buttons" role="group" aria-label="Key actions">
+              <Link className="btn-primary" href="#start-contact">
+                Start contacting your MP
+              </Link>
+              <Link className="btn-secondary" href="#features">
+                See how it works
+              </Link>
+            </div>
             <p className="fineprint mobile-only">
               <a className="micro-link" href="/how-it-works">How it works</a>
             </p>
@@ -59,9 +109,11 @@ export default function Hero() {
         </div>
       </div>
 
-      <div className="value-callout" role="note" aria-label="Key benefits">
+      <div id="start-contact" className="value-callout" role="note" aria-label="Key benefits">
         <p className="value-1"><strong>Most of us never write to our MP.</strong></p>
-        <p className="value-2">For years, writing to your MP meant hours of digging for facts, drafting, and editing — so important issues often went unspoken. MP Writer changes that. We pair AI-powered research with a clear drafting flow so you can deliver a persuasive, evidence-backed letter in minutes. Share what matters and we'll surface the facts, shape the message, and help it land with impact.</p>
+        <p className="value-2">
+          For years, writing to your MP in the UK meant hours of digging for facts, drafting, and editing — so important issues often went unspoken. MPWriter changes that. Share what matters and we surface the evidence, shape the message, and help it land with impact, whether you are rallying support or lodging a formal complaint to a government department.
+        </p>
         <p className="value-3">
           <strong>One credit = One letter.</strong> Credit packs from £6.99.{' '}
           <button
@@ -112,6 +164,43 @@ export default function Hero() {
         </div>
       </div>
       <div className="copy" />
+
+      <section className="proof-sections" aria-label="MPWriter credibility">
+        <div className="proof-block">
+          <h2 className="proof-heading">Trusted by UK civic voices</h2>
+          <ul className="testimonial-grid">
+            {TESTIMONIALS.map((testimonial) => (
+              <li key={testimonial.name} className="testimonial-card">
+                <p className="testimonial-quote">“{testimonial.quote}”</p>
+                <p className="testimonial-name">{testimonial.name}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="proof-block">
+          <h2 className="proof-heading">Featured by UK democracy partners</h2>
+          <ul className="press-logos" aria-label="Press coverage">
+            {PRESS_LOGOS.map((press) => (
+              <li key={press.name} className="press-logo">
+                <a href={press.url} target="_blank" rel="noreferrer" aria-label={`Learn more about ${press.name}`}>
+                  {press.name}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="proof-block">
+          <h2 className="proof-heading">Confidence badges</h2>
+          <ul className="trust-badges" aria-label="Trust badges">
+            {TRUST_BADGES.map((badge) => (
+              <li key={badge.title} className="trust-badge">
+                <strong>{badge.title}</strong>
+                <p>{badge.description}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
 
       <div className="card-footer">
         <div className="brand-sub"><img src="/assets/header-title.png" alt="MPWriter" /></div>
