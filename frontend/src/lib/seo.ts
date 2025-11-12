@@ -121,6 +121,9 @@ export const marketingPages: Array<{
 }> = [
   { path: '/', changeFrequency: 'weekly', priority: 1 },
   { path: '/how-it-works', changeFrequency: 'monthly', priority: 0.8 },
+  { path: '/blog', changeFrequency: 'weekly', priority: 0.7 },
+  { path: '/blog/how-to-find-your-mp-uk', changeFrequency: 'monthly', priority: 0.6 },
+  { path: '/blog/write-an-effective-mp-letter', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/contact', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/privacy', changeFrequency: 'yearly', priority: 0.4 },
   { path: '/terms', changeFrequency: 'yearly', priority: 0.4 },

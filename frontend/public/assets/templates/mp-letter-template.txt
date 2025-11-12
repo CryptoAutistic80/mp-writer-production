@@ -1,0 +1,70 @@
+Persuasive MP Letter Template
+=============================
+
+Copy this structure into MPWriter's Writing Desk or your preferred editor. Replace text in brackets with your details. Keep paragraphs short and focused.
+
+---
+
+[Your Name]
+[Your Address]
+[Postcode]
+[Email Address]
+[Phone Number]
+
+[Date]
+
+[MP Name]
+[Constituency Office Address]
+
+Dear [MP Name],
+
+Opening paragraph — confirm you are a constituent and state the issue
+--------------------------------------------------------------------
+I am writing as a resident of [constituency name] regarding [issue or service]. I have lived at [address/postcode] since [year] and am seeking your help because [brief urgency or impact statement].
+
+Paragraph 2 — explain the personal impact
+-----------------------------------------
+Set out the facts in date order. Describe how the issue affects you, your family, or your community. Reference any previous contact with agencies or departments, including reference numbers and outcomes.
+
+Paragraph 3 — present evidence and authority
+--------------------------------------------
+Highlight two to three authoritative sources that support your case. For example:
+- GOV.UK guidance: “[policy title]” published on [date] states “[quote]”.
+- Hansard contribution: On [date], you/the Minister said “[quote]”.
+- Local statistics: [Source] reports that [statistic].
+Explain how these references demonstrate what should happen versus what has occurred in your situation.
+
+Paragraph 4 — make a clear request
+----------------------------------
+Set out the specific action you are asking the MP to take and the timeframe that matters. Examples include: raising your case with a department, requesting a meeting, tabling a parliamentary question, or escalating with a regulator. Mention any deadlines that affect you, such as a court date or benefit suspension.
+
+Paragraph 5 — close with appreciation and attachments
+-----------------------------------------------------
+Thank the MP for their support and list the documents you are enclosing (e.g., timeline, statements, evidence). Offer to provide further information or meet at their surgery. Sign off with “Yours sincerely” if you have used their name or “Yours faithfully” if not.
+
+Yours sincerely,
+
+[Your Signature]
+[Your Printed Name]
+
+---
+
+Follow-up log
+-------------
+Use this table to track responses and next actions.
+
+| Date | Action taken | Response/notes | Next step |
+|------|--------------|----------------|-----------|
+|      |              |                |           |
+|      |              |                |           |
+|      |              |                |           |
+
+Accessibility and consent notes
+-------------------------------
+If you need reasonable adjustments, include a short paragraph such as:
+“I would appreciate future correspondence in [preferred format]. Please let me know if you require further information to arrange this.”
+
+If writing on someone else’s behalf, include:
+“I confirm that [name] has authorised me to share their information with you and understands that your office may contact them directly about this case.”
+
+Keep this template saved with your MPWriter project so you can revise and resend quickly as the case progresses.
